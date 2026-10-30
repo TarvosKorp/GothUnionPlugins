@@ -1,12 +1,14 @@
-// zMirrorTest: прототип горизонтального отражения ТОЛЬКО основного 3D-мира.
+// zMirrorTest v2: прототип горизонтального отражения ТОЛЬКО основного 3D-мира.
 // HOME в игре: включить / выключить отражение.
-// Принцип: сразу после zCWorld::Render (MAIN world) закрываем сцену (EndFrame), зеркально
-// копируем задний буфер через DirectDraw (Blt с флагом MIRRORLEFTRIGHT), открываем сцену
-// (BeginFrame) заново. Интерфейс рисуется позже, поэтому остаётся неотражённым.
-// Результаты и коды ошибок пишутся в zMirror_log.txt (рядом с Gothic2.exe или в %TEMP%).
+// Принцип: сразу после zCWorld::Render (MAIN world) закрываем сцену (EndFrame), переворачиваем
+// строки заднего буфера на CPU (Lock / Unlock), открываем сцену (BeginFrame) заново.
+// Интерфейс рисуется позже, поэтому остаётся неотражённым.
+// (Зеркальный Blt DirectDraw на этой системе не реализован: ошибка 0x80004001 = E_NOTIMPL.)
+// Результаты, коды ошибок и замеры времени пишутся в zMirror_log.txt.
 #include "resource.h"
 #include <string>
 #include <fstream>
+#include <algorithm>
 
 namespace GOTHIC_ENGINE {
 
@@ -40,61 +42,64 @@ namespace GOTHIC_ENGINE {
 
   // ---------- Состояние ----------
   bool g_mirror = false;                      // отражение включено?
-  IDirectDrawSurface7* g_tmp = NULL;          // временная поверхность
-  DWORD g_tmpW = 0, g_tmpH = 0;
   int g_failStreak = 0;                       // подряд неудачных попыток
   bool g_disabledByError = false;
+  double g_msSum = 0; int g_msCount = 0;      // замер времени отражения
 
-  void ReleaseTmp() {
-    if (g_tmp) { g_tmp->Release(); g_tmp = NULL; }
-    g_tmpW = g_tmpH = 0;
-  }
-
-  // Создать/проверить временную поверхность под размер заднего буфера
-  bool EnsureTmp(zCRnd_D3D* rnd) {
-    IDirectDrawSurface7* back = rnd->xd3d_pbackBuffer;
-    DDSURFACEDESC2 bd; ZeroMemory(&bd, sizeof(bd)); bd.dwSize = sizeof(bd);
-    HRESULT hr = back->GetSurfaceDesc(&bd);
-    if (FAILED(hr)) { Log("GetSurfaceDesc failed " + Hex(hr)); return false; }
-
-    if (g_tmp && g_tmpW == bd.dwWidth && g_tmpH == bd.dwHeight) return true;
-    ReleaseTmp();
-
+  // Перевернуть строки заднего буфера на CPU
+  bool MirrorByLock(IDirectDrawSurface7* s) {
     DDSURFACEDESC2 d; ZeroMemory(&d, sizeof(d)); d.dwSize = sizeof(d);
-    d.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
-    d.dwWidth = bd.dwWidth; d.dwHeight = bd.dwHeight;
-    d.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_VIDEOMEMORY;
-    hr = rnd->xd3d_pdd7->CreateSurface(&d, &g_tmp, NULL);
-    if (FAILED(hr)) {
-      Log("CreateSurface(video) failed " + Hex(hr) + ", trying system memory");
-      d.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
-      hr = rnd->xd3d_pdd7->CreateSurface(&d, &g_tmp, NULL);
-      if (FAILED(hr)) { Log("CreateSurface(system) failed " + Hex(hr)); g_tmp = NULL; return false; }
+    HRESULT hr = s->Lock(NULL, &d, DDLOCK_WAIT | DDLOCK_SURFACEMEMORYPTR, NULL);
+    if (FAILED(hr)) { Log("Lock failed " + Hex(hr)); return false; }
+
+    DWORD bpp = d.ddpfPixelFormat.dwRGBBitCount;
+    bool ok = true;
+    BYTE* base = (BYTE*)d.lpSurface;
+    if (!base) ok = false;
+    else if (bpp == 32) {
+      for (DWORD y = 0; y < d.dwHeight; y++) {
+        DWORD* row = (DWORD*)(base + (size_t)y * d.lPitch);
+        std::reverse(row, row + d.dwWidth);
+      }
     }
-    g_tmpW = bd.dwWidth; g_tmpH = bd.dwHeight;
-    Log("tmp surface created " + std::to_string(g_tmpW) + "x" + std::to_string(g_tmpH));
-    return true;
+    else if (bpp == 16) {
+      for (DWORD y = 0; y < d.dwHeight; y++) {
+        WORD* row = (WORD*)(base + (size_t)y * d.lPitch);
+        std::reverse(row, row + d.dwWidth);
+      }
+    }
+    else ok = false;
+
+    s->Unlock(NULL);
+    static bool reported = false;
+    if (!ok || !reported) {
+      reported = true;
+      Log("Lock ok, " + std::to_string(d.dwWidth) + "x" + std::to_string(d.dwHeight) + ", bpp=" + std::to_string(bpp) +
+          ", pitch=" + std::to_string(d.lPitch) + (ok ? "" : "  UNSUPPORTED FORMAT"));
+    }
+    return ok;
   }
 
   // Зеркально отразить задний буфер (вызывается сразу после отрисовки основного мира)
   void MirrorBackBuffer() {
     zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
-    if (!rnd || !rnd->xd3d_pbackBuffer || !zCRnd_D3D::xd3d_pdd7) return;
+    if (!rnd || !rnd->xd3d_pbackBuffer) return;
+
+    LARGE_INTEGER f, t0, t1;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&t0);
 
     rnd->EndFrame();                          // сбросить очередь и закрыть сцену (EndScene)
-
-    bool ok = false;
-    if (EnsureTmp(rnd)) {
-      DDBLTFX fx; ZeroMemory(&fx, sizeof(fx)); fx.dwSize = sizeof(fx);
-      fx.dwDDFX = DDBLTFX_MIRRORLEFTRIGHT;
-      HRESULT h1 = g_tmp->Blt(NULL, rnd->xd3d_pbackBuffer, NULL, DDBLT_WAIT | DDBLT_DDFX, &fx);
-      HRESULT h2 = FAILED(h1) ? h1 : rnd->xd3d_pbackBuffer->Blt(NULL, g_tmp, NULL, DDBLT_WAIT, NULL);
-      ok = SUCCEEDED(h1) && SUCCEEDED(h2);
-      static int reports = 0;
-      if (!ok || reports < 3) { reports++; Log("Blt mirror=" + Hex(h1) + " Blt back=" + Hex(h2)); }
-    }
-
+    bool ok = MirrorByLock(rnd->xd3d_pbackBuffer);
     rnd->BeginFrame();                        // открыть сцену снова для интерфейса
+
+    QueryPerformanceCounter(&t1);
+    g_msSum += (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)f.QuadPart;
+    if (++g_msCount == 120) {
+      char b[96]; sprintf_s(b, sizeof(b), "avg mirror time over 120 frames: %.2f ms", g_msSum / g_msCount);
+      Log(b);
+      g_msSum = 0; g_msCount = 0;
+    }
 
     if (ok) g_failStreak = 0;
     else if (++g_failStreak >= 30) { g_disabledByError = true; g_mirror = false; Log("mirror disabled: 30 failures in a row"); }
@@ -117,14 +122,13 @@ namespace GOTHIC_ENGINE {
   // ---------- События Union ----------
 
   void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v2 loaded\n", false);
   }
 
   void Game_Init() {
   }
 
   void Game_Exit() {
-    ReleaseTmp();
   }
 
   void Game_PreLoop() {
