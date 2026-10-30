@@ -1,73 +1,88 @@
-// This file added in headers queue
-// File: "Sources.h"
+// РўСЂР°СЃСЃРёСЂРѕРІС‰РёРє РїРѕСЂСЏРґРєР° РєР°РґСЂР° (РґРёР°РіРЅРѕСЃС‚РёРєР°).
+// F9 РІ РёРіСЂРµ: Р·Р°РїРёСЃР°С‚СЊ РћР”РРќ РєР°РґСЂ РІ С„Р°Р№Р» trace_frame.txt (РїР°РїРєР°, РѕС‚РєСѓРґР° Р·Р°РїСѓС‰РµРЅ Gothic2.exe, РѕР±С‹С‡РЅРѕ System).
 #include "resource.h"
+#include <vector>
+#include <string>
+#include <fstream>
 
 namespace GOTHIC_ENGINE {
 
-// Ограничитель числа между мин. и макс. значениями
-template <class T> inline void zClamp (T& x, const T min, const T max) 
-{
-	if		(x<min)	x=min;
-	else if (x>max)	x=max;
-}
+  // ---------- Р›РѕРі РѕРґРЅРѕРіРѕ РєР°РґСЂР° ----------
+  std::vector<std::string> g_trace;
+  bool g_log = false;
 
-// Функция применения настройки инверсии к оси Х
-void Apply_FlipMouseX_ByValue(int value)
-{
-	// защита указателя
-	if (!zinput) return;
+  inline void Trace(const char* text) {
+    if (g_log) g_trace.push_back(text);
+  }
 
-	// ограничиваем входное значение между нулём и единицей
-	zClamp(value, 0, 1);
+  // ---------- РҐСѓРєРё (thiscall РїРµСЂРµС…РІР°С‚С‹РІР°РµРј РєР°Рє __fastcall: this, Р·Р°РіР»СѓС€РєР° edx, Р°СЂРіСѓРјРµРЅС‚С‹) ----------
 
-	int mouseFlip[2];
-	// получаем состояние инверсии обоих осей
-	zinput->GetMouseFlipXY(mouseFlip[VX], mouseFlip[VY]);
+  // oCGame::Render()
+  void __fastcall Hook_Game_Render(oCGame* self, void* edx);
+  CInvoke<void(__fastcall*)(oCGame*, void*)> Ivk_Game_Render(0x006C86A0, &Hook_Game_Render);
+  void __fastcall Hook_Game_Render(oCGame* self, void* edx) {
+    Trace("oCGame::Render >");
+    Ivk_Game_Render(self, edx);
+    Trace("oCGame::Render <");
+  }
 
-	// если значение по оси х изменилось
-	if (value != mouseFlip[VX])
-		// применяем новые настройки инверсии по этой оси
-		zinput->SetMouseFlipXY(value, mouseFlip[VY]);
-}
+  // oCGame::RenderBlit()
+  void __fastcall Hook_Game_RenderBlit(oCGame* self, void* edx);
+  CInvoke<void(__fastcall*)(oCGame*, void*)> Ivk_Game_RenderBlit(0x006CA910, &Hook_Game_RenderBlit);
+  void __fastcall Hook_Game_RenderBlit(oCGame* self, void* edx) {
+    Trace("oCGame::RenderBlit >");
+    Ivk_Game_RenderBlit(self, edx);
+    Trace("oCGame::RenderBlit <");
+  }
 
-// Функция-перехватчик на изменение нашего параметра "FlipMouseX" в Gothic.ini
-int Change_FlipMouseX(zCOptionEntry& entry)
-{
-	// получаем актуальное, значение данной настройки (оно временное, внутриигровое)
-	int value = entry.varValueTemp.ToInt32();
+  // zCWorld::Render(zCCamera&)
+  void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam);
+  CInvoke<void(__fastcall*)(zCWorld*, void*, zCCamera&)> Ivk_World_Render(0x00621700, &Hook_World_Render);
+  void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
+    Trace("    zCWorld::Render >");
+    Ivk_World_Render(self, edx, cam);
+    Trace("    zCWorld::Render <");
+  }
 
-	// и применяем это значение к оси х
-	Apply_FlipMouseX_ByValue(value);
+  // zCRnd_D3D::BeginFrame()
+  void __fastcall Hook_Rnd_BeginFrame(zCRnd_D3D* self, void* edx);
+  CInvoke<void(__fastcall*)(zCRnd_D3D*, void*)> Ivk_Rnd_BeginFrame(0x0064DD20, &Hook_Rnd_BeginFrame);
+  void __fastcall Hook_Rnd_BeginFrame(zCRnd_D3D* self, void* edx) {
+    Trace("        zCRnd_D3D::BeginFrame");
+    Ivk_Rnd_BeginFrame(self, edx);
+  }
 
-	// выходим
-	return 0;
-}
+  // zCRnd_D3D::EndFrame()
+  void __fastcall Hook_Rnd_EndFrame(zCRnd_D3D* self, void* edx);
+  CInvoke<void(__fastcall*)(zCRnd_D3D*, void*)> Ivk_Rnd_EndFrame(0x0064DF20, &Hook_Rnd_EndFrame);
+  void __fastcall Hook_Rnd_EndFrame(zCRnd_D3D* self, void* edx) {
+    Trace("        zCRnd_D3D::EndFrame");
+    Ivk_Rnd_EndFrame(self, edx);
+  }
 
+  // zCRnd_D3D::Vid_Blit(int, tagRECT*, tagRECT*)
+  void __fastcall Hook_Rnd_VidBlit(zCRnd_D3D* self, void* edx, int a, tagRECT* b, tagRECT* c);
+  CInvoke<void(__fastcall*)(zCRnd_D3D*, void*, int, tagRECT*, tagRECT*)> Ivk_Rnd_VidBlit(0x00657670, &Hook_Rnd_VidBlit);
+  void __fastcall Hook_Rnd_VidBlit(zCRnd_D3D* self, void* edx, int a, tagRECT* b, tagRECT* c) {
+    Trace("        zCRnd_D3D::Vid_Blit");
+    Ivk_Rnd_VidBlit(self, edx, a, b, c);
+  }
 
-// Событие инициализации главного меню
-void Game_Init() 
-{
-	// Защита указателя
-	if (!zoptions) return;
+  // zCView::Render()
+  void __fastcall Hook_View_Render(zCView* self, void* edx);
+  CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_View_Render(0x007AC210, &Hook_View_Render);
+  void __fastcall Hook_View_Render(zCView* self, void* edx) {
+    Trace(self == screen ? "    zCView::Render (screen) >" : "    zCView::Render (other) >");
+    Ivk_View_Render(self, edx);
+    Trace(self == screen ? "    zCView::Render (screen) <" : "    zCView::Render (other) <");
+  }
 
-	// Если все ок, то устанавливаем функцию-перехватчик на изменение параметра.
-	// Как это работает:
-	// 1. Параметр меняется через внутриигровое меню настроек плагина.
-	// 2. Затем, после изменения, вызывается функция "Change_FlipMouseX()",
-	// в которой мы считываем текущее значение и применяем настройки к игре.
-	zoptions->InsertChangeHandler(SECTION, ENTRY_FlipMouseX, Change_FlipMouseX);
-
-	// считываем параметр из Gothic.ini, если записи нет, то создаём новую,
-	// со значением по умолчанию = 0
-	int value = zoptions->ReadInt(SECTION, ENTRY_FlipMouseX.ToChar(), 0);
-
-	// применяем полученное значение к игре
-	Apply_FlipMouseX_ByValue(value);
-	
-}
-
+  // ---------- РЎРѕР±С‹С‚РёСЏ Union ----------
 
   void Game_Entry() {
+  }
+
+  void Game_Init() {
   }
 
   void Game_Exit() {
@@ -76,7 +91,22 @@ void Game_Init()
   void Game_PreLoop() {
   }
 
+  // Р’С‹Р·С‹РІР°РµС‚СЃСЏ РєР°Р¶РґС‹Р№ РєР°РґСЂ: РіСЂР°РЅРёС†С‹ РєР°РґСЂР° РґР»СЏ Р»РѕРіР°
   void Game_Loop() {
+    if (g_log) {
+      Trace("---- Game_Loop (РєРѕРЅРµС† Р·Р°РїРёСЃР°РЅРЅРѕРіРѕ РєР°РґСЂР°) ----");
+      std::ofstream file("trace_frame.txt");
+      for (size_t i = 0; i < g_trace.size(); i++)
+        file << g_trace[i] << "\n";
+      g_trace.clear();
+      g_log = false;
+    }
+
+    if (GetAsyncKeyState(VK_F9) & 1) {   // F9: Р·Р°РїРёСЃР°С‚СЊ СЃР»РµРґСѓСЋС‰РёР№ РєР°РґСЂ
+      g_trace.clear();
+      g_log = true;
+      Trace("---- Game_Loop (РЅР°С‡Р°Р»Рѕ Р·Р°РїРёСЃР°РЅРЅРѕРіРѕ РєР°РґСЂР°) ----");
+    }
   }
 
   void Game_PostLoop() {
@@ -126,51 +156,21 @@ void Game_Init()
 
   void Game_LoadBegin_Trigger() {
   }
-  
+
   void Game_LoadEnd_Trigger() {
   }
-  
+
   void Game_Pause() {
   }
-  
+
   void Game_Unpause() {
   }
-  
+
   void Game_DefineExternals() {
   }
 
-  void Game_ApplyOptions()
-  {
+  void Game_ApplyOptions() {
   }
-
-  /*
-  Functions call order on Game initialization:
-    - Game_Entry           * Gothic entry point
-    - Game_DefineExternals * Define external script functions
-    - Game_Init            * After DAT files init
-  
-  Functions call order on Change level:
-    - Game_LoadBegin_Trigger     * Entry in trigger
-    - Game_LoadEnd_Trigger       *
-    - Game_Loop                  * Frame call window
-    - Game_LoadBegin_ChangeLevel * Load begin
-    - Game_SaveBegin             * Save previous level information
-    - Game_SaveEnd               *
-    - Game_LoadEnd_ChangeLevel   *
-  
-  Functions call order on Save game:
-    - Game_Pause     * Open menu
-    - Game_Unpause   * Click on save
-    - Game_Loop      * Frame call window
-    - Game_SaveBegin * Save begin
-    - Game_SaveEnd   *
-  
-  Functions call order on Load game:
-    - Game_Pause              * Open menu
-    - Game_Unpause            * Click on load
-    - Game_LoadBegin_SaveGame * Load begin
-    - Game_LoadEnd_SaveGame   *
-  */
 
 #define AppDefault True
   CApplication* lpApplication = !CHECK_THIS_ENGINE ? Null : CApplication::CreateRefApplication(
