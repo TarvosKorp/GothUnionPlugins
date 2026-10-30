@@ -2,11 +2,9 @@ name: Build Union plugin
 
 on:
   workflow_dispatch:      # ручной запуск кнопкой «Run workflow»
-  push:
-    branches: [ main ]    # и автоматически при каждом push
 
 env:
-  PLUGIN_NAME: zFrameTrace   # <-- имя итогового DLL (zFrameTrace.dll). Меняйте только здесь.
+  PLUGIN_NAME: zMirrorTest   # <-- имя итогового DLL (zMirrorTest.dll). Меняйте только здесь.
 
 jobs:
   build:
