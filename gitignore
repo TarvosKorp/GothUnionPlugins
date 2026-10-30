@@ -1,0 +1,10 @@
+# результаты сборки и служебные файлы Visual Studio
+Bin/
+PDB/
+Debug/
+Release/
+.vs/
+*.suo
+*.user
+*.obj
+*.pdb
