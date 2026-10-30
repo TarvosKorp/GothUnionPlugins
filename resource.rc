@@ -78,10 +78,10 @@ BEGIN
             VALUE "CompanyName", "Gothic community"
             VALUE "FileDescription", "Plugin for Gothic"
             VALUE "FileVersion", "1.0.0.9"
-            VALUE "InternalName", "zFrameTrace"
+            VALUE "InternalName", "Plagin"
             VALUE "LegalCopyright", "Copyright (C) 2023"
-            VALUE "OriginalFilename", "zFrameTrace"
-            VALUE "ProductName", "zFrameTrace"
+            VALUE "OriginalFilename", "Plagin"
+            VALUE "ProductName", "Plagin"
             VALUE "ProductVersion", "1.0.0.9"
         END
     END
