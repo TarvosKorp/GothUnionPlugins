@@ -13,7 +13,7 @@
 #undef APSTUDIO_READONLY_SYMBOLS
 
 /////////////////////////////////////////////////////////////////////////////
-// Русский (Россия) resources
+// ГђГіГ±Г±ГЄГЁГ© (ГђГ®Г±Г±ГЁГї) resources
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_RUS)
 LANGUAGE LANG_RUSSIAN, SUBLANG_DEFAULT
@@ -78,10 +78,10 @@ BEGIN
             VALUE "CompanyName", "Gothic community"
             VALUE "FileDescription", "Plugin for Gothic"
             VALUE "FileVersion", "1.0.0.9"
-            VALUE "InternalName", "Plugin"
+            VALUE "InternalName", "zFrameTrace"
             VALUE "LegalCopyright", "Copyright (C) 2023"
-            VALUE "OriginalFilename", "Plugin"
-            VALUE "ProductName", "Plugin"
+            VALUE "OriginalFilename", "zFrameTrace"
+            VALUE "ProductName", "zFrameTrace"
             VALUE "ProductVersion", "1.0.0.9"
         END
     END
@@ -101,7 +101,7 @@ END
 // remains consistent on all systems.
 IDI_ICON1               ICON                    "union.ico"
 
-#endif    // Русский (Россия) resources
+#endif    // ГђГіГ±Г±ГЄГЁГ© (ГђГ®Г±Г±ГЁГї) resources
 /////////////////////////////////////////////////////////////////////////////
 
 
