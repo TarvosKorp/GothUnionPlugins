@@ -1,5 +1,7 @@
-// zMirrorTest v2: прототип горизонтального отражения ТОЛЬКО основного 3D-мира.
-// HOME в игре: включить / выключить отражение.
+// zMirrorTest v3 (диагностика): HOME переключает режимы по кругу:
+//   0 = выкл, 1 = зеркало после мира, 2 = КРАСНАЯ полоса слева после мира,
+//   3 = СИНЯЯ полоса справа в самом конце кадра (перед Vid_Blit).
+// Полосы показывают, попадают ли наши правки заднего буфера на экран.
 // Принцип: сразу после zCWorld::Render (MAIN world) закрываем сцену (EndFrame), переворачиваем
 // строки заднего буфера на CPU (Lock / Unlock), открываем сцену (BeginFrame) заново.
 // Интерфейс рисуется позже, поэтому остаётся неотражённым.
@@ -41,7 +43,7 @@ namespace GOTHIC_ENGINE {
   }
 
   // ---------- Состояние ----------
-  bool g_mirror = false;                      // отражение включено?
+  int g_mode = 0;                             // текущий режим (0..3)
   int g_failStreak = 0;                       // подряд неудачных попыток
   bool g_disabledByError = false;
   double g_msSum = 0; int g_msCount = 0;      // замер времени отражения
@@ -80,6 +82,35 @@ namespace GOTHIC_ENGINE {
     return ok;
   }
 
+  // Закрасить вертикальную полосу (1/8 ширины) слева или справа заданным цветом (маска канала)
+  bool PaintStripe(IDirectDrawSurface7* s, bool left, bool red) {
+    DDSURFACEDESC2 d; ZeroMemory(&d, sizeof(d)); d.dwSize = sizeof(d);
+    HRESULT hr = s->Lock(NULL, &d, DDLOCK_WAIT | DDLOCK_SURFACEMEMORYPTR, NULL);
+    if (FAILED(hr)) { Log("Stripe: Lock failed " + Hex(hr)); return false; }
+    DWORD bpp = d.ddpfPixelFormat.dwRGBBitCount;
+    DWORD color = red ? d.ddpfPixelFormat.dwRBitMask : d.ddpfPixelFormat.dwBBitMask;
+    DWORD sw = d.dwWidth / 8, x0 = left ? 0 : d.dwWidth - sw;
+    BYTE* base = (BYTE*)d.lpSurface;
+    bool ok = base != NULL && (bpp == 32 || bpp == 16);
+    if (ok) {
+      for (DWORD y = 0; y < d.dwHeight; y++) {
+        BYTE* row = base + (size_t)y * d.lPitch;
+        if (bpp == 32) { DWORD* p = (DWORD*)row + x0; for (DWORD x = 0; x < sw; x++) p[x] = color; }
+        else           { WORD*  p = (WORD*)row + x0;  for (DWORD x = 0; x < sw; x++) p[x] = (WORD)color; }
+      }
+    }
+    s->Unlock(NULL);
+    return ok;
+  }
+
+  void StripeAfterWorld() {
+    zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
+    if (!rnd || !rnd->xd3d_pbackBuffer) return;
+    rnd->EndFrame();
+    PaintStripe(rnd->xd3d_pbackBuffer, true, true);    // красная, слева
+    rnd->BeginFrame();
+  }
+
   // Зеркально отразить задний буфер (вызывается сразу после отрисовки основного мира)
   void MirrorBackBuffer() {
     zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
@@ -102,7 +133,7 @@ namespace GOTHIC_ENGINE {
     }
 
     if (ok) g_failStreak = 0;
-    else if (++g_failStreak >= 30) { g_disabledByError = true; g_mirror = false; Log("mirror disabled: 30 failures in a row"); }
+    else if (++g_failStreak >= 30) { g_disabledByError = true; g_mode = 0; Log("mode reset to 0: 30 failures in a row"); }
   }
 
   // главный игровой мир (а не мини-миры предметов в инвентаре)
@@ -115,14 +146,27 @@ namespace GOTHIC_ENGINE {
   CInvoke<void(__fastcall*)(zCWorld*, void*, zCCamera&)> Ivk_World_Render(0x00621700, &Hook_World_Render);
   void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
     Ivk_World_Render(self, edx, cam);
-    if (g_mirror && IsMainWorld(self))
-      MirrorBackBuffer();
+    if (IsMainWorld(self)) {
+      if (g_mode == 1) MirrorBackBuffer();
+      else if (g_mode == 2) StripeAfterWorld();
+    }
+  }
+
+  // ---------- Хук oCGame::RenderBlit (самый конец кадра, перед выводом на экран) ----------
+  void __fastcall Hook_Game_RenderBlit(oCGame* self, void* edx);
+  CInvoke<void(__fastcall*)(oCGame*, void*)> Ivk_Game_RenderBlit(0x006CA910, &Hook_Game_RenderBlit);
+  void __fastcall Hook_Game_RenderBlit(oCGame* self, void* edx) {
+    if (g_mode == 3) {
+      zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
+      if (rnd && rnd->xd3d_pbackBuffer) PaintStripe(rnd->xd3d_pbackBuffer, false, false);   // синяя, справа
+    }
+    Ivk_Game_RenderBlit(self, edx);
   }
 
   // ---------- События Union ----------
 
   void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v2 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v3 loaded\n", false);
   }
 
   void Game_Init() {
@@ -139,9 +183,10 @@ namespace GOTHIC_ENGINE {
     bool down = (GetAsyncKeyState(VK_HOME) & 0x8000) != 0;      // клавиша HOME
     if (down && !wasDown) {
       if (g_disabledByError) { g_disabledByError = false; g_failStreak = 0; }
-      g_mirror = !g_mirror;
-      Log(g_mirror ? "mirror ON" : "mirror OFF");
-      if (screen) screen->PrintCXY(zSTRING(g_mirror ? "MIRROR: ON" : "MIRROR: OFF"));
+      g_mode = (g_mode + 1) % 4;
+      const char* names[4] = { "MODE 0: OFF", "MODE 1: MIRROR after world", "MODE 2: RED stripe after world", "MODE 3: BLUE stripe end of frame" };
+      Log(std::string("mode -> ") + names[g_mode]);
+      if (screen) screen->PrintCXY(zSTRING(names[g_mode]));
     }
     wasDown = down;
   }
