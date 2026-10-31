@@ -164,7 +164,7 @@ namespace GOTHIC_ENGINE {
   CInvoke<int(__fastcall*)(zCRnd_D3D*, void*, D3DRENDERSTATETYPE, DWORD)> Ivk_SetRenderState(0x00644EF0, &Hook_SetRenderState);
   int __fastcall Hook_SetRenderState(zCRnd_D3D* self, void* edx, D3DRENDERSTATETYPE t, DWORD v) {
     int r = Ivk_SetRenderState(self, edx, t, v);
-    if (g_inMainWorld && t == D3DRS_CULLMODE) {
+    if (g_inMainWorld && t == D3DRENDERSTATE_CULLMODE) {
       g_cullSets++; g_cullLastVal = v;
     }
     return r;
@@ -501,13 +501,13 @@ namespace GOTHIC_ENGINE {
     if (main && g_mirror && g_methodGPU) {
       IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
       DWORD oldCull = D3DCULL_NONE;
-      if (dev && SUCCEEDED(dev->GetRenderState(D3DRS_CULLMODE, &oldCull))) {
+      if (dev && SUCCEEDED(dev->GetRenderState(D3DRENDERSTATE_CULLMODE, &oldCull))) {
         DWORD neu = (oldCull == D3DCULL_CW) ? D3DCULL_CCW
                   : (oldCull == D3DCULL_CCW) ? D3DCULL_CW
                   : D3DCULL_CW;
-        dev->SetRenderState(D3DRS_CULLMODE, neu);
+        dev->SetRenderState(D3DRENDERSTATE_CULLMODE, neu);
         Ivk_World_Render(self, edx, cam);
-        dev->SetRenderState(D3DRS_CULLMODE, oldCull);
+        dev->SetRenderState(D3DRENDERSTATE_CULLMODE, oldCull);
       }
       else Ivk_World_Render(self, edx, cam);
     }
