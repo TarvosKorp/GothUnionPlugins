@@ -118,6 +118,7 @@ namespace GOTHIC_ENGINE {
   int g_labelMirrored = 0;
   int g_cullSets = 0; unsigned long g_cullLastVal = 0;
   bool g_focusLockable = false;
+  bool g_teleOn = false;
 
   // ---------- Фаза интерфейса ----------
   bool g_uiPhase = false;
@@ -221,9 +222,12 @@ namespace GOTHIC_ENGINE {
     MirrorMatrixRow0(cam->trafoView);
     MirrorMatrixCol0(cam->trafoViewInv);
     // Стеки матриц камеры (возможно, мир рендерится из стека).
+    // zCMatrixStack: int pos (4 байта) + T stack[SIZE] — элементы на смещении 4.
+    zMAT4* viewStack = reinterpret_cast<zMAT4*>((char*)&cam->trafoViewStack + 4);
+    zMAT4* wvStack = reinterpret_cast<zMAT4*>((char*)&cam->trafoWorldViewStack + 4);
     for (int i = 0; i < 8; i++) {
-      MirrorMatrixRow0(cam->trafoViewStack[i]);
-      MirrorMatrixRow0(cam->trafoWorldViewStack[i]);
+      MirrorMatrixRow0(viewStack[i]);
+      MirrorMatrixRow0(wvStack[i]);
     }
   }
 
@@ -238,10 +242,10 @@ namespace GOTHIC_ENGINE {
       if (logOnce < 1) {
         logOnce++;
         char b[256];
+        zMAT4* wvStack = reinterpret_cast<zMAT4*>((char*)&self->trafoWorldViewStack + 4);
         sprintf_s(b, sizeof(b), "CAM mirror: viewRow0=(%.3f,%.3f,%.3f,%.3f) wvStack0=(%.3f,%.3f,%.3f,%.3f)",
                   self->trafoView.v[0][0], self->trafoView.v[0][1], self->trafoView.v[0][2], self->trafoView.v[0][3],
-                  self->trafoWorldViewStack[0].v[0][0], self->trafoWorldViewStack[0].v[0][1],
-                  self->trafoWorldViewStack[0].v[0][2], self->trafoWorldViewStack[0].v[0][3]);
+                  wvStack[0].v[0][0], wvStack[0].v[0][1], wvStack[0].v[0][2], wvStack[0].v[0][3]);
         Log(b);
       }
     }
@@ -276,7 +280,6 @@ namespace GOTHIC_ENGINE {
   };
   TRec g_recs[700];
   int g_recCount = 0;
-  bool g_teleOn = false;
 
   bool IsOwnMessage(const char* s) {
     if (!s) return false;
