@@ -640,17 +640,21 @@ namespace GOTHIC_ENGINE {
   }
 
   // ---------- Карта: зеркалирование позиции стрелки ----------
+  // LevelCoords (zVEC4) = (xMin, yMin, xMax, yMax) в мировых координатах.
+  // При зеркале X мира: xMin' = -xMax, xMax' = -xMin.
+  // Подменяем координаты до вызова UpdatePosition — стрелка/маячки пересчитаются зеркально.
   void __fastcall Hook_Map_UpdatePosition(oCViewDocumentMap* self, void* edx);
   CInvoke<void(__fastcall*)(oCViewDocumentMap*, void*)> Ivk_Map_UpdatePosition(0x0068D7B0, &Hook_Map_UpdatePosition);
   void __fastcall Hook_Map_UpdatePosition(oCViewDocumentMap* self, void* edx) {
-    Ivk_Map_UpdatePosition(self, edx);
+    if (!self) { Ivk_Map_UpdatePosition(self, edx); return; }
     if (g_mirror) {
-      int ax = 0, ay = 0;
-      self->ViewArrow.GetPos(ax, ay);
-      int L = self->vposx * 2 + self->vsizex;
-      int nx = L - 1 - ax;
-      self->ViewArrow.SetPos(nx, ay);
-      RecEx("MAP arrow pos", _ReturnAddress(), ax, nx);
+      zVEC4 orig = self->LevelCoords;
+      self->LevelCoords.v[0] = -orig.v[2];
+      self->LevelCoords.v[2] = -orig.v[0];
+      Ivk_Map_UpdatePosition(self, edx);
+      self->LevelCoords = orig;
+    } else {
+      Ivk_Map_UpdatePosition(self, edx);
     }
   }
 
