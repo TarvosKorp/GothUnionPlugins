@@ -1,21 +1,24 @@
-// zMirrorTest v15 (диагностический билд):
+// zMirrorTest v16 (диагностический билд):
 //   HOME — вкл/выкл зеркало вида.
 //   END  — телеметрия: 1-е нажатие старт, 2-е стоп + дамп.
 //   O    — зеркалирование сущностей (эксперимент): выкл -> ГГ -> все NPC -> выкл.
 //
 // Методы зеркала ([ZHORIZMOUSEINVERSION] в Gothic.ini):
 //   MirrorMethod=0 — CPU fast (SSE2) — эталон.
-//   MirrorMethod=1 — GPU: пост-зеркало проекции + отражение фрустума + CULLMODE=NONE.
-//   MirrorMethod=2 — GPU: пост-зеркало проекции + отражение фрустума + инверсия CULLMODE.
+//   MirrorMethod=1 — GPU: зеркало через трасформации камеры (trafoView + стеки),
+//                    CULLMODE=NONE на рендере VOB.
+//   MirrorMethod=2 — то же, но без NONE (чисто трасформации).
 //
-// v15 (главное — GPU):
-//   - НОВОЕ: плоскости фрустума камеры отражаются по X. Движок отсекает мир ДО
-//     зеркала, и из-за неотражённых плоскостей всё пропадало из вида.
-//     Теперь отсечение согласовано с зеркалом — локация должна стать видимой,
-//     а VOB/PFX/тени должны корректно зеркалиться.
-//   - Фильтр кандидатов фокуса: строки вида "FOCUS_*" (имена режимов) игнорируются.
-//   - Карта: диагностика вызовов UpdatePosition (каждый 120-й) под телеметрией.
-//   - Надписи и взлом — как в v13/v14 (эталон).
+// v16 (свежий взгляд на GPU):
+//   - Откат к подходу v10 (trafoView): мир был видим, VOB зеркалились.
+//   - ДОПОЛНИТЕЛЬНО отражаются стеки матриц камеры (trafoViewStack,
+//     trafoWorldViewStack) — вероятно, мир рендерится именно из стека.
+//   - Проекция и фрустум НЕ трогаются (они ломали мир в v13-v15).
+//   - VOB при GPU-зеркале рисуются с CULLMODE=NONE — убирает вывернутость
+//     без влияния на мир.
+//   - Карта: отражение позиции стрелки напрямую (reinterpret_cast в zCView),
+//     подмена LevelCoords убрана.
+//   - Надписи и взлом — как в v13-v15 (эталон).
 #include "resource.h"
 #include <string>
 #include <vector>
@@ -106,7 +109,7 @@ namespace GOTHIC_ENGINE {
   // ---------- Состояние ----------
   bool g_mirror = false;
   bool g_methodGPU = false;
-  bool g_cullInvert = true;   // true: CULLMODE=NONE; false: инверсия CW<->CCW
+  bool g_cullInvert = false;  // не используется в v16, оставлено для совместимости ин
   int g_entStage = 0;        // 0 выкл, 1 ГГ, 2 все NPC
   int g_failStreak = 0;
   double g_msSum = 0; int g_msCount = 0; int g_msReports = 0;
@@ -197,18 +200,30 @@ namespace GOTHIC_ENGINE {
     else if (++g_failStreak >= 30) { g_mirror = false; Log("mirror auto-disabled: 30 failures in a row"); }
   }
 
-  // ---------- GPU-метод: отражённая проекция (пост-зеркало) ----------
-  // В D3DMATRIX (row-major, v' = v * M) столбец 0 = (_11,_21,_31,_41).
-  // Отрицание столбца 0 меняет знак итоговой NDC-координаты X:
-  // v'[0] = -(v*M)[0] — это зеркало ЭКРАНА (пост-проекционное),
-  // которое не ломает отсечение мира и должно отразить и VOB, и PFX-спрайты.
-  void ApplyMirrorProjection() {
-    IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
-    if (!dev) return;
-    D3DMATRIX p;
-    if (SUCCEEDED(dev->GetTransform(D3DTRANSFORMSTATE_PROJECTION, &p))) {
-      p._11 = -p._11; p._21 = -p._21; p._31 = -p._31; p._41 = -p._41;
-      dev->SetTransform(D3DTRANSFORMSTATE_PROJECTION, &p);
+  // ---------- GPU-метод: зеркало через трасформации камеры ----------
+  // Отражение X в view-пространстве: world->view матрица умножается слева на S=diag(-1,1,1,1):
+  // у неё отрицается строка 0; у обратной (view->world) — столбец 0.
+  void MirrorMatrixRow0(zMAT4& m) {
+    m.v[0][0] = -m.v[0][0];
+    m.v[0][1] = -m.v[0][1];
+    m.v[0][2] = -m.v[0][2];
+    m.v[0][3] = -m.v[0][3];
+  }
+  void MirrorMatrixCol0(zMAT4& m) {
+    m.v[0][0] = -m.v[0][0];
+    m.v[1][0] = -m.v[1][0];
+    m.v[2][0] = -m.v[2][0];
+    m.v[3][0] = -m.v[3][0];
+  }
+
+  void ApplyMirrorView(zCCamera* cam) {
+    if (!cam) return;
+    MirrorMatrixRow0(cam->trafoView);
+    MirrorMatrixCol0(cam->trafoViewInv);
+    // Стеки матриц камеры (возможно, мир рендерится из стека).
+    for (int i = 0; i < 8; i++) {
+      MirrorMatrixRow0(cam->trafoViewStack[i]);
+      MirrorMatrixRow0(cam->trafoWorldViewStack[i]);
     }
   }
 
@@ -217,32 +232,19 @@ namespace GOTHIC_ENGINE {
   void __fastcall Hook_Cam_Activate(zCCamera* self, void* edx) {
     Ivk_Cam_Activate(self, edx);
     if (!g_inMainWorld || !g_mirror || !g_methodGPU) return;
-    if (!self) return;
-    // Пост-зеркало проекции.
-    ApplyMirrorProjection();
-    // Отражаем плоскости фрустума: геометрия отсекается ДО зеркала,
-    // поэтому нормали X фот надо отразить, иначе мир/объекты выпадают из фрустума.
-    for (int i = 0; i < zCCamera::NUM_FRUSTUM_PLANES; i++) {
-      zTPlane& pl = self->frustumplanes[i];
-      pl.normal.n[VX] = -pl.normal.n[VX];
-      self->signbits[i] = (unsigned char)(
-        ((pl.normal.n[VX] < 0.0f) ? 1 : 0) |
-        ((pl.normal.n[VY] < 0.0f) ? 2 : 0) |
-        ((pl.normal.n[VZ] < 0.0f) ? 4 : 0));
-    }
-  }
-
-  int __fastcall Hook_SetRenderState(zCRnd_D3D* self, void* edx, D3DRENDERSTATETYPE t, DWORD v);
-  CInvoke<int(__fastcall*)(zCRnd_D3D*, void*, D3DRENDERSTATETYPE, DWORD)> Ivk_SetRenderState(0x00644EF0, &Hook_SetRenderState);
-  int __fastcall Hook_SetRenderState(zCRnd_D3D* self, void* edx, D3DRENDERSTATETYPE t, DWORD v) {
-    if (t == D3DRENDERSTATE_CULLMODE) {
-      if (g_inMainWorld && g_mirror && g_methodGPU) {
-        if (g_cullInvert) v = D3DCULL_NONE;
-        else v = (v == D3DCULL_CW) ? D3DCULL_CCW : (v == D3DCULL_CCW) ? D3DCULL_CW : v;
+    ApplyMirrorView(self);
+    if (g_teleOn) {
+      static int logOnce = 0;
+      if (logOnce < 1) {
+        logOnce++;
+        char b[256];
+        sprintf_s(b, sizeof(b), "CAM mirror: viewRow0=(%.3f,%.3f,%.3f,%.3f) wvStack0=(%.3f,%.3f,%.3f,%.3f)",
+                  self->trafoView.v[0][0], self->trafoView.v[0][1], self->trafoView.v[0][2], self->trafoView.v[0][3],
+                  self->trafoWorldViewStack[0].v[0][0], self->trafoWorldViewStack[0].v[0][1],
+                  self->trafoWorldViewStack[0].v[0][2], self->trafoWorldViewStack[0].v[0][3]);
+        Log(b);
       }
-      if (g_inMainWorld) { g_cullSets++; g_cullLastVal = v; }
     }
-    return Ivk_SetRenderState(self, edx, t, v);
   }
 
   inline bool IsMainWorld(zCWorld* w) {
@@ -352,8 +354,8 @@ namespace GOTHIC_ENGINE {
     char b[256];
     int ais = (player && ogame) ? player->GetAIState() : -1;
     int ait = (player && ogame) ? player->GetAIStateTime() : -1;
-    sprintf_s(b, sizeof(b), "mirror=%d methodGPU=%d cullMode=%d entStage=%d labelMirrored=%d cullSets=%d cullLast=0x%08lX AIState=%d AIStateTime=%d",
-              g_mirror ? 1 : 0, g_methodGPU ? 1 : 0, g_cullInvert ? 1 : 0, g_entStage,
+    sprintf_s(b, sizeof(b), "mirror=%d methodGPU=%d entStage=%d labelMirrored=%d cullSets=%d cullLast=0x%08lX AIState=%d AIStateTime=%d",
+              g_mirror ? 1 : 0, g_methodGPU ? 1 : 0, g_entStage,
               g_labelMirrored, g_cullSets, g_cullLastVal, ais, ait);
     Log(b);
     DumpFocusInfo();
@@ -433,8 +435,6 @@ namespace GOTHIC_ENGINE {
       if (ogame) {
         zSTRING n = oCNpcFocus::GetFocusName();
         const char* ch = n.ToChar();
-        // GetFocusName() может вернуть имя РЕЖИМА ("FOCUS_NORMAL" и т.п.) -
-        // такие строки не являются именами объектов, пропускаем.
         if (ch && ch[0] && strncmp(ch, "FOCUS_", 6) != 0) {
           bool exists = false;
           for (size_t i = 0; i < cached.size(); i++) if (cached[i] == ch) { exists = true; break; }
@@ -665,68 +665,67 @@ namespace GOTHIC_ENGINE {
   int __fastcall Hook_Vob_Render(zCVob* self, zTRenderContext& ctx);
   CInvoke<int(__fastcall*)(zCVob*, zTRenderContext&)> Ivk_Vob_Render(0x006015D0, &Hook_Vob_Render);
   int __fastcall Hook_Vob_Render(zCVob* self, zTRenderContext& ctx) {
-    bool apply = false;
+    bool entApply = false;
     if (g_mirror && g_entStage != 0) {
-      if (g_entStage == 1) apply = ((zCVob*)player == self);
-      else apply = IsNpcVob(self);
+      if (g_entStage == 1) entApply = ((zCVob*)player == self);
+      else entApply = IsNpcVob(self);
     }
-    if (!apply) return Ivk_Vob_Render(self, ctx);
+    bool cullWrap = (g_mirror && g_methodGPU); // при GPU-зеркале все VOB вывернуты
 
-    float orig[16];
-    memcpy(orig, &self->trafoObjToWorld, sizeof(orig));
-    float m[16];
-    memcpy(m, orig, sizeof(m));
-    m[0] = -m[0];
-    m[4] = -m[4];
-    m[8] = -m[8];
-    memcpy(&self->trafoObjToWorld, m, sizeof(m));
+    if (entApply) {
+      float orig[16];
+      memcpy(orig, &self->trafoObjToWorld, sizeof(orig));
+      float m[16];
+      memcpy(m, orig, sizeof(m));
+      m[0] = -m[0];
+      m[4] = -m[4];
+      m[8] = -m[8];
+      memcpy(&self->trafoObjToWorld, m, sizeof(m));
 
-    ApplyCullNone(true);
-    int r = Ivk_Vob_Render(self, ctx);
-    ApplyCullNone(false);
-    memcpy(&self->trafoObjToWorld, orig, sizeof(orig));
-    return r;
+      ApplyCullNone(true);
+      int r = Ivk_Vob_Render(self, ctx);
+      ApplyCullNone(false);
+      memcpy(&self->trafoObjToWorld, orig, sizeof(orig));
+      return r;
+    }
+
+    if (cullWrap) {
+      ApplyCullNone(true);
+      int r = Ivk_Vob_Render(self, ctx);
+      ApplyCullNone(false);
+      return r;
+    }
+
+    return Ivk_Vob_Render(self, ctx);
   }
 
-  // ---------- Карта ----------
-  // oCMapScreen::Show(int) — полноэкранная карта по клавише M.
-  void __fastcall Hook_MapScreen_Show(oCMapScreen* self, void* edx, int arg);
-  CInvoke<void(__fastcall*)(oCMapScreen*, void*, int)> Ivk_MapScreen_Show(0x0047F9C0, &Hook_MapScreen_Show);
-  void __fastcall Hook_MapScreen_Show(oCMapScreen* self, void* edx, int arg) {
-    if (g_teleOn) Log("MapScreen Show called (карта по M)");
-    Ivk_MapScreen_Show(self, edx, arg);
-  }
-
-  bool g_mapDiagDone = false;
-  int g_mapCalls = 0;
+  // ---------- Карта: отражение позиции стрелки ----------
+  // oCViewDocument физически является zCView (в движке это один класс),
+  // поэтому reinterpret_cast позволяет читать/менять позицию.
+  int g_mapArrowCalls = 0;
   void __fastcall Hook_Map_UpdatePosition(oCViewDocumentMap* self, void* edx);
   CInvoke<void(__fastcall*)(oCViewDocumentMap*, void*)> Ivk_Map_UpdatePosition(0x0068D7B0, &Hook_Map_UpdatePosition);
   void __fastcall Hook_Map_UpdatePosition(oCViewDocumentMap* self, void* edx) {
-    if (!self) { Ivk_Map_UpdatePosition(self, edx); return; }
-    g_mapCalls++;
-    if (g_teleOn) {
-      if (!g_mapDiagDone) {
-        g_mapDiagDone = true;
-        char b[160];
-        sprintf_s(b, sizeof(b), "MAP UpdatePosition: x0=%.0f x1=%.0f y0=%.0f y1=%.0f",
-                  self->LevelCoords.n[0], self->LevelCoords.n[2], self->LevelCoords.n[1], self->LevelCoords.n[3]);
-        Log(b);
-      }
-      if (g_mapCalls % 120 == 0) {
-        char b[160];
-        sprintf_s(b, sizeof(b), "MAP UpdatePosition call #%d mirror=%d",
-                  g_mapCalls, g_mirror ? 1 : 0);
-        Log(b);
-      }
-    }
-    if (g_mirror) {
-      zVEC4 orig = self->LevelCoords;
-      self->LevelCoords.n[0] = orig.n[2];
-      self->LevelCoords.n[2] = orig.n[0];
-      Ivk_Map_UpdatePosition(self, edx);
-      self->LevelCoords = orig;
-    } else {
-      Ivk_Map_UpdatePosition(self, edx);
+    Ivk_Map_UpdatePosition(self, edx);
+    if (!g_mirror || !self) return;
+    zCView* arrow = reinterpret_cast<zCView*>(&self->ViewArrow);
+    if (!arrow) return;
+    zCView* owner = arrow->owner;
+    if (!owner && screen) owner = screen;
+    if (!owner) return;
+    int ax = 0, ay = 0;
+    arrow->GetPos(ax, ay);
+    int aw = arrow->vsizex;
+    if (aw <= 0) aw = 0;
+    int right = owner->vposx * 2 + owner->vsizex;
+    int nx = right - (ax + aw);
+    arrow->SetPos(nx, ay);
+    g_mapArrowCalls++;
+    if (g_teleOn && (g_mapArrowCalls % 120 == 1)) {
+      char b[200];
+      sprintf_s(b, sizeof(b), "MAP arrow mirror: ax=%d->%d aw=%d ownerL=%d ownerW=%d",
+                ax, nx, aw, owner->vposx, owner->vsizex);
+      Log(b);
     }
   }
 
@@ -757,13 +756,11 @@ namespace GOTHIC_ENGINE {
 
   // ---------- События Union ----------
   void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v15 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v16 loaded\n", false);
     int m = GetPrivateProfileIntA("ZHORIZMOUSEINVERSION", "MirrorMethod", 0, ExeDirPath("Gothic.ini").c_str());
-    if (m == 1) { g_methodGPU = true; g_cullInvert = true; }
-    else if (m == 2) { g_methodGPU = true; g_cullInvert = false; }
-    else { g_methodGPU = false; g_cullInvert = false; }
+    g_methodGPU = (m == 1 || m == 2);
     char b[96];
-    if (g_methodGPU) sprintf_s(b, sizeof(b), "mirror method: GPU (Activate projection, cullMode=%d)", g_cullInvert ? 1 : 0);
+    if (g_methodGPU) sprintf_s(b, sizeof(b), "mirror method: GPU (camera transforms, mode=%d)", m);
     else sprintf_s(b, sizeof(b), "mirror method: CPU fast (SSE2)");
     Log(b);
   }
