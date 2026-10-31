@@ -1,4 +1,4 @@
-// zMirrorTest v6: зеркальное отражение основного 3D-мира (интерфейс остаётся обычным).
+// zMirrorTest v7 (v6 + телеметрия): зеркальное отражение основного 3D-мира (интерфейс остаётся обычным).
 // HOME в игре: включить / выключить отражение. Вместе с ним:
 //   - инвертируется мышь по X;
 //   - меняются местами клавиши "влево/вправо" и "шаг влево/вправо" (кроме паузы);
@@ -14,6 +14,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <intrin.h>
 
 namespace GOTHIC_ENGINE {
 
@@ -38,8 +39,8 @@ namespace GOTHIC_ENGINE {
   }
 
   int g_logLines = 0;
-  void Log(const std::string& s) {            // не больше 100 строк за сессию
-    if (g_logLines++ < 100) WriteText("zMirror_log.txt", s + "\n", true);
+  void Log(const std::string& s) {            // не больше 400 строк за сессию
+    if (g_logLines++ < 400) WriteText("zMirror_log.txt", s + "\n", true);
   }
   std::string Hex(unsigned long v) {
     char b[32]; sprintf_s(b, sizeof(b), "0x%08lX", v); return b;
@@ -137,10 +138,46 @@ namespace GOTHIC_ENGINE {
     return g_mirror && g_uiPhase && g_worldDepth == 0 && g_projDepth == 0;
   }
 
+  // ---------- Телеметрия: кто вызывает функции (адреса возврата) ----------
+  // END в игре: записать накопленное в лог и обнулить счётчики.
+  struct TRec { const char* tag; DWORD caller; int a; int b; int count; };
+  TRec g_recs[200];
+  int g_recCount = 0;
+
+  void Rec(const char* tag, void* ret, int a = 0, int b = 0, bool matchA = false) {
+    DWORD c = (DWORD)ret;
+    for (int i = 0; i < g_recCount; i++)
+      if (g_recs[i].tag == tag && g_recs[i].caller == c && (!matchA || g_recs[i].a == a)) {
+        g_recs[i].count++; g_recs[i].a = a; g_recs[i].b = b; return;
+      }
+    if (g_recCount < 200) {
+      TRec& r = g_recs[g_recCount++];
+      r.tag = tag; r.caller = c; r.a = a; r.b = b; r.count = 1;
+    }
+  }
+
+  void DumpRecs() {
+    Log("--- telemetry dump ---");
+    for (int i = 0; i < g_recCount; i++)
+      Log(std::string(g_recs[i].tag) + "  caller=" + Hex(g_recs[i].caller) +
+          "  count=" + std::to_string(g_recs[i].count) +
+          "  last a=" + std::to_string(g_recs[i].a) + " b=" + std::to_string(g_recs[i].b));
+    Log("--- end of dump ---");
+    g_recCount = 0;
+  }
+
+  const char* kProjTags[3][2] = {
+    { "Project(float&,float&) in-world", "Project(float&,float&) ui-phase" },
+    { "Project(int&,int&) in-world",     "Project(int&,int&) ui-phase" },
+    { "Project(float,float&,float&) in-world", "Project(float,float&,float&) ui-phase" }
+  };
+  inline void RecProj(int kind, void* ret) { Rec(kProjTags[kind][g_worldDepth > 0 ? 0 : 1], ret); }
+
   // Project(zVEC3 const*, float&, float&)
   void __fastcall Hook_Project_F(zCCamera* self, void* edx, zVEC3 const* v, float& x, float& y);
   CInvoke<void(__fastcall*)(zCCamera*, void*, zVEC3 const*, float&, float&)> Ivk_Project_F(0x00530030, &Hook_Project_F);
   void __fastcall Hook_Project_F(zCCamera* self, void* edx, zVEC3 const* v, float& x, float& y) {
+    RecProj(0, _ReturnAddress());
     g_projDepth++;
     Ivk_Project_F(self, edx, v, x, y);
     g_projDepth--;
@@ -154,6 +191,7 @@ namespace GOTHIC_ENGINE {
   void __fastcall Hook_Project_I(zCCamera* self, void* edx, zVEC3 const* v, int& x, int& y);
   CInvoke<void(__fastcall*)(zCCamera*, void*, zVEC3 const*, int&, int&)> Ivk_Project_I(0x0057A440, &Hook_Project_I);
   void __fastcall Hook_Project_I(zCCamera* self, void* edx, zVEC3 const* v, int& x, int& y) {
+    RecProj(1, _ReturnAddress());
     g_projDepth++;
     Ivk_Project_I(self, edx, v, x, y);
     g_projDepth--;
@@ -167,6 +205,7 @@ namespace GOTHIC_ENGINE {
   void __fastcall Hook_Project_F2(zCCamera* self, void* edx, zVEC3 const* v, float a, float& x, float& y);
   CInvoke<void(__fastcall*)(zCCamera*, void*, zVEC3 const*, float, float&, float&)> Ivk_Project_F2(0x00604ED0, &Hook_Project_F2);
   void __fastcall Hook_Project_F2(zCCamera* self, void* edx, zVEC3 const* v, float a, float& x, float& y) {
+    RecProj(2, _ReturnAddress());
     g_projDepth++;
     Ivk_Project_F2(self, edx, v, a, x, y);
     g_projDepth--;
@@ -184,6 +223,8 @@ namespace GOTHIC_ENGINE {
       case GAME_RIGHT:       return GAME_LEFT;
       case GAME_STRAFELEFT:  return GAME_STRAFERIGHT;
       case GAME_STRAFERIGHT: return GAME_STRAFELEFT;
+      case GAME_ACTIONLEFT:  return GAME_ACTIONRIGHT;
+      case GAME_ACTIONRIGHT: return GAME_ACTIONLEFT;
       default:               return key;
     }
   }
@@ -191,7 +232,12 @@ namespace GOTHIC_ENGINE {
   // zCInput_Win32::GetState(unsigned short)
   float __fastcall Hook_Input_GetState(zCInput_Win32* self, void* edx, unsigned short key);
   CInvoke<float(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetState(0x004D4D30, &Hook_Input_GetState);
+  inline bool IsLRKey(unsigned short k) {
+    return k == GAME_LEFT || k == GAME_RIGHT || k == GAME_STRAFELEFT || k == GAME_STRAFERIGHT ||
+           k == GAME_ACTIONLEFT || k == GAME_ACTIONRIGHT;
+  }
   float __fastcall Hook_Input_GetState(zCInput_Win32* self, void* edx, unsigned short key) {
+    if (IsLRKey(key)) Rec("GetState(LR key)", _ReturnAddress(), key, 0, true);
     return Ivk_Input_GetState(self, edx, SwapLR(key));
   }
 
@@ -199,7 +245,33 @@ namespace GOTHIC_ENGINE {
   int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned short key);
   CInvoke<int(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetToggled(0x004D5020, &Hook_Input_GetToggled);
   int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned short key) {
+    if (IsLRKey(key)) Rec("GetToggled(LR key)", _ReturnAddress(), key, 0, true);
     return Ivk_Input_GetToggled(self, edx, SwapLR(key));
+  }
+
+  // ---------- Телеметрия печати текста (где рисуются подписи) ----------
+  // zCView::Print(int, int, zSTRING const&)
+  void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s);
+  CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_Print(0x007A9A40, &Hook_View_Print);
+  void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s) {
+    Rec(g_uiPhase ? "zCView::Print ui-phase" : "zCView::Print other", _ReturnAddress(), x, y);
+    Ivk_View_Print(self, edx, x, y, s);
+  }
+
+  // zCView::PrintCX(int, zSTRING const&)
+  void __fastcall Hook_View_PrintCX(zCView* self, void* edx, int y, zSTRING const& s);
+  CInvoke<void(__fastcall*)(zCView*, void*, int, zSTRING const&)> Ivk_View_PrintCX(0x007A9E50, &Hook_View_PrintCX);
+  void __fastcall Hook_View_PrintCX(zCView* self, void* edx, int y, zSTRING const& s) {
+    Rec(g_uiPhase ? "zCView::PrintCX ui-phase" : "zCView::PrintCX other", _ReturnAddress(), 0, y);
+    Ivk_View_PrintCX(self, edx, y, s);
+  }
+
+  // zCView::CreateText(int, int, zSTRING const&)
+  zCViewText* __fastcall Hook_View_CreateText3(zCView* self, void* edx, int x, int y, zSTRING const& s);
+  CInvoke<zCViewText*(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_CreateText3(0x007AA2B0, &Hook_View_CreateText3);
+  zCViewText* __fastcall Hook_View_CreateText3(zCView* self, void* edx, int x, int y, zSTRING const& s) {
+    Rec(g_uiPhase ? "zCView::CreateText(3) ui-phase" : "zCView::CreateText(3) other", _ReturnAddress(), x, y);
+    return Ivk_View_CreateText3(self, edx, x, y, s);
   }
 
   // ---------- Хук zCWorld::Render ----------
@@ -222,7 +294,7 @@ namespace GOTHIC_ENGINE {
   // ---------- События Union ----------
 
   void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v6 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v7 loaded\n", false);
   }
 
   void Game_Init() {
@@ -249,6 +321,14 @@ namespace GOTHIC_ENGINE {
       if (screen) screen->PrintCXY(zSTRING(g_mirror ? "MIRROR: ON" : "MIRROR: OFF"));
     }
     wasDown = down;
+
+    static bool wasEnd = false;
+    bool endDown = (GetAsyncKeyState(VK_END) & 0x8000) != 0;     // клавиша END: записать телеметрию
+    if (endDown && !wasEnd) {
+      DumpRecs();
+      if (screen) screen->PrintCXY(zSTRING("TELEMETRY DUMPED"));
+    }
+    wasEnd = endDown;
   }
 
   void Game_PostLoop() {
