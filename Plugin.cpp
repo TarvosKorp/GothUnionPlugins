@@ -1,18 +1,23 @@
-// zMirrorTest v8 (дим-версия для диагностики):
-//   HOME — вкл/выкл зеркало вида (мир переворачивается, UI остаётся).
-//   END  — телеметрия: 1-е нажатие старт записи, 2-е стоп + дамп в zMirror_log.txt.
+// zMirrorTest v9 (диагностический билд):
+//   HOME — вкл/выкл зеркало вида.
+//   END  — телеметрия: 1-е нажатие старт, 2-е стоп + дамп.
 //   O    — зеркалирование сущностей: выкл -> только ГГ -> все NPC -> выкл.
 //
-// Методы зеркала (секция [ZHORIZMOUSEINVERSION] в Gothic.ini):
-//   MirrorMethod=0 (по умолчанию) — быстрый CPU-переворот (SSE2),
-//   MirrorMethod=1                — экспериментальный GPU-метод (проекция), наблюдать артефакты.
+// Методы зеркала ([ZHORIZMOUSEINVERSION] в Gothic.ini):
+//   MirrorMethod=0 — CPU fast (SSE2, всегда работал).
+//   MirrorMethod=1 — GPU: инвертированная проекция + инверсия CULLMODE в SetRenderState.
 //
-// v8 изменения:
-//   - Телеметрия: toggle, сохраняет сами строки, все варианты печати.
-//   - Надпись фокуса: зеркалится, если строка равна имени текущего фокусного объекта.
-//   - Быстрый переворот строк через SSE2 (+ опционально 2 потока).
-//   - GPU-метод с зеркалом в zCCamera::Activate и переключением cull-режима.
-//   - Зеркалирование сущностей (zCVob::Render): отрицание X-строки мировой матрицы.
+// v9 (правки по результатам тестов v8):
+//   - EntStage: ИСПРАВЛЕН layout zMAT4 (right = m[0],m[4],m[8]; pos = m[3],m[7],m[11]).
+//     Раньше отрицалась вся первая строка вместе с pos.x -> модель улетала в (-x,y,z).
+//     Теперь отрицается только right-вектор + инвертируется CULLMODE на время рендера VOB.
+//   - GPU: убран внешний CW<->CCW своп вокруг World_Render; теперь CULLMODE инвертируется
+//     внутри хука XD3D_SetRenderState, пока рисуется главный мир.
+//   - Управление: своп LR-клавиш отключается при открытом модальном окне (zCView::modal),
+//     т.е. в инвентаре, торговле и режиме взлома замков.
+//   - Телеметрия: строки пишутся как UTF-8 + HEX первыми 16 байт; добавлен дамп фокуса
+//     (GetFocusName, focus_vob класс/имя). Собственные сообщения плагина не логируются.
+//   - Надпись фокуса: сравнение с именем фокуса после тримминга и как подстрока.
 #include "resource.h"
 #include <string>
 #include <fstream>
@@ -22,6 +27,52 @@
 #include <thread>
 
 namespace GOTHIC_ENGINE {
+
+  // ---------- Конвертация cp1251 -> UTF-8 (для читаемого лога) ----------
+  std::string Cp1251ToUtf8(const std::string& in) {
+    static const unsigned short cp1251[] = {
+      0x0000,0x0001,0x0002,0x0003,0x0004,0x0005,0x0006,0x0007,0x0008,0x0009,0x000A,0x000B,0x000C,0x000D,0x000E,0x000F,
+      0x0010,0x0011,0x0012,0x0013,0x0014,0x0015,0x0016,0x0017,0x0018,0x0019,0x001A,0x001B,0x001C,0x001D,0x001E,0x001F,
+      0x0020,0x0021,0x0022,0x0023,0x0024,0x0025,0x0026,0x0027,0x0028,0x0029,0x002A,0x002B,0x002C,0x002D,0x002E,0x002F,
+      0x0030,0x0031,0x0032,0x0033,0x0034,0x0035,0x0036,0x0037,0x0038,0x0039,0x003A,0x003B,0x003C,0x003D,0x003E,0x003F,
+      0x0040,0x0041,0x0042,0x0043,0x0044,0x0045,0x0046,0x0047,0x0048,0x0049,0x004A,0x004B,0x004C,0x004D,0x004E,0x004F,
+      0x0050,0x0051,0x0052,0x0053,0x0054,0x0055,0x0056,0x0057,0x0058,0x0059,0x005A,0x005B,0x005C,0x005D,0x005E,0x005F,
+      0x0060,0x0061,0x0062,0x0063,0x0064,0x0065,0x0066,0x0067,0x0068,0x0069,0x006A,0x006B,0x006C,0x006D,0x006E,0x006F,
+      0x0070,0x0071,0x0072,0x0073,0x0074,0x0075,0x0076,0x0077,0x0078,0x0079,0x007A,0x007B,0x007C,0x007D,0x007E,0x007F,
+      0x0402,0x0403,0x201A,0x0453,0x201E,0x2026,0x2020,0x2021,0x20AC,0x2030,0x0409,0x2039,0x040A,0x040C,0x040B,0x040F,
+      0x0452,0x2018,0x2019,0x201C,0x201D,0x2022,0x2013,0x2014,0x0000,0x2122,0x0459,0x203A,0x045A,0x045C,0x045B,0x045F,
+      0x00A0,0x040E,0x045E,0x0408,0x00A4,0x0490,0x00A6,0x00A7,0x0401,0x00A9,0x0404,0x00AB,0x00AC,0x00AD,0x00AE,0x0407,
+      0x00B0,0x00B1,0x0406,0x0456,0x0491,0x00B5,0x00B6,0x00B7,0x0451,0x2116,0x0454,0x00BB,0x0458,0x0405,0x0455,0x0457,
+      0x0410,0x0411,0x0412,0x0413,0x0414,0x0415,0x0416,0x0417,0x0418,0x0419,0x041A,0x041B,0x041C,0x041D,0x041E,0x041F,
+      0x0420,0x0421,0x0422,0x0423,0x0424,0x0425,0x0426,0x0427,0x0428,0x0429,0x042A,0x042B,0x042C,0x042D,0x042E,0x042F,
+      0x0430,0x0431,0x0432,0x0433,0x0434,0x0435,0x0436,0x0437,0x0438,0x0439,0x043A,0x043B,0x043C,0x043D,0x043E,0x043F,
+      0x0440,0x0441,0x0442,0x0443,0x0444,0x0445,0x0446,0x0447,0x0448,0x0449,0x044A,0x044B,0x044C,0x044D,0x044E,0x044F
+    };
+    std::string out;
+    for (size_t i = 0; i < in.size(); i++) {
+      unsigned char c = (unsigned char)in[i];
+      if (c < 0x80) { out += (char)c; continue; }
+      unsigned short u = cp1251[c];
+      if (u == 0) { out += '?'; continue; }
+      if (u < 0x800) {
+        out += (char)(0xC0 | (u >> 6));
+        out += (char)(0x80 | (u & 0x3F));
+      } else {
+        out += (char)(0xE0 | (u >> 12));
+        out += (char)(0x80 | ((u >> 6) & 0x3F));
+        out += (char)(0x80 | (u & 0x3F));
+      }
+    }
+    return out;
+  }
+
+  std::string HexBytes(const char* s, int maxlen = 16) {
+    std::string r;
+    for (int i = 0; i < maxlen && s && s[i]; i++) {
+      char b[8]; sprintf_s(b, sizeof(b), "%02X", (unsigned char)s[i]); r += b;
+    }
+    return r;
+  }
 
   // ---------- Запись логов ----------
   std::string ExeDirPath(const char* name) {
@@ -44,8 +95,8 @@ namespace GOTHIC_ENGINE {
   }
 
   int g_logLines = 0;
-  void Log(const std::string& s) {            // не больше 2000 строк за сессию
-    if (g_logLines++ < 2000) WriteText("zMirror_log.txt", s + "\n", true);
+  void Log(const std::string& s) {
+    if (g_logLines++ < 2500) WriteText("zMirror_log.txt", s + "\n", true);
   }
   std::string Hex(unsigned long v) {
     char b[32]; sprintf_s(b, sizeof(b), "0x%08lX", v); return b;
@@ -58,11 +109,10 @@ namespace GOTHIC_ENGINE {
   int g_failStreak = 0;
   double g_msSum = 0; int g_msCount = 0; int g_msReports = 0;
   int g_frame = 0;
-  bool g_inMainWorld = false; // true: сейчас рисуется главный мир (для GPU-метода и телеметрии cull)
+  bool g_inMainWorld = false;
   int g_labelMirrored = 0;
   int g_cullSets = 0; unsigned long g_cullLastVal = 0;
 
-  // Реальный render target устройства (вызывающий делает Release())
   IDirectDrawSurface7* AcquireTarget() {
     IDirectDrawSurface7* rt = NULL;
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
@@ -104,7 +154,6 @@ namespace GOTHIC_ENGINE {
     BYTE* base = (BYTE*)d.lpSurface;
     if (!base) ok = false;
     else if (bpp == 32 || bpp == 16) {
-      // 2 потока: верх и низ экрана
       std::thread t1(DoFlipRows, FlipJob{ base, d.lPitch, d.dwWidth, d.dwHeight / 2, bpp });
       DoFlipRows(FlipJob{ base + (size_t)(d.dwHeight / 2) * d.lPitch, d.lPitch, d.dwWidth, d.dwHeight - d.dwHeight / 2, bpp });
       t1.join();
@@ -139,7 +188,7 @@ namespace GOTHIC_ENGINE {
     else if (++g_failStreak >= 30) { g_mirror = false; Log("mirror auto-disabled: 30 failures in a row"); }
   }
 
-  // ---------- GPU-метод ----------
+  // ---------- GPU-метод: негативная проекция ----------
   void ApplyMirrorProjection(zCCamera* cam) {
     if (!cam) return;
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
@@ -151,7 +200,6 @@ namespace GOTHIC_ENGINE {
     }
   }
 
-  // zCCamera::Activate
   void __fastcall Hook_Cam_Activate(zCCamera* self, void* edx);
   CInvoke<void(__fastcall*)(zCCamera*, void*)> Ivk_Cam_Activate(0x0054A700, &Hook_Cam_Activate);
   void __fastcall Hook_Cam_Activate(zCCamera* self, void* edx) {
@@ -159,18 +207,24 @@ namespace GOTHIC_ENGINE {
     if (g_inMainWorld && g_mirror && g_methodGPU) ApplyMirrorProjection(self);
   }
 
-  // zCRnd_D3D::XD3D_SetRenderState — телеметрия cull (сколько раз движок выставляет CULLMODE)
+  // Инверсия CULLMODE для GPU-метода: движок сам ставит режим много раз,
+  // поэтому перехватываем и инвертируем каждый вызов, пока рисуется главный мир.
+  inline DWORD InvertCull(DWORD v) {
+    if (v == D3DCULL_CW) return D3DCULL_CCW;
+    if (v == D3DCULL_CCW) return D3DCULL_CW;
+    return v; // NONE остаётся NONE
+  }
+
   int __fastcall Hook_SetRenderState(zCRnd_D3D* self, void* edx, D3DRENDERSTATETYPE t, DWORD v);
   CInvoke<int(__fastcall*)(zCRnd_D3D*, void*, D3DRENDERSTATETYPE, DWORD)> Ivk_SetRenderState(0x00644EF0, &Hook_SetRenderState);
   int __fastcall Hook_SetRenderState(zCRnd_D3D* self, void* edx, D3DRENDERSTATETYPE t, DWORD v) {
-    int r = Ivk_SetRenderState(self, edx, t, v);
-    if (g_inMainWorld && t == D3DRENDERSTATE_CULLMODE) {
-      g_cullSets++; g_cullLastVal = v;
+    if (t == D3DRENDERSTATE_CULLMODE) {
+      if (g_inMainWorld && g_mirror && g_methodGPU) v = InvertCull(v);
+      if (g_inMainWorld) { g_cullSets++; g_cullLastVal = v; }
     }
-    return r;
+    return Ivk_SetRenderState(self, edx, t, v);
   }
 
-  // главный игровой мир (а не мини-миры предметов в инвентаре)
   inline bool IsMainWorld(zCWorld* w) {
     return ogame && w == (zCWorld*)ogame->GetGameWorld();
   }
@@ -206,27 +260,40 @@ namespace GOTHIC_ENGINE {
 
   // ---------- Телеметрия ----------
   struct TRec {
-    const char* tag; DWORD caller; int a; int b; int count; char str[64]; bool focus;
+    const char* tag; DWORD caller; int a; int b; int count; char str[64]; char hex[64]; bool focus;
   };
   TRec g_recs[400];
   int g_recCount = 0;
   bool g_teleOn = false;
 
+  bool IsOwnMessage(const char* s) {
+    if (!s) return false;
+    return strncmp(s, "TELEMETRY", 9) == 0 ||
+           strncmp(s, "MIRROR:", 7) == 0 ||
+           strncmp(s, "ENT-MIRROR", 10) == 0;
+  }
+
   void RecEx(const char* tag, void* ret, int a, int b, const std::string& s = std::string(), bool focus = false) {
     if (!g_teleOn) return;
+    const char* cs = s.c_str();
+    if (IsOwnMessage(cs)) return;
     DWORD c = (DWORD)ret;
     for (int i = 0; i < g_recCount; i++) {
       TRec& r = g_recs[i];
       if (r.tag == tag && r.caller == c && r.a == a && r.b == b &&
-          (s.empty() || strcmp(r.str, s.c_str()) == 0)) {
+          (s.empty() || strcmp(r.str, cs) == 0)) {
         r.count++; r.focus |= focus; return;
       }
     }
     if (g_recCount < 400) {
       TRec& r = g_recs[g_recCount++];
       r.tag = tag; r.caller = c; r.a = a; r.b = b; r.count = 1; r.focus = focus;
-      r.str[0] = 0;
-      if (!s.empty()) strncpy_s(r.str, s.c_str(), _TRUNCATE);
+      r.str[0] = 0; r.hex[0] = 0;
+      if (!s.empty()) {
+        strncpy_s(r.str, cs, _TRUNCATE);
+        std::string hx = HexBytes(cs, 20);
+        strncpy_s(r.hex, hx.c_str(), _TRUNCATE);
+      }
     }
   }
 
@@ -239,8 +306,33 @@ namespace GOTHIC_ENGINE {
       }
     if (g_recCount < 400) {
       TRec& r = g_recs[g_recCount++];
-      r.tag = tag; r.caller = c; r.a = a; r.b = b; r.count = 1; r.focus = false; r.str[0] = 0;
+      r.tag = tag; r.caller = c; r.a = a; r.b = b; r.count = 1; r.focus = false; r.str[0] = 0; r.hex[0] = 0;
     }
+  }
+
+  void DumpFocusInfo() {
+    char b[512];
+    std::string focusName;
+    if (ogame) {
+      zSTRING n = oCNpcFocus::GetFocusName();
+      const char* ch = n.ToChar();
+      if (ch) focusName = ch;
+    }
+    sprintf_s(b, sizeof(b), "FOCUS: name=\"%s\" hex=%s len=%d",
+              Cp1251ToUtf8(focusName).c_str(), HexBytes(focusName.c_str(), 20).c_str(), (int)focusName.size());
+    Log(b);
+
+    zCVob* fv = (player && ogame) ? player->GetFocusVob() : NULL;
+    if (!fv) { Log("FOCUS: vob=null"); return; }
+    zCClassDef* d = fv->_GetClassDef();
+    std::string cls;
+    while (d) { const char* cn = d->className.ToChar(); if (cn) { cls = cn; break; } d = d->baseClassDef; }
+    std::string nm;
+    if (cls == "oCNpc") { zSTRING t = ((oCNpc*)fv)->name; const char* c = t.ToChar(); if (c) nm = c; }
+    else if (cls == "oCItem") { zSTRING t = ((oCItem*)fv)->name; const char* c = t.ToChar(); if (c) nm = c; }
+    else if (cls == "oCMOB") { zSTRING t = ((oCMOB*)fv)->GetName(); const char* c = t.ToChar(); if (c) nm = c; }
+    sprintf_s(b, sizeof(b), "FOCUS: vob class=%s name=\"%s\" hex=%s", cls.c_str(), Cp1251ToUtf8(nm).c_str(), HexBytes(nm.c_str(), 20).c_str());
+    Log(b);
   }
 
   void DumpRecs() {
@@ -251,12 +343,16 @@ namespace GOTHIC_ENGINE {
     sprintf_s(b, sizeof(b), "mirror=%d methodGPU=%d entStage=%d labelMirrored=%d cullSets=%d cullLast=0x%08lX",
               g_mirror ? 1 : 0, g_methodGPU ? 1 : 0, g_entStage, g_labelMirrored, g_cullSets, g_cullLastVal);
     Log(b);
+    DumpFocusInfo();
     for (int i = 0; i < g_recCount; i++) {
       TRec& r = g_recs[i];
       std::string line = std::string(r.tag) + "  caller=" + Hex(r.caller) +
                          "  count=" + std::to_string(r.count) +
                          "  last a=" + std::to_string(r.a) + " b=" + std::to_string(r.b);
-      if (r.str[0]) { line += "  str=\""; line += r.str; line += "\""; }
+      if (r.str[0]) {
+        line += "  str=\"" + Cp1251ToUtf8(r.str) + "\"";
+        line += "  hex=" + std::string(r.hex);
+      }
       if (r.focus) line += "  [FOCUS-MATCH]";
       Log(line);
     }
@@ -272,13 +368,29 @@ namespace GOTHIC_ENGINE {
     if (cachedFrame != g_frame) {
       cachedFrame = g_frame;
       cached.clear();
-      if (ogame) {
+      zCVob* fv = (player && ogame) ? player->GetFocusVob() : NULL;
+      if (fv) {
+        zCClassDef* d = fv->_GetClassDef();
+        std::string cls;
+        while (d) { const char* cn = d->className.ToChar(); if (cn) { cls = cn; break; } d = d->baseClassDef; }
+        if (cls == "oCNpc") { const char* c = ((oCNpc*)fv)->name.ToChar(); if (c) cached = c; }
+        else if (cls == "oCItem") { const char* c = ((oCItem*)fv)->name.ToChar(); if (c) cached = c; }
+        else if (cls == "oCMOB") { const char* c = ((oCMOB*)fv)->GetName().ToChar(); if (c) cached = c; }
+      }
+      if (cached.empty() && ogame) {
         zSTRING n = oCNpcFocus::GetFocusName();
         const char* ch = n.ToChar();
         if (ch) cached = ch;
       }
     }
     return cached.c_str();
+  }
+
+  std::string TrimStr(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    size_t b = s.find_last_not_of(" \t\r\n");
+    if (a == std::string::npos) return std::string();
+    return s.substr(a, b - a + 1);
   }
 
   int ScreenWidthPixels() {
@@ -290,9 +402,9 @@ namespace GOTHIC_ENGINE {
     if (!v) return x;
     int W = ScreenWidthPixels();
     if (W <= 0) return x;
-    int px = v->nax(x);        // виртуальная -> пиксельная
+    int px = v->nax(x);
     int nx = W - 1 - px;
-    return v->anx(nx);         // пиксельная -> виртуальная
+    return v->anx(nx);
   }
 
   inline bool ShouldMirrorLabel() {
@@ -305,15 +417,20 @@ namespace GOTHIC_ENGINE {
     if (!f || !f[0]) return;
     const char* t = s.ToChar();
     if (!t) return;
-    if (_stricmp(t, f) == 0) {
+    std::string ts = TrimStr(t);
+    std::string fs = TrimStr(f);
+    if (ts.empty() || fs.empty()) return;
+    bool match = (_stricmp(ts.c_str(), fs.c_str()) == 0) ||
+                 (ts.size() > fs.size() && _strnicmp(ts.c_str(), fs.c_str(), fs.size()) == 0) ||
+                 (fs.size() > ts.size() && _strnicmp(fs.c_str(), ts.c_str(), ts.size()) == 0);
+    if (match) {
       x = GoMirrorX(self, x);
       g_labelMirrored++;
       RecEx("FOCUS_LABEL mirror", _ReturnAddress(), x, 0, std::string(t), true);
     }
   }
 
-  // ---------- Хуки печати (телеметрия + зеркалирование надписи) ----------
-  // Print(int, int, zSTRING const&)
+  // ---------- Хуки печати ----------
   void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s);
   CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_Print(0x007A9A40, &Hook_View_Print);
   void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s) {
@@ -323,7 +440,6 @@ namespace GOTHIC_ENGINE {
     Ivk_View_Print(self, edx, x, y, s);
   }
 
-  // PrintChars(int, int, zSTRING const&)
   void __fastcall Hook_View_PrintChars(zCView* self, void* edx, int x, int y, zSTRING const& s);
   CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_PrintChars(0x007A9B10, &Hook_View_PrintChars);
   void __fastcall Hook_View_PrintChars(zCView* self, void* edx, int x, int y, zSTRING const& s) {
@@ -332,7 +448,6 @@ namespace GOTHIC_ENGINE {
     Ivk_View_PrintChars(self, edx, x, y, s);
   }
 
-  // PrintCX(int, zSTRING const&)
   void __fastcall Hook_View_PrintCX(zCView* self, void* edx, int y, zSTRING const& s);
   CInvoke<void(__fastcall*)(zCView*, void*, int, zSTRING const&)> Ivk_View_PrintCX(0x007A9E50, &Hook_View_PrintCX);
   void __fastcall Hook_View_PrintCX(zCView* self, void* edx, int y, zSTRING const& s) {
@@ -341,7 +456,6 @@ namespace GOTHIC_ENGINE {
     Ivk_View_PrintCX(self, edx, y, s);
   }
 
-  // PrintCY(int, zSTRING const&)
   void __fastcall Hook_View_PrintCY(zCView* self, void* edx, int x, zSTRING const& s);
   CInvoke<void(__fastcall*)(zCView*, void*, int, zSTRING const&)> Ivk_View_PrintCY(0x007A9F40, &Hook_View_PrintCY);
   void __fastcall Hook_View_PrintCY(zCView* self, void* edx, int x, zSTRING const& s) {
@@ -350,7 +464,6 @@ namespace GOTHIC_ENGINE {
     Ivk_View_PrintCY(self, edx, x, s);
   }
 
-  // PrintCXY(zSTRING const&)
   void __fastcall Hook_View_PrintCXY(zCView* self, void* edx, zSTRING const& s);
   CInvoke<void(__fastcall*)(zCView*, void*, zSTRING const&)> Ivk_View_PrintCXY(0x007AA030, &Hook_View_PrintCXY);
   void __fastcall Hook_View_PrintCXY(zCView* self, void* edx, zSTRING const& s) {
@@ -359,7 +472,6 @@ namespace GOTHIC_ENGINE {
     Ivk_View_PrintCXY(self, edx, s);
   }
 
-  // PrintTimed(int, int, zSTRING const&, float, zCOLOR*)
   void __fastcall Hook_View_PrintTimed(zCView* self, void* edx, int x, int y, zSTRING const& s, float tm, zCOLOR* c);
   CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&, float, zCOLOR*)> Ivk_View_PrintTimed(0x007A7D20, &Hook_View_PrintTimed);
   void __fastcall Hook_View_PrintTimed(zCView* self, void* edx, int x, int y, zSTRING const& s, float tm, zCOLOR* c) {
@@ -368,7 +480,6 @@ namespace GOTHIC_ENGINE {
     Ivk_View_PrintTimed(self, edx, x, y, s, tm, c);
   }
 
-  // PrintTimedCX(int, zSTRING const&, float, zCOLOR*)
   void __fastcall Hook_View_PrintTimedCX(zCView* self, void* edx, int y, zSTRING const& s, float tm, zCOLOR* c);
   CInvoke<void(__fastcall*)(zCView*, void*, int, zSTRING const&, float, zCOLOR*)> Ivk_View_PrintTimedCX(0x007A7DB0, &Hook_View_PrintTimedCX);
   void __fastcall Hook_View_PrintTimedCX(zCView* self, void* edx, int y, zSTRING const& s, float tm, zCOLOR* c) {
@@ -377,7 +488,6 @@ namespace GOTHIC_ENGINE {
     Ivk_View_PrintTimedCX(self, edx, y, s, tm, c);
   }
 
-  // PrintTimedCY(int, zSTRING const&, float, zCOLOR*)
   void __fastcall Hook_View_PrintTimedCY(zCView* self, void* edx, int x, zSTRING const& s, float tm, zCOLOR* c);
   CInvoke<void(__fastcall*)(zCView*, void*, int, zSTRING const&, float, zCOLOR*)> Ivk_View_PrintTimedCY(0x007A7F00, &Hook_View_PrintTimedCY);
   void __fastcall Hook_View_PrintTimedCY(zCView* self, void* edx, int x, zSTRING const& s, float tm, zCOLOR* c) {
@@ -386,7 +496,6 @@ namespace GOTHIC_ENGINE {
     Ivk_View_PrintTimedCY(self, edx, x, s, tm, c);
   }
 
-  // PrintTimedCXY(zSTRING const&, float, zCOLOR*)
   void __fastcall Hook_View_PrintTimedCXY(zCView* self, void* edx, zSTRING const& s, float tm, zCOLOR* c);
   CInvoke<void(__fastcall*)(zCView*, void*, zSTRING const&, float, zCOLOR*)> Ivk_View_PrintTimedCXY(0x007A7FC0, &Hook_View_PrintTimedCXY);
   void __fastcall Hook_View_PrintTimedCXY(zCView* self, void* edx, zSTRING const& s, float tm, zCOLOR* c) {
@@ -395,7 +504,6 @@ namespace GOTHIC_ENGINE {
     Ivk_View_PrintTimedCXY(self, edx, s, tm, c);
   }
 
-  // CreateText(int, int, zSTRING const&)
   zCViewText* __fastcall Hook_View_CreateText3(zCView* self, void* edx, int x, int y, zSTRING const& s);
   CInvoke<zCViewText*(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_CreateText3(0x007AA2B0, &Hook_View_CreateText3);
   zCViewText* __fastcall Hook_View_CreateText3(zCView* self, void* edx, int x, int y, zSTRING const& s) {
@@ -405,7 +513,6 @@ namespace GOTHIC_ENGINE {
     return Ivk_View_CreateText3(self, edx, x, y, s);
   }
 
-  // CreateText(int, int, zSTRING const&, float, zCOLOR&, int, int)
   zCViewText* __fastcall Hook_View_CreateText7(zCView* self, void* edx, int x, int y, zSTRING const& s, float tm, zCOLOR& c, int a, int b);
   CInvoke<zCViewText*(__fastcall*)(zCView*, void*, int, int, zSTRING const&, float, zCOLOR&, int, int)> Ivk_View_CreateText7(0x007A7AB0, &Hook_View_CreateText7);
   zCViewText* __fastcall Hook_View_CreateText7(zCView* self, void* edx, int x, int y, zSTRING const& s, float tm, zCOLOR& c, int a, int b) {
@@ -417,6 +524,7 @@ namespace GOTHIC_ENGINE {
   // ---------- Клавиши: влево <-> вправо ----------
   inline unsigned short SwapLR(unsigned short key) {
     if (!g_mirror || !ogame || ogame->IsOnPause()) return key;
+    if (zCView::modal) return key;   // инвентарь, торговля, взлом и т.п.
     switch (key) {
       case GAME_LEFT:        return GAME_RIGHT;
       case GAME_RIGHT:       return GAME_LEFT;
@@ -428,7 +536,6 @@ namespace GOTHIC_ENGINE {
     }
   }
 
-  // zCInput_Win32::GetState(unsigned short)
   float __fastcall Hook_Input_GetState(zCInput_Win32* self, void* edx, unsigned short key);
   CInvoke<float(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetState(0x004D4D30, &Hook_Input_GetState);
   inline bool IsLRKey(unsigned short k) {
@@ -440,7 +547,6 @@ namespace GOTHIC_ENGINE {
     return Ivk_Input_GetState(self, edx, SwapLR(key));
   }
 
-  // zCInput_Win32::GetToggled(unsigned short)
   int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned short key);
   CInvoke<int(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetToggled(0x004D5020, &Hook_Input_GetToggled);
   int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned short key) {
@@ -460,7 +566,21 @@ namespace GOTHIC_ENGINE {
     return false;
   }
 
-  // zCVob::Render(zTRenderContext&)
+  // Инверсия CULLMODE вокруг рендера одной модели (для EntStage)
+  DWORD g_savedCull = 0;
+  void ApplyCullInvert(bool on) {
+    IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
+    if (!dev) return;
+    if (on) {
+      if (SUCCEEDED(dev->GetRenderState(D3DRENDERSTATE_CULLMODE, &g_savedCull))) {
+        DWORD inv = InvertCull(g_savedCull);
+        if (inv != g_savedCull) dev->SetRenderState(D3DRENDERSTATE_CULLMODE, inv);
+      }
+    } else {
+      dev->SetRenderState(D3DRENDERSTATE_CULLMODE, g_savedCull);
+    }
+  }
+
   int __fastcall Hook_Vob_Render(zCVob* self, zTRenderContext& ctx);
   CInvoke<int(__fastcall*)(zCVob*, zTRenderContext&)> Ivk_Vob_Render(0x006015D0, &Hook_Vob_Render);
   int __fastcall Hook_Vob_Render(zCVob* self, zTRenderContext& ctx) {
@@ -471,15 +591,20 @@ namespace GOTHIC_ENGINE {
     }
     if (!apply) return Ivk_Vob_Render(self, ctx);
 
-    // Сохраняем мировую матрицу и строим зеркальную: negate X-строку, трансляция X остаётся.
-    float m[16];
-    memcpy(m, &self->trafoObjToWorld, sizeof(m));
+    // zMAT4 хранит строки: v[0]=(right.x,up.x,at.x,pos.x), v[1]=(right.y,...), v[2]=(right.z,...).
+    // Отрицаем только right-вектор (m[0], m[4], m[8]); позицию (m[3],m[7],m[11]) не трогаем.
     float orig[16];
-    memcpy(orig, m, sizeof(orig));
-    m[0] = -m[0]; m[1] = -m[1]; m[2] = -m[2]; m[3] = -m[3];
-    m[12] = orig[12];
+    memcpy(orig, &self->trafoObjToWorld, sizeof(orig));
+    float m[16];
+    memcpy(m, orig, sizeof(m));
+    m[0] = -m[0];
+    m[4] = -m[4];
+    m[8] = -m[8];
     memcpy(&self->trafoObjToWorld, m, sizeof(m));
+
+    ApplyCullInvert(true);
     int r = Ivk_Vob_Render(self, ctx);
+    ApplyCullInvert(false);
     memcpy(&self->trafoObjToWorld, orig, sizeof(orig));
     return r;
   }
@@ -498,22 +623,7 @@ namespace GOTHIC_ENGINE {
       g_inMainWorld = true;
     }
 
-    if (main && g_mirror && g_methodGPU) {
-      IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
-      DWORD oldCull = D3DCULL_NONE;
-      if (dev && SUCCEEDED(dev->GetRenderState(D3DRENDERSTATE_CULLMODE, &oldCull))) {
-        DWORD neu = (oldCull == D3DCULL_CW) ? D3DCULL_CCW
-                  : (oldCull == D3DCULL_CCW) ? D3DCULL_CW
-                  : D3DCULL_CW;
-        dev->SetRenderState(D3DRENDERSTATE_CULLMODE, neu);
-        Ivk_World_Render(self, edx, cam);
-        dev->SetRenderState(D3DRENDERSTATE_CULLMODE, oldCull);
-      }
-      else Ivk_World_Render(self, edx, cam);
-    }
-    else {
-      Ivk_World_Render(self, edx, cam);
-    }
+    Ivk_World_Render(self, edx, cam);
 
     g_worldDepth--;
     g_inMainWorld = prevInMain;
@@ -526,7 +636,7 @@ namespace GOTHIC_ENGINE {
 
   // ---------- События Union ----------
   void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v8 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v9 loaded\n", false);
     int m = GetPrivateProfileIntA("ZHORIZMOUSEINVERSION", "MirrorMethod", 0, ExeDirPath("Gothic.ini").c_str());
     g_methodGPU = (m == 1);
     char b[96];
@@ -534,14 +644,9 @@ namespace GOTHIC_ENGINE {
     Log(b);
   }
 
-  void Game_Init() {
-  }
-
-  void Game_Exit() {
-  }
-
-  void Game_PreLoop() {
-  }
+  void Game_Init() { }
+  void Game_Exit() { }
+  void Game_PreLoop() { }
 
   void Game_Loop() {
     static bool wasDown = false;
@@ -585,11 +690,8 @@ namespace GOTHIC_ENGINE {
     wasO = oDown;
   }
 
-  void Game_PostLoop() {
-  }
-
-  void Game_MenuLoop() {
-  }
+  void Game_PostLoop() { }
+  void Game_MenuLoop() { }
 
   TSaveLoadGameInfo& SaveLoadGameInfo = UnionCore::SaveLoadGameInfo;
 
