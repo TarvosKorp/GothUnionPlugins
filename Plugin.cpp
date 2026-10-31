@@ -1,20 +1,21 @@
-// zMirrorTest v14 (диагностический билд):
+// zMirrorTest v15 (диагностический билд):
 //   HOME — вкл/выкл зеркало вида.
 //   END  — телеметрия: 1-е нажатие старт, 2-е стоп + дамп.
 //   O    — зеркалирование сущностей (эксперимент): выкл -> ГГ -> все NPC -> выкл.
 //
 // Методы зеркала ([ZHORIZMOUSEINVERSION] в Gothic.ini):
 //   MirrorMethod=0 — CPU fast (SSE2) — эталон.
-//   MirrorMethod=1 — GPU: пост-зеркало проекции (столбец 0) + CULLMODE=NONE.
-//   MirrorMethod=2 — GPU: пост-зеркало проекции + инверсия CULLMODE.
+//   MirrorMethod=1 — GPU: пост-зеркало проекции + отражение фрустума + CULLMODE=NONE.
+//   MirrorMethod=2 — GPU: пост-зеркало проекции + отражение фрустума + инверсия CULLMODE.
 //
-// v14 (правки по тестам v13):
-//   - GPU: проекция отражается через пост-зеркало (отрицание столбца 0 =
-//     _11,_21,_31,_41). Это зеркало экрана, которое не ломает отсечение мира
-//     и должно отразить VOB и PFX-спрайты.
-//   - Диагностика (FOCUS_LABEL diag, MAP, MapScreen Show) пишется в лог только
-//     при включённой телеметрии (END) - нет мусора в обычной игре.
-//   - Надписи и взлом - как в v13 (эталон).
+// v15 (главное — GPU):
+//   - НОВОЕ: плоскости фрустума камеры отражаются по X. Движок отсекает мир ДО
+//     зеркала, и из-за неотражённых плоскостей всё пропадало из вида.
+//     Теперь отсечение согласовано с зеркалом — локация должна стать видимой,
+//     а VOB/PFX/тени должны корректно зеркалиться.
+//   - Фильтр кандидатов фокуса: строки вида "FOCUS_*" (имена режимов) игнорируются.
+//   - Карта: диагностика вызовов UpdatePosition (каждый 120-й) под телеметрией.
+//   - Надписи и взлом — как в v13/v14 (эталон).
 #include "resource.h"
 #include <string>
 #include <vector>
@@ -215,7 +216,20 @@ namespace GOTHIC_ENGINE {
   CInvoke<void(__fastcall*)(zCCamera*, void*)> Ivk_Cam_Activate(0x0054A700, &Hook_Cam_Activate);
   void __fastcall Hook_Cam_Activate(zCCamera* self, void* edx) {
     Ivk_Cam_Activate(self, edx);
-    if (g_inMainWorld && g_mirror && g_methodGPU) ApplyMirrorProjection();
+    if (!g_inMainWorld || !g_mirror || !g_methodGPU) return;
+    if (!self) return;
+    // Пост-зеркало проекции.
+    ApplyMirrorProjection();
+    // Отражаем плоскости фрустума: геометрия отсекается ДО зеркала,
+    // поэтому нормали X фот надо отразить, иначе мир/объекты выпадают из фрустума.
+    for (int i = 0; i < zCCamera::NUM_FRUSTUM_PLANES; i++) {
+      zTPlane& pl = self->frustumplanes[i];
+      pl.normal.n[VX] = -pl.normal.n[VX];
+      self->signbits[i] = (unsigned char)(
+        ((pl.normal.n[VX] < 0.0f) ? 1 : 0) |
+        ((pl.normal.n[VY] < 0.0f) ? 2 : 0) |
+        ((pl.normal.n[VZ] < 0.0f) ? 4 : 0));
+    }
   }
 
   int __fastcall Hook_SetRenderState(zCRnd_D3D* self, void* edx, D3DRENDERSTATETYPE t, DWORD v);
@@ -419,7 +433,9 @@ namespace GOTHIC_ENGINE {
       if (ogame) {
         zSTRING n = oCNpcFocus::GetFocusName();
         const char* ch = n.ToChar();
-        if (ch && ch[0]) {
+        // GetFocusName() может вернуть имя РЕЖИМА ("FOCUS_NORMAL" и т.п.) -
+        // такие строки не являются именами объектов, пропускаем.
+        if (ch && ch[0] && strncmp(ch, "FOCUS_", 6) != 0) {
           bool exists = false;
           for (size_t i = 0; i < cached.size(); i++) if (cached[i] == ch) { exists = true; break; }
           if (!exists) cached.push_back(ch);
@@ -682,16 +698,26 @@ namespace GOTHIC_ENGINE {
   }
 
   bool g_mapDiagDone = false;
+  int g_mapCalls = 0;
   void __fastcall Hook_Map_UpdatePosition(oCViewDocumentMap* self, void* edx);
   CInvoke<void(__fastcall*)(oCViewDocumentMap*, void*)> Ivk_Map_UpdatePosition(0x0068D7B0, &Hook_Map_UpdatePosition);
   void __fastcall Hook_Map_UpdatePosition(oCViewDocumentMap* self, void* edx) {
     if (!self) { Ivk_Map_UpdatePosition(self, edx); return; }
-    if (g_teleOn && !g_mapDiagDone) {
-      g_mapDiagDone = true;
-      char b[160];
-      sprintf_s(b, sizeof(b), "MAP UpdatePosition: x0=%.0f x1=%.0f y0=%.0f y1=%.0f",
-                self->LevelCoords.n[0], self->LevelCoords.n[2], self->LevelCoords.n[1], self->LevelCoords.n[3]);
-      Log(b);
+    g_mapCalls++;
+    if (g_teleOn) {
+      if (!g_mapDiagDone) {
+        g_mapDiagDone = true;
+        char b[160];
+        sprintf_s(b, sizeof(b), "MAP UpdatePosition: x0=%.0f x1=%.0f y0=%.0f y1=%.0f",
+                  self->LevelCoords.n[0], self->LevelCoords.n[2], self->LevelCoords.n[1], self->LevelCoords.n[3]);
+        Log(b);
+      }
+      if (g_mapCalls % 120 == 0) {
+        char b[160];
+        sprintf_s(b, sizeof(b), "MAP UpdatePosition call #%d mirror=%d",
+                  g_mapCalls, g_mirror ? 1 : 0);
+        Log(b);
+      }
     }
     if (g_mirror) {
       zVEC4 orig = self->LevelCoords;
@@ -731,7 +757,7 @@ namespace GOTHIC_ENGINE {
 
   // ---------- События Union ----------
   void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v14 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v15 loaded\n", false);
     int m = GetPrivateProfileIntA("ZHORIZMOUSEINVERSION", "MirrorMethod", 0, ExeDirPath("Gothic.ini").c_str());
     if (m == 1) { g_methodGPU = true; g_cullInvert = true; }
     else if (m == 2) { g_methodGPU = true; g_cullInvert = false; }
