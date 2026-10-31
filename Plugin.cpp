@@ -328,7 +328,7 @@ namespace GOTHIC_ENGINE {
     std::string cls;
     while (d) { const char* cn = d->className.ToChar(); if (cn) { cls = cn; break; } d = d->baseClassDef; }
     std::string nm;
-    if (cls == "oCNpc") { zSTRING t = ((oCNpc*)fv)->name; const char* c = t.ToChar(); if (c) nm = c; }
+    if (cls == "oCNpc") { zSTRING t = ((oCNpc*)fv)->name[0]; const char* c = t.ToChar(); if (c) nm = c; }
     else if (cls == "oCItem") { zSTRING t = ((oCItem*)fv)->name; const char* c = t.ToChar(); if (c) nm = c; }
     else if (cls == "oCMOB") { zSTRING t = ((oCMOB*)fv)->GetName(); const char* c = t.ToChar(); if (c) nm = c; }
     sprintf_s(b, sizeof(b), "FOCUS: vob class=%s name=\"%s\" hex=%s", cls.c_str(), Cp1251ToUtf8(nm).c_str(), HexBytes(nm.c_str(), 20).c_str());
@@ -373,7 +373,7 @@ namespace GOTHIC_ENGINE {
         zCClassDef* d = fv->_GetClassDef();
         std::string cls;
         while (d) { const char* cn = d->className.ToChar(); if (cn) { cls = cn; break; } d = d->baseClassDef; }
-        if (cls == "oCNpc") { const char* c = ((oCNpc*)fv)->name.ToChar(); if (c) cached = c; }
+        if (cls == "oCNpc") { const char* c = ((oCNpc*)fv)->name[0].ToChar(); if (c) cached = c; }
         else if (cls == "oCItem") { const char* c = ((oCItem*)fv)->name.ToChar(); if (c) cached = c; }
         else if (cls == "oCMOB") { const char* c = ((oCMOB*)fv)->GetName().ToChar(); if (c) cached = c; }
       }
