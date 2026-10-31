@@ -1,21 +1,20 @@
-// zMirrorTest v13 (диагностический билд):
+// zMirrorTest v14 (диагностический билд):
 //   HOME — вкл/выкл зеркало вида.
 //   END  — телеметрия: 1-е нажатие старт, 2-е стоп + дамп.
 //   O    — зеркалирование сущностей (эксперимент): выкл -> ГГ -> все NPC -> выкл.
 //
 // Методы зеркала ([ZHORIZMOUSEINVERSION] в Gothic.ini):
 //   MirrorMethod=0 — CPU fast (SSE2) — эталон.
-//   MirrorMethod=1 — GPU: отражённая проекция (Activate) + CULLMODE=NONE на время мира.
-//   MirrorMethod=2 — GPU: отражённая проекция (Activate) + инверсия CULLMODE.
+//   MirrorMethod=1 — GPU: пост-зеркало проекции (столбец 0) + CULLMODE=NONE.
+//   MirrorMethod=2 — GPU: пост-зеркало проекции + инверсия CULLMODE.
 //
-// v13 (правки по тестам v12):
-//   - GPU: проекция отражается снова в Activate (там она реально влияет, как в v8/v9).
-//     Вместо инверсии cull режим 1 ставит CULLMODE=NONE на время рендера мира
-//     (как в EntStage — мерцание и невидимость уходят). Режим 2 — инверсия.
-//   - Взлом: диагностика — в лог пишутся AIState/AIStateTime игрока и все вызывающие
-//     коды чтения LR-клавиш при фокусе на запираемом объекте (SwapCheck).
-//   - Карта: перехват oCMapScreen::Show (карта по M) + диагностика UpdatePosition.
-//   - Надписи: как в v12 (эталон, работает для NPC/Item/Mobsi).
+// v14 (правки по тестам v13):
+//   - GPU: проекция отражается через пост-зеркало (отрицание столбца 0 =
+//     _11,_21,_31,_41). Это зеркало экрана, которое не ломает отсечение мира
+//     и должно отразить VOB и PFX-спрайты.
+//   - Диагностика (FOCUS_LABEL diag, MAP, MapScreen Show) пишется в лог только
+//     при включённой телеметрии (END) - нет мусора в обычной игре.
+//   - Надписи и взлом - как в v13 (эталон).
 #include "resource.h"
 #include <string>
 #include <vector>
@@ -197,13 +196,17 @@ namespace GOTHIC_ENGINE {
     else if (++g_failStreak >= 30) { g_mirror = false; Log("mirror auto-disabled: 30 failures in a row"); }
   }
 
-  // ---------- GPU-метод: отражённая проекция в Activate ----------
+  // ---------- GPU-метод: отражённая проекция (пост-зеркало) ----------
+  // В D3DMATRIX (row-major, v' = v * M) столбец 0 = (_11,_21,_31,_41).
+  // Отрицание столбца 0 меняет знак итоговой NDC-координаты X:
+  // v'[0] = -(v*M)[0] — это зеркало ЭКРАНА (пост-проекционное),
+  // которое не ломает отсечение мира и должно отразить и VOB, и PFX-спрайты.
   void ApplyMirrorProjection() {
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
     if (!dev) return;
     D3DMATRIX p;
     if (SUCCEEDED(dev->GetTransform(D3DTRANSFORMSTATE_PROJECTION, &p))) {
-      p._11 = -p._11; p._12 = -p._12; p._13 = -p._13; p._14 = -p._14;
+      p._11 = -p._11; p._21 = -p._21; p._31 = -p._31; p._41 = -p._41;
       dev->SetTransform(D3DTRANSFORMSTATE_PROJECTION, &p);
     }
   }
@@ -469,13 +472,15 @@ namespace GOTHIC_ENGINE {
     int w = self->FontSize(const_cast<zSTRING&>(s));
     int x0 = x;
     x = GoMirrorXVirtual(self, x, w);
-    static int dbgFrame = -1;
-    if (dbgFrame != g_frame) {
-      dbgFrame = g_frame;
-      char b[200];
-      sprintf_s(b, sizeof(b), "FOCUS_LABEL diag: x0=%d x1=%d W=%d vsizex=%d vposx=%d",
-                x0, x, w, self->vsizex, self->vposx);
-      Log(b);
+    if (g_teleOn) {
+      static int dbgFrame = -1;
+      if (dbgFrame != g_frame) {
+        dbgFrame = g_frame;
+        char b[200];
+        sprintf_s(b, sizeof(b), "FOCUS_LABEL diag: x0=%d x1=%d W=%d vsizex=%d vposx=%d",
+                  x0, x, w, self->vsizex, self->vposx);
+        Log(b);
+      }
     }
     g_labelMirrored++;
     RecEx("FOCUS_LABEL mirror", _ReturnAddress(), x, 0, std::string(t), true);
@@ -672,7 +677,7 @@ namespace GOTHIC_ENGINE {
   void __fastcall Hook_MapScreen_Show(oCMapScreen* self, void* edx, int arg);
   CInvoke<void(__fastcall*)(oCMapScreen*, void*, int)> Ivk_MapScreen_Show(0x0047F9C0, &Hook_MapScreen_Show);
   void __fastcall Hook_MapScreen_Show(oCMapScreen* self, void* edx, int arg) {
-    Log("MapScreen Show called (карта по M)");
+    if (g_teleOn) Log("MapScreen Show called (карта по M)");
     Ivk_MapScreen_Show(self, edx, arg);
   }
 
@@ -681,7 +686,7 @@ namespace GOTHIC_ENGINE {
   CInvoke<void(__fastcall*)(oCViewDocumentMap*, void*)> Ivk_Map_UpdatePosition(0x0068D7B0, &Hook_Map_UpdatePosition);
   void __fastcall Hook_Map_UpdatePosition(oCViewDocumentMap* self, void* edx) {
     if (!self) { Ivk_Map_UpdatePosition(self, edx); return; }
-    if (!g_mapDiagDone) {
+    if (g_teleOn && !g_mapDiagDone) {
       g_mapDiagDone = true;
       char b[160];
       sprintf_s(b, sizeof(b), "MAP UpdatePosition: x0=%.0f x1=%.0f y0=%.0f y1=%.0f",
@@ -726,7 +731,7 @@ namespace GOTHIC_ENGINE {
 
   // ---------- События Union ----------
   void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v13 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v14 loaded\n", false);
     int m = GetPrivateProfileIntA("ZHORIZMOUSEINVERSION", "MirrorMethod", 0, ExeDirPath("Gothic.ini").c_str());
     if (m == 1) { g_methodGPU = true; g_cullInvert = true; }
     else if (m == 2) { g_methodGPU = true; g_cullInvert = false; }
