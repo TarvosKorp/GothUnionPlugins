@@ -1,4 +1,4 @@
-// zMirrorTest v11 (диагностический билд):
+// zMirrorTest v12 (диагностический билд):
 //   HOME — вкл/выкл зеркало вида.
 //   END  — телеметрия: 1-е нажатие старт, 2-е стоп + дамп.
 //   O    — зеркалирование сущностей (эксперимент): выкл -> ГГ -> все NPC -> выкл.
@@ -8,17 +8,19 @@
 //   MirrorMethod=1 — GPU: отражённая проекция + инверсия CULLMODE.
 //   MirrorMethod=2 — GPU: отражённая проекция без инверсии CULLMODE.
 //
-// v11 (правки по тестам v10):
-//   - Надписи: при отражении учитывается ширина текста W (FontSize):
-//     x' = (vposx*2 + vsizex) - (x + W). Раньше был систематический сдвиг вправо ~W.
-//   - GPU: убран trafoView-подход (мир не зеркалился, VOB "отрывались").
-//     Теперь зеркалится проекция сразу после UpdateProjectionMatrix (0x0054A890) —
-//     мир и VOB используют одну и ту же отражённую проекцию.
-//   - Карта (эксперимент): хук oCViewDocumentMap::UpdatePosition (0x0068D7B0),
-//     позиция стрелки ViewArrow зеркалится по X относительно центра документа.
-//   - Телеметрия: добавлен лог диагностики надписи (x0/x1/W) и позиции стрелки карты.
+// v12 (правки по тестам v11):
+//   - Надписи: сравнение строки печати с несколькими кандидатами имени фокуса
+//     (GetFocusName, name[0] для NPC, name для предметов, GetName/name для мобов).
+//     У мобов (сундуки, кровати и т.п.) печатается другое имя - теперь покрыто.
+//   - Взлом: своп LR-клавиш отключается, когда фокус на запираемом объекте И
+//     вызывающий код принадлежит обработчику взлома/навигации
+//     (0x0069857D/93/B9/CF, 0x00723E6D/7E).
+//   - Карта: LevelCoords меняются местами (xMin<->xMax), а не отрицаются -
+//     так позиция маячка становится зеркальной при неизменных мировых координатах.
+//   - GPU: дополнительно отражается поле камеры trafoProjection (строка 0).
 #include "resource.h"
 #include <string>
+#include <vector>
 #include <fstream>
 #include <algorithm>
 #include <cmath>
@@ -114,8 +116,13 @@ namespace GOTHIC_ENGINE {
   bool g_inMainWorld = false;
   int g_labelMirrored = 0;
   int g_cullSets = 0; unsigned long g_cullLastVal = 0;
-  bool g_inLockpick = false;
   bool g_focusLockable = false;
+
+  // ---------- Фаза интерфейса ----------
+  bool g_uiPhase = false;      // true: мир нарисован, идёт интерфейс
+  int g_worldDepth = 0;        // >0: выполняется zCWorld::Render
+  int g_projDepth = 0;
+  int g_cntPF = 0, g_cntPI = 0, g_cntPF2 = 0;
 
   IDirectDrawSurface7* AcquireTarget() {
     IDirectDrawSurface7* rt = NULL;
@@ -193,8 +200,6 @@ namespace GOTHIC_ENGINE {
   }
 
   // ---------- GPU-метод: отражённая проекция ----------
-  // В D3DMATRIX (row-major) первая строка отвечает за X: v' = v * M.
-  // Отрицание первой строки (_11.._14) отражает X на экране.
   void ApplyMirrorProjection() {
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
     if (!dev) return;
@@ -205,13 +210,19 @@ namespace GOTHIC_ENGINE {
     }
   }
 
-  // zCCamera::UpdateProjectionMatrix — вызывается каждый кадр перед рендером.
-  // После неё сразу отражаем проекцию: и мир, и VOB используют её.
   void __fastcall Hook_Cam_UpdateProj(zCCamera* self, void* edx);
   CInvoke<void(__fastcall*)(zCCamera*, void*)> Ivk_Cam_UpdateProj(0x0054A890, &Hook_Cam_UpdateProj);
   void __fastcall Hook_Cam_UpdateProj(zCCamera* self, void* edx) {
     Ivk_Cam_UpdateProj(self, edx);
-    if (g_inMainWorld && g_mirror && g_methodGPU) ApplyMirrorProjection();
+    if (!g_inMainWorld || !g_mirror || !g_methodGPU) return;
+    if (self) {
+      // Отражаем поле камеры (строка 0) и проекцию устройства.
+      self->trafoProjection.v[0][0] = -self->trafoProjection.v[0][0];
+      self->trafoProjection.v[0][1] = -self->trafoProjection.v[0][1];
+      self->trafoProjection.v[0][2] = -self->trafoProjection.v[0][2];
+      self->trafoProjection.v[0][3] = -self->trafoProjection.v[0][3];
+    }
+    ApplyMirrorProjection();
   }
 
   inline DWORD InvertCull(DWORD v) {
@@ -251,16 +262,6 @@ namespace GOTHIC_ENGINE {
       zinput->SetMouseFlipXY(g_baseFlipX, fy);
       g_mouseFlipApplied = false;
     }
-  }
-
-  // ---------- Фаза интерфейса ----------
-  bool g_uiPhase = false;
-  int g_worldDepth = 0;
-  int g_projDepth = 0;
-  int g_cntPF = 0, g_cntPI = 0, g_cntPF2 = 0;
-
-  inline bool ShouldMirrorProject() {
-    return g_mirror && g_uiPhase && g_worldDepth == 0 && g_projDepth == 0;
   }
 
   // ---------- Телеметрия (агрегированная по строке) ----------
@@ -345,9 +346,9 @@ namespace GOTHIC_ENGINE {
     g_teleOn = false;
     Log("--- telemetry dump ---");
     char b[256];
-    sprintf_s(b, sizeof(b), "mirror=%d methodGPU=%d cullInvert=%d entStage=%d labelMirrored=%d cullSets=%d cullLast=0x%08lX lockpick=%d",
+    sprintf_s(b, sizeof(b), "mirror=%d methodGPU=%d cullInvert=%d entStage=%d labelMirrored=%d cullSets=%d cullLast=0x%08lX",
               g_mirror ? 1 : 0, g_methodGPU ? 1 : 0, g_cullInvert ? 1 : 0, g_entStage,
-              g_labelMirrored, g_cullSets, g_cullLastVal, g_inLockpick ? 1 : 0);
+              g_labelMirrored, g_cullSets, g_cullLastVal);
     Log(b);
     DumpFocusInfo();
     for (int i = 0; i < g_recCount; i++) {
@@ -367,9 +368,31 @@ namespace GOTHIC_ENGINE {
     g_cullSets = 0; g_cullLastVal = 0;
   }
 
-  // ---------- Имя текущего фокусного объекта (кэш на кадр) ----------
-  const char* FocusNameCStr() {
-    static std::string cached;
+  // ---------- Кандидаты имени фокуса (кэш на кадр) ----------
+  std::string ClassNameOf(zCVob* v) {
+    if (!v) return std::string();
+    zCClassDef* d = v->_GetClassDef();
+    while (d) {
+      const char* cn = d->className.ToChar();
+      if (cn) return std::string(cn);
+      d = d->baseClassDef;
+    }
+    return std::string();
+  }
+
+  bool ClassChainHas(zCVob* v, const char* wanted) {
+    if (!v) return false;
+    zCClassDef* d = v->_GetClassDef();
+    while (d) {
+      const char* cn = d->className.ToChar();
+      if (cn && strcmp(cn, wanted) == 0) return true;
+      d = d->baseClassDef;
+    }
+    return false;
+  }
+
+  const std::vector<std::string>& FocusNamesCached() {
+    static std::vector<std::string> cached;
     static int cachedFrame = -1;
     if (cachedFrame != g_frame) {
       cachedFrame = g_frame;
@@ -377,21 +400,34 @@ namespace GOTHIC_ENGINE {
       g_focusLockable = false;
       zCVob* fv = (player && ogame) ? player->GetFocusVob() : NULL;
       if (fv) {
-        zCClassDef* d = fv->_GetClassDef();
-        std::string cls;
-        while (d) { const char* cn = d->className.ToChar(); if (cn) { cls = cn; break; } d = d->baseClassDef; }
-        if (cls == "oCNpc") { const char* c = ((oCNpc*)fv)->name[0].ToChar(); if (c) cached = c; }
-        else if (cls == "oCItem") { const char* c = ((oCItem*)fv)->name.ToChar(); if (c) cached = c; }
-        else if (cls == "oCMOB") { const char* c = ((oCMOB*)fv)->GetName().ToChar(); if (c) cached = c; }
+        if (ClassChainHas(fv, "oCNpc")) {
+          const char* c = ((oCNpc*)fv)->name[0].ToChar();
+          if (c && c[0]) cached.push_back(c);
+        }
+        else if (ClassChainHas(fv, "oCItem")) {
+          const char* c = ((oCItem*)fv)->name.ToChar();
+          if (c && c[0]) cached.push_back(c);
+        }
+        else if (ClassChainHas(fv, "oCMOB")) {
+          const char* c = ((oCMOB*)fv)->GetName().ToChar();
+          if (c && c[0]) cached.push_back(c);
+          const char* c2 = ((oCMOB*)fv)->name.ToChar();
+          if (c2 && c2[0] && strcmp(c2, c) != 0) cached.push_back(c2);
+        }
+        std::string cls = ClassNameOf(fv);
         if (cls == "oCMobContainer" || cls == "oCMobDoor" || cls == "oCMobLockable") g_focusLockable = true;
       }
-      if (cached.empty() && ogame) {
+      if (ogame) {
         zSTRING n = oCNpcFocus::GetFocusName();
         const char* ch = n.ToChar();
-        if (ch) cached = ch;
+        if (ch && ch[0]) {
+          bool exists = false;
+          for (size_t i = 0; i < cached.size(); i++) if (cached[i] == ch) { exists = true; break; }
+          if (!exists) cached.push_back(ch);
+        }
       }
     }
-    return cached.c_str();
+    return cached;
   }
 
   std::string TrimStr(const std::string& s) {
@@ -401,7 +437,6 @@ namespace GOTHIC_ENGINE {
     return s.substr(a, b - a + 1);
   }
 
-  // Зеркалирование X в виртуальных координатах view с учётом ширины текста W.
   int GoMirrorXVirtual(zCView* v, int x, int w) {
     if (!v) return x;
     int vsiz = v->vsizex;
@@ -417,40 +452,37 @@ namespace GOTHIC_ENGINE {
 
   void MaybeMirrorLabel(zCView* self, int& x, const zSTRING& s) {
     if (!ShouldMirrorLabel()) return;
-    const char* f = FocusNameCStr();
-    if (!f || !f[0]) return;
+    const std::vector<std::string>& names = FocusNamesCached();
+    if (names.empty()) return;
     const char* t = s.ToChar();
     if (!t) return;
     std::string ts = TrimStr(t);
-    std::string fs = TrimStr(f);
-    if (ts.empty() || fs.empty()) return;
-    bool match = (_stricmp(ts.c_str(), fs.c_str()) == 0) ||
-                 (ts.size() > fs.size() && _strnicmp(ts.c_str(), fs.c_str(), fs.size()) == 0) ||
-                 (fs.size() > ts.size() && _strnicmp(fs.c_str(), ts.c_str(), ts.size()) == 0);
-    if (match) {
-      int w = self->FontSize(const_cast<zSTRING&>(s));
-      int x0 = x;
-      x = GoMirrorXVirtual(self, x, w);
-      static int dbgFrame = -1;
-      if (dbgFrame != g_frame) {
-        dbgFrame = g_frame;
-        char b[200];
-        sprintf_s(b, sizeof(b), "FOCUS_LABEL diag: x0=%d x1=%d W=%d vsizex=%d vposx=%d",
-                  x0, x, w, self->vsizex, self->vposx);
-        Log(b);
+    if (ts.empty()) return;
+    bool match = false;
+    for (size_t i = 0; i < names.size(); i++) {
+      std::string fs = TrimStr(names[i]);
+      if (fs.empty()) continue;
+      if (_stricmp(ts.c_str(), fs.c_str()) == 0 ||
+          (ts.size() > fs.size() && _strnicmp(ts.c_str(), fs.c_str(), fs.size()) == 0) ||
+          (fs.size() > ts.size() && _strnicmp(fs.c_str(), ts.c_str(), ts.size()) == 0)) {
+        match = true;
+        break;
       }
-      g_labelMirrored++;
-      RecEx("FOCUS_LABEL mirror", _ReturnAddress(), x, 0, std::string(t), true);
     }
-  }
-
-  inline void DetectLockpick(const char* t) {
-    if (g_inLockpick) return;
-    if (!t) return;
-    if (g_focusLockable && (strstr(t, "<>") || strstr(t, "><"))) {
-      g_inLockpick = true;
-      Log("lockpick mode detected");
+    if (!match) return;
+    int w = self->FontSize(const_cast<zSTRING&>(s));
+    int x0 = x;
+    x = GoMirrorXVirtual(self, x, w);
+    static int dbgFrame = -1;
+    if (dbgFrame != g_frame) {
+      dbgFrame = g_frame;
+      char b[200];
+      sprintf_s(b, sizeof(b), "FOCUS_LABEL diag: x0=%d x1=%d W=%d vsizex=%d vposx=%d",
+                x0, x, w, self->vsizex, self->vposx);
+      Log(b);
     }
+    g_labelMirrored++;
+    RecEx("FOCUS_LABEL mirror", _ReturnAddress(), x, 0, std::string(t), true);
   }
 
   // ---------- Хуки печати ----------
@@ -458,7 +490,6 @@ namespace GOTHIC_ENGINE {
   CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_Print(0x007A9A40, &Hook_View_Print);
   void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s) {
     const char* t = s.ToChar();
-    DetectLockpick(t);
     RecEx(g_uiPhase ? "zCView::Print ui-phase" : "zCView::Print other", _ReturnAddress(), x, y, t ? t : "");
     MaybeMirrorLabel(self, x, s);
     Ivk_View_Print(self, edx, x, y, s);
@@ -468,7 +499,6 @@ namespace GOTHIC_ENGINE {
   CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_PrintChars(0x007A9B10, &Hook_View_PrintChars);
   void __fastcall Hook_View_PrintChars(zCView* self, void* edx, int x, int y, zSTRING const& s) {
     const char* t = s.ToChar();
-    DetectLockpick(t);
     RecEx(g_uiPhase ? "zCView::PrintChars ui-phase" : "zCView::PrintChars other", _ReturnAddress(), x, y, t ? t : "");
     Ivk_View_PrintChars(self, edx, x, y, s);
   }
@@ -477,7 +507,6 @@ namespace GOTHIC_ENGINE {
   CInvoke<void(__fastcall*)(zCView*, void*, int, zSTRING const&)> Ivk_View_PrintCX(0x007A9E50, &Hook_View_PrintCX);
   void __fastcall Hook_View_PrintCX(zCView* self, void* edx, int y, zSTRING const& s) {
     const char* t = s.ToChar();
-    DetectLockpick(t);
     RecEx(g_uiPhase ? "zCView::PrintCX ui-phase" : "zCView::PrintCX other", _ReturnAddress(), 0, y, t ? t : "");
     Ivk_View_PrintCX(self, edx, y, s);
   }
@@ -486,7 +515,6 @@ namespace GOTHIC_ENGINE {
   CInvoke<void(__fastcall*)(zCView*, void*, int, zSTRING const&)> Ivk_View_PrintCY(0x007A9F40, &Hook_View_PrintCY);
   void __fastcall Hook_View_PrintCY(zCView* self, void* edx, int x, zSTRING const& s) {
     const char* t = s.ToChar();
-    DetectLockpick(t);
     RecEx(g_uiPhase ? "zCView::PrintCY ui-phase" : "zCView::PrintCY other", _ReturnAddress(), x, 0, t ? t : "");
     Ivk_View_PrintCY(self, edx, x, s);
   }
@@ -495,7 +523,6 @@ namespace GOTHIC_ENGINE {
   CInvoke<void(__fastcall*)(zCView*, void*, zSTRING const&)> Ivk_View_PrintCXY(0x007AA030, &Hook_View_PrintCXY);
   void __fastcall Hook_View_PrintCXY(zCView* self, void* edx, zSTRING const& s) {
     const char* t = s.ToChar();
-    DetectLockpick(t);
     RecEx(g_uiPhase ? "zCView::PrintCXY ui-phase" : "zCView::PrintCXY other", _ReturnAddress(), 0, 0, t ? t : "");
     Ivk_View_PrintCXY(self, edx, s);
   }
@@ -504,7 +531,6 @@ namespace GOTHIC_ENGINE {
   CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&, float, zCOLOR*)> Ivk_View_PrintTimed(0x007A7D20, &Hook_View_PrintTimed);
   void __fastcall Hook_View_PrintTimed(zCView* self, void* edx, int x, int y, zSTRING const& s, float tm, zCOLOR* c) {
     const char* t = s.ToChar();
-    DetectLockpick(t);
     RecEx(g_uiPhase ? "zCView::PrintTimed ui-phase" : "zCView::PrintTimed other", _ReturnAddress(), x, y, t ? t : "");
     Ivk_View_PrintTimed(self, edx, x, y, s, tm, c);
   }
@@ -513,7 +539,6 @@ namespace GOTHIC_ENGINE {
   CInvoke<void(__fastcall*)(zCView*, void*, int, zSTRING const&, float, zCOLOR*)> Ivk_View_PrintTimedCX(0x007A7DB0, &Hook_View_PrintTimedCX);
   void __fastcall Hook_View_PrintTimedCX(zCView* self, void* edx, int y, zSTRING const& s, float tm, zCOLOR* c) {
     const char* t = s.ToChar();
-    DetectLockpick(t);
     RecEx(g_uiPhase ? "zCView::PrintTimedCX ui-phase" : "zCView::PrintTimedCX other", _ReturnAddress(), 0, y, t ? t : "");
     Ivk_View_PrintTimedCX(self, edx, y, s, tm, c);
   }
@@ -522,7 +547,6 @@ namespace GOTHIC_ENGINE {
   CInvoke<void(__fastcall*)(zCView*, void*, int, zSTRING const&, float, zCOLOR*)> Ivk_View_PrintTimedCY(0x007A7F00, &Hook_View_PrintTimedCY);
   void __fastcall Hook_View_PrintTimedCY(zCView* self, void* edx, int x, zSTRING const& s, float tm, zCOLOR* c) {
     const char* t = s.ToChar();
-    DetectLockpick(t);
     RecEx(g_uiPhase ? "zCView::PrintTimedCY ui-phase" : "zCView::PrintTimedCY other", _ReturnAddress(), x, 0, t ? t : "");
     Ivk_View_PrintTimedCY(self, edx, x, s, tm, c);
   }
@@ -531,7 +555,6 @@ namespace GOTHIC_ENGINE {
   CInvoke<void(__fastcall*)(zCView*, void*, zSTRING const&, float, zCOLOR*)> Ivk_View_PrintTimedCXY(0x007A7FC0, &Hook_View_PrintTimedCXY);
   void __fastcall Hook_View_PrintTimedCXY(zCView* self, void* edx, zSTRING const& s, float tm, zCOLOR* c) {
     const char* t = s.ToChar();
-    DetectLockpick(t);
     RecEx(g_uiPhase ? "zCView::PrintTimedCXY ui-phase" : "zCView::PrintTimedCXY other", _ReturnAddress(), 0, 0, t ? t : "");
     Ivk_View_PrintTimedCXY(self, edx, s, tm, c);
   }
@@ -540,7 +563,6 @@ namespace GOTHIC_ENGINE {
   CInvoke<zCViewText*(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_CreateText3(0x007AA2B0, &Hook_View_CreateText3);
   zCViewText* __fastcall Hook_View_CreateText3(zCView* self, void* edx, int x, int y, zSTRING const& s) {
     const char* t = s.ToChar();
-    DetectLockpick(t);
     RecEx(g_uiPhase ? "zCView::CreateText(3) ui-phase" : "zCView::CreateText(3) other", _ReturnAddress(), x, y, t ? t : "");
     MaybeMirrorLabel(self, x, s);
     return Ivk_View_CreateText3(self, edx, x, y, s);
@@ -550,15 +572,21 @@ namespace GOTHIC_ENGINE {
   CInvoke<zCViewText*(__fastcall*)(zCView*, void*, int, int, zSTRING const&, float, zCOLOR&, int, int)> Ivk_View_CreateText7(0x007A7AB0, &Hook_View_CreateText7);
   zCViewText* __fastcall Hook_View_CreateText7(zCView* self, void* edx, int x, int y, zSTRING const& s, float tm, zCOLOR& c, int a, int b) {
     const char* t = s.ToChar();
-    DetectLockpick(t);
     RecEx(g_uiPhase ? "zCView::CreateText(7) ui-phase" : "zCView::CreateText(7) other", _ReturnAddress(), x, y, t ? t : "");
     return Ivk_View_CreateText7(self, edx, x, y, s, tm, c, a, b);
   }
 
   // ---------- Клавиши: влево <-> вправо ----------
+  // Вызывающие коды режима взлома/навигации по замку (из телеметрии):
+  inline bool IsLockpickCaller(DWORD c) {
+    return c == 0x0069857D || c == 0x00698593 || c == 0x006985B9 || c == 0x006985CF ||
+           c == 0x00723E6D || c == 0x00723E7E;
+  }
+
   inline unsigned short SwapLR(unsigned short key) {
     if (!g_mirror || !ogame || ogame->IsOnPause()) return key;
-    if (zCView::modal || g_inLockpick) return key;
+    if (zCView::modal) return key;
+    if (g_focusLockable && IsLockpickCaller((DWORD)_ReturnAddress())) return key;
     switch (key) {
       case GAME_LEFT:        return GAME_RIGHT;
       case GAME_RIGHT:       return GAME_LEFT;
@@ -640,17 +668,24 @@ namespace GOTHIC_ENGINE {
   }
 
   // ---------- Карта: зеркалирование позиции стрелки ----------
-  // LevelCoords (zVEC4) = (xMin, yMin, xMax, yMax) в мировых координатах.
-  // При зеркале X мира: xMin' = -xMax, xMax' = -xMin.
-  // Подменяем координаты до вызова UpdatePosition — стрелка/маячки пересчитаются зеркально.
+  // LevelCoords (zVEC4) = (xMin, yMin, xMax, yMax). Для зеркала достаточно
+  // поменять xMin и xMax местами (координаты игрока не меняются).
+  bool g_mapDiagDone = false;
   void __fastcall Hook_Map_UpdatePosition(oCViewDocumentMap* self, void* edx);
   CInvoke<void(__fastcall*)(oCViewDocumentMap*, void*)> Ivk_Map_UpdatePosition(0x0068D7B0, &Hook_Map_UpdatePosition);
   void __fastcall Hook_Map_UpdatePosition(oCViewDocumentMap* self, void* edx) {
     if (!self) { Ivk_Map_UpdatePosition(self, edx); return; }
+    if (!g_mapDiagDone) {
+      g_mapDiagDone = true;
+      char b[160];
+      sprintf_s(b, sizeof(b), "MAP UpdatePosition: x0=%.0f x1=%.0f y0=%.0f y1=%.0f",
+                self->LevelCoords.n[0], self->LevelCoords.n[2], self->LevelCoords.n[1], self->LevelCoords.n[3]);
+      Log(b);
+    }
     if (g_mirror) {
       zVEC4 orig = self->LevelCoords;
-      self->LevelCoords.n[0] = -orig.n[2];
-      self->LevelCoords.n[2] = -orig.n[0];
+      self->LevelCoords.n[0] = orig.n[2];
+      self->LevelCoords.n[2] = orig.n[0];
       Ivk_Map_UpdatePosition(self, edx);
       self->LevelCoords = orig;
     } else {
@@ -670,7 +705,6 @@ namespace GOTHIC_ENGINE {
     if (main) {
       g_frame++;
       g_inMainWorld = true;
-      g_inLockpick = false;
     }
 
     Ivk_World_Render(self, edx, cam);
@@ -686,7 +720,7 @@ namespace GOTHIC_ENGINE {
 
   // ---------- События Union ----------
   void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v11 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v12 loaded\n", false);
     int m = GetPrivateProfileIntA("ZHORIZMOUSEINVERSION", "MirrorMethod", 0, ExeDirPath("Gothic.ini").c_str());
     if (m == 1) { g_methodGPU = true; g_cullInvert = true; }
     else if (m == 2) { g_methodGPU = true; g_cullInvert = false; }
