@@ -1,5 +1,9 @@
-// zMirrorTest v5: зеркальное отражение основного 3D-мира (интерфейс остаётся обычным).
-// HOME в игре: включить / выключить отражение (вместе с ним переключается инверсия мыши по X).
+// zMirrorTest v6: зеркальное отражение основного 3D-мира (интерфейс остаётся обычным).
+// HOME в игре: включить / выключить отражение. Вместе с ним:
+//   - инвертируется мышь по X;
+//   - меняются местами клавиши "влево/вправо" и "шаг влево/вправо" (кроме паузы);
+//   - зеркалятся экранные координаты в zCCamera::Project после отрисовки мира,
+//     чтобы подписи над NPC и предметами совпадали с отражённой картинкой.
 //
 // Принцип: сразу после zCWorld::Render (MAIN world) закрываем сцену (EndFrame), переворачиваем
 // строки РЕАЛЬНОГО render target устройства (GetRenderTarget) на CPU, открываем сцену (BeginFrame).
@@ -9,6 +13,7 @@
 #include <string>
 #include <fstream>
 #include <algorithm>
+#include <cmath>
 
 namespace GOTHIC_ENGINE {
 
@@ -122,19 +127,102 @@ namespace GOTHIC_ENGINE {
     }
   }
 
+  // ---------- Фаза интерфейса и подписи (zCCamera::Project) ----------
+  bool g_uiPhase = false;     // true: основной мир этого кадра уже нарисован, идёт интерфейс
+  int g_worldDepth = 0;       // >0: сейчас выполняется какой-то zCWorld::Render
+  int g_projDepth = 0;        // защита от двойного отражения при вложенных вызовах Project
+  int g_cntPF = 0, g_cntPI = 0, g_cntPF2 = 0;
+
+  inline bool ShouldMirrorProject() {
+    return g_mirror && g_uiPhase && g_worldDepth == 0 && g_projDepth == 0;
+  }
+
+  // Project(zVEC3 const*, float&, float&)
+  void __fastcall Hook_Project_F(zCCamera* self, void* edx, zVEC3 const* v, float& x, float& y);
+  CInvoke<void(__fastcall*)(zCCamera*, void*, zVEC3 const*, float&, float&)> Ivk_Project_F(0x00530030, &Hook_Project_F);
+  void __fastcall Hook_Project_F(zCCamera* self, void* edx, zVEC3 const* v, float& x, float& y) {
+    g_projDepth++;
+    Ivk_Project_F(self, edx, v, x, y);
+    g_projDepth--;
+    if (ShouldMirrorProject() && fabsf(x) < 1.0e6f) {
+      x = self->vpData.xminFloat + self->vpData.xmaxFloat - x;
+      g_cntPF++;
+    }
+  }
+
+  // Project(zVEC3 const*, int&, int&)
+  void __fastcall Hook_Project_I(zCCamera* self, void* edx, zVEC3 const* v, int& x, int& y);
+  CInvoke<void(__fastcall*)(zCCamera*, void*, zVEC3 const*, int&, int&)> Ivk_Project_I(0x0057A440, &Hook_Project_I);
+  void __fastcall Hook_Project_I(zCCamera* self, void* edx, zVEC3 const* v, int& x, int& y) {
+    g_projDepth++;
+    Ivk_Project_I(self, edx, v, x, y);
+    g_projDepth--;
+    if (ShouldMirrorProject() && x > -1000000 && x < 1000000) {
+      x = self->vpData.xmin + self->vpData.xmin + self->vpData.xdim - 1 - x;
+      g_cntPI++;
+    }
+  }
+
+  // Project(zVEC3 const*, float, float&, float&)
+  void __fastcall Hook_Project_F2(zCCamera* self, void* edx, zVEC3 const* v, float a, float& x, float& y);
+  CInvoke<void(__fastcall*)(zCCamera*, void*, zVEC3 const*, float, float&, float&)> Ivk_Project_F2(0x00604ED0, &Hook_Project_F2);
+  void __fastcall Hook_Project_F2(zCCamera* self, void* edx, zVEC3 const* v, float a, float& x, float& y) {
+    g_projDepth++;
+    Ivk_Project_F2(self, edx, v, a, x, y);
+    g_projDepth--;
+    if (ShouldMirrorProject() && fabsf(x) < 1.0e6f) {
+      x = self->vpData.xminFloat + self->vpData.xmaxFloat - x;
+      g_cntPF2++;
+    }
+  }
+
+  // ---------- Клавиши: влево <-> вправо ----------
+  inline unsigned short SwapLR(unsigned short key) {
+    if (!g_mirror || !ogame || ogame->IsOnPause()) return key;
+    switch (key) {
+      case GAME_LEFT:        return GAME_RIGHT;
+      case GAME_RIGHT:       return GAME_LEFT;
+      case GAME_STRAFELEFT:  return GAME_STRAFERIGHT;
+      case GAME_STRAFERIGHT: return GAME_STRAFELEFT;
+      default:               return key;
+    }
+  }
+
+  // zCInput_Win32::GetState(unsigned short)
+  float __fastcall Hook_Input_GetState(zCInput_Win32* self, void* edx, unsigned short key);
+  CInvoke<float(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetState(0x004D4D30, &Hook_Input_GetState);
+  float __fastcall Hook_Input_GetState(zCInput_Win32* self, void* edx, unsigned short key) {
+    return Ivk_Input_GetState(self, edx, SwapLR(key));
+  }
+
+  // zCInput_Win32::GetToggled(unsigned short)
+  int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned short key);
+  CInvoke<int(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetToggled(0x004D5020, &Hook_Input_GetToggled);
+  int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned short key) {
+    return Ivk_Input_GetToggled(self, edx, SwapLR(key));
+  }
+
   // ---------- Хук zCWorld::Render ----------
   void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam);
   CInvoke<void(__fastcall*)(zCWorld*, void*, zCCamera&)> Ivk_World_Render(0x00621700, &Hook_World_Render);
   void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
+    bool main = IsMainWorld(self);
+    bool prevUi = g_uiPhase;
+    g_uiPhase = false;                        // пока рисуется любой мир, Project не трогаем
+    g_worldDepth++;
     Ivk_World_Render(self, edx, cam);
-    if (g_mirror && IsMainWorld(self))
-      MirrorWorld();
+    g_worldDepth--;
+    if (main) {
+      if (g_mirror) MirrorWorld();
+      g_uiPhase = true;                       // дальше идёт интерфейс
+    }
+    else g_uiPhase = prevUi;
   }
 
   // ---------- События Union ----------
 
   void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v5 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v6 loaded\n", false);
   }
 
   void Game_Init() {
@@ -154,6 +242,10 @@ namespace GOTHIC_ENGINE {
       g_failStreak = 0;
       SyncMouseFlip();
       Log(g_mirror ? "mirror ON" : "mirror OFF");
+      if (!g_mirror) {
+        char b[160]; sprintf_s(b, sizeof(b), "Project mirrored calls: float=%d int=%d float2=%d", g_cntPF, g_cntPI, g_cntPF2);
+        Log(b);
+      }
       if (screen) screen->PrintCXY(zSTRING(g_mirror ? "MIRROR: ON" : "MIRROR: OFF"));
     }
     wasDown = down;
