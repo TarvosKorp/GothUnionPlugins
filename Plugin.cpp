@@ -649,8 +649,8 @@ namespace GOTHIC_ENGINE {
     if (!self) { Ivk_Map_UpdatePosition(self, edx); return; }
     if (g_mirror) {
       zVEC4 orig = self->LevelCoords;
-      self->LevelCoords.v[0] = -orig.v[2];
-      self->LevelCoords.v[2] = -orig.v[0];
+      self->LevelCoords.n[0] = -orig.n[2];
+      self->LevelCoords.n[2] = -orig.n[0];
       Ivk_Map_UpdatePosition(self, edx);
       self->LevelCoords = orig;
     } else {
