@@ -11,8 +11,8 @@
 //   - Телеметрия: toggle, сохраняет сами строки, все варианты печати.
 //   - Надпись фокуса: зеркалится, если строка равна имени текущего фокусного объекта.
 //   - Быстрый переворот строк через SSE2 (+ опционально 2 потока).
-//   - GPU-метод с вектором в zCCamera::Activate и переключением cull-режима.
-//   - Зеркалирование сущностей (зCVob::Render): отрицание X-строки мировой матрицы.
+//   - GPU-метод с зеркалом в zCCamera::Activate и переключением cull-режима.
+//   - Зеркалирование сущностей (zCVob::Render): отрицание X-строки мировой матрицы.
 #include "resource.h"
 #include <string>
 #include <fstream>
@@ -104,7 +104,6 @@ namespace GOTHIC_ENGINE {
     BYTE* base = (BYTE*)d.lpSurface;
     if (!base) ok = false;
     else if (bpp == 32 || bpp == 16) {
-      FlipJob j = { base, d.lPitch, d.dwWidth, d.dwHeight, bpp };
       // 2 потока: верх и низ экрана
       std::thread t1(DoFlipRows, FlipJob{ base, d.lPitch, d.dwWidth, d.dwHeight / 2, bpp });
       DoFlipRows(FlipJob{ base + (size_t)(d.dwHeight / 2) * d.lPitch, d.lPitch, d.dwWidth, d.dwHeight - d.dwHeight / 2, bpp });
@@ -165,7 +164,7 @@ namespace GOTHIC_ENGINE {
   CInvoke<int(__fastcall*)(zCRnd_D3D*, void*, D3DRENDERSTATETYPE, DWORD)> Ivk_SetRenderState(0x00644EF0, &Hook_SetRenderState);
   int __fastcall Hook_SetRenderState(zCRnd_D3D* self, void* edx, D3DRENDERSTATETYPE t, DWORD v) {
     int r = Ivk_SetRenderState(self, edx, t, v);
-    if (g_inMainWorld && t == D3DRENDERSTATETYPE_CULLMODE) {
+    if (g_inMainWorld && t == D3DRS_CULLMODE) {
       g_cullSets++; g_cullLastVal = v;
     }
     return r;
@@ -502,13 +501,13 @@ namespace GOTHIC_ENGINE {
     if (main && g_mirror && g_methodGPU) {
       IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
       DWORD oldCull = D3DCULL_NONE;
-      if (dev && SUCCEEDED(dev->GetRenderState(D3DRENDERSTATETYPE_CULLMODE, &oldCull))) {
+      if (dev && SUCCEEDED(dev->GetRenderState(D3DRS_CULLMODE, &oldCull))) {
         DWORD neu = (oldCull == D3DCULL_CW) ? D3DCULL_CCW
                   : (oldCull == D3DCULL_CCW) ? D3DCULL_CW
                   : D3DCULL_CW;
-        dev->SetRenderState(D3DRENDERSTATETYPE_CULLMODE, neu);
+        dev->SetRenderState(D3DRS_CULLMODE, neu);
         Ivk_World_Render(self, edx, cam);
-        dev->SetRenderState(D3DRENDERSTATETYPE_CULLMODE, oldCull);
+        dev->SetRenderState(D3DRS_CULLMODE, oldCull);
       }
       else Ivk_World_Render(self, edx, cam);
     }
