@@ -1,22 +1,22 @@
-// zMirrorTest v10 (диагностический билд):
+// zMirrorTest v11 (диагностический билд):
 //   HOME — вкл/выкл зеркало вида.
 //   END  — телеметрия: 1-е нажатие старт, 2-е стоп + дамп.
-//   O    — зеркалирование сущностей: выкл -> только ГГ -> все NPC -> выкл.
+//   O    — зеркалирование сущностей (эксперимент): выкл -> ГГ -> все NPC -> выкл.
 //
 // Методы зеркала ([ZHORIZMOUSEINVERSION] в Gothic.ini):
 //   MirrorMethod=0 — CPU fast (SSE2).
-//   MirrorMethod=1 — GPU: зеркало через матрицу вида (trafoView) + инверсия CULLMODE.
+//   MirrorMethod=1 — GPU: отражённая проекция + инверсия CULLMODE.
+//   MirrorMethod=2 — GPU: отражённая проекция без инверсии CULLMODE.
 //
-// v10 (правки по тестам v9):
-//   - Надписи: зеркалирование в виртуальных координатах (0..8192) относительно view
-//     (x' = vposx*2 + vsizex - x), а не через пиксели (раньше был сдвиг влево).
-//   - Взлом: если при фокусе на контейнере печатается индикатор "<>"/"><", управление
-//     зеркалиться не будет (зCView::modal его не ловит).
-//   - EntStage: вместо инверсии CULLMODE теперь CULLMODE=NONE на время рендера модели
-//     (обе стороны видимы -> нет моргания лицевых/изнаночных полигонов).
-//   - GPU: зеркало перенесено из проекции в матрицу вида; cull инвертируется в
-//     XD3D_SetRenderState на время главного мира.
-//   - Телеметрия: записи группируются по строке (а не по кадру) - сильно меньше мусора.
+// v11 (правки по тестам v10):
+//   - Надписи: при отражении учитывается ширина текста W (FontSize):
+//     x' = (vposx*2 + vsizex) - (x + W). Раньше был систематический сдвиг вправо ~W.
+//   - GPU: убран trafoView-подход (мир не зеркалился, VOB "отрывались").
+//     Теперь зеркалится проекция сразу после UpdateProjectionMatrix (0x0054A890) —
+//     мир и VOB используют одну и ту же отражённую проекцию.
+//   - Карта (эксперимент): хук oCViewDocumentMap::UpdatePosition (0x0068D7B0),
+//     позиция стрелки ViewArrow зеркалится по X относительно центра документа.
+//   - Телеметрия: добавлен лог диагностики надписи (x0/x1/W) и позиции стрелки карты.
 #include "resource.h"
 #include <string>
 #include <fstream>
@@ -97,7 +97,7 @@ namespace GOTHIC_ENGINE {
 
   int g_logLines = 0;
   void Log(const std::string& s) {
-    if (g_logLines++ < 2500) WriteText("zMirror_log.txt", s + "\n", true);
+    if (g_logLines++ < 3000) WriteText("zMirror_log.txt", s + "\n", true);
   }
   std::string Hex(unsigned long v) {
     char b[32]; sprintf_s(b, sizeof(b), "0x%08lX", v); return b;
@@ -106,6 +106,7 @@ namespace GOTHIC_ENGINE {
   // ---------- Состояние ----------
   bool g_mirror = false;
   bool g_methodGPU = false;
+  bool g_cullInvert = true;
   int g_entStage = 0;        // 0 выкл, 1 ГГ, 2 все NPC
   int g_failStreak = 0;
   double g_msSum = 0; int g_msCount = 0; int g_msReports = 0;
@@ -113,8 +114,8 @@ namespace GOTHIC_ENGINE {
   bool g_inMainWorld = false;
   int g_labelMirrored = 0;
   int g_cullSets = 0; unsigned long g_cullLastVal = 0;
-  bool g_inLockpick = false; // режим взлома замков (обнаружен по "<>"/"><")
-  bool g_focusLockable = false; // фокус на запираемом объекте (контейнер/дверь)
+  bool g_inLockpick = false;
+  bool g_focusLockable = false;
 
   IDirectDrawSurface7* AcquireTarget() {
     IDirectDrawSurface7* rt = NULL;
@@ -191,28 +192,26 @@ namespace GOTHIC_ENGINE {
     else if (++g_failStreak >= 30) { g_mirror = false; Log("mirror auto-disabled: 30 failures in a row"); }
   }
 
-  // ---------- GPU-метод: зеркало через матрицу вида ----------
-  // trafoView: world -> view. Матрица хранит оси в столбцах (v[0] - строка 0).
-  // Зеркаление X в view-пространстве = умножение слева на S=diag(-1,1,1,1):
-  // у trafoView отрицается строка 0; у обратной (view -> world) - столбец 0.
-  void ApplyMirrorView(zCCamera* cam) {
-    if (!cam) return;
-    cam->trafoView.v[0][0] = -cam->trafoView.v[0][0];
-    cam->trafoView.v[0][1] = -cam->trafoView.v[0][1];
-    cam->trafoView.v[0][2] = -cam->trafoView.v[0][2];
-    cam->trafoView.v[0][3] = -cam->trafoView.v[0][3];
-
-    cam->trafoViewInv.v[0][0] = -cam->trafoViewInv.v[0][0];
-    cam->trafoViewInv.v[1][0] = -cam->trafoViewInv.v[1][0];
-    cam->trafoViewInv.v[2][0] = -cam->trafoViewInv.v[2][0];
-    cam->trafoViewInv.v[3][0] = -cam->trafoViewInv.v[3][0];
+  // ---------- GPU-метод: отражённая проекция ----------
+  // В D3DMATRIX (row-major) первая строка отвечает за X: v' = v * M.
+  // Отрицание первой строки (_11.._14) отражает X на экране.
+  void ApplyMirrorProjection() {
+    IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
+    if (!dev) return;
+    D3DMATRIX p;
+    if (SUCCEEDED(dev->GetTransform(D3DTRANSFORMSTATE_PROJECTION, &p))) {
+      p._11 = -p._11; p._12 = -p._12; p._13 = -p._13; p._14 = -p._14;
+      dev->SetTransform(D3DTRANSFORMSTATE_PROJECTION, &p);
+    }
   }
 
-  void __fastcall Hook_Cam_Activate(zCCamera* self, void* edx);
-  CInvoke<void(__fastcall*)(zCCamera*, void*)> Ivk_Cam_Activate(0x0054A700, &Hook_Cam_Activate);
-  void __fastcall Hook_Cam_Activate(zCCamera* self, void* edx) {
-    Ivk_Cam_Activate(self, edx);
-    if (g_inMainWorld && g_mirror && g_methodGPU) ApplyMirrorView(self);
+  // zCCamera::UpdateProjectionMatrix — вызывается каждый кадр перед рендером.
+  // После неё сразу отражаем проекцию: и мир, и VOB используют её.
+  void __fastcall Hook_Cam_UpdateProj(zCCamera* self, void* edx);
+  CInvoke<void(__fastcall*)(zCCamera*, void*)> Ivk_Cam_UpdateProj(0x0054A890, &Hook_Cam_UpdateProj);
+  void __fastcall Hook_Cam_UpdateProj(zCCamera* self, void* edx) {
+    Ivk_Cam_UpdateProj(self, edx);
+    if (g_inMainWorld && g_mirror && g_methodGPU) ApplyMirrorProjection();
   }
 
   inline DWORD InvertCull(DWORD v) {
@@ -225,7 +224,7 @@ namespace GOTHIC_ENGINE {
   CInvoke<int(__fastcall*)(zCRnd_D3D*, void*, D3DRENDERSTATETYPE, DWORD)> Ivk_SetRenderState(0x00644EF0, &Hook_SetRenderState);
   int __fastcall Hook_SetRenderState(zCRnd_D3D* self, void* edx, D3DRENDERSTATETYPE t, DWORD v) {
     if (t == D3DRENDERSTATE_CULLMODE) {
-      if (g_inMainWorld && g_mirror && g_methodGPU) v = InvertCull(v);
+      if (g_inMainWorld && g_mirror && g_methodGPU && g_cullInvert) v = InvertCull(v);
       if (g_inMainWorld) { g_cullSets++; g_cullLastVal = v; }
     }
     return Ivk_SetRenderState(self, edx, t, v);
@@ -346,8 +345,9 @@ namespace GOTHIC_ENGINE {
     g_teleOn = false;
     Log("--- telemetry dump ---");
     char b[256];
-    sprintf_s(b, sizeof(b), "mirror=%d methodGPU=%d entStage=%d labelMirrored=%d cullSets=%d cullLast=0x%08lX lockpick=%d",
-              g_mirror ? 1 : 0, g_methodGPU ? 1 : 0, g_entStage, g_labelMirrored, g_cullSets, g_cullLastVal, g_inLockpick ? 1 : 0);
+    sprintf_s(b, sizeof(b), "mirror=%d methodGPU=%d cullInvert=%d entStage=%d labelMirrored=%d cullSets=%d cullLast=0x%08lX lockpick=%d",
+              g_mirror ? 1 : 0, g_methodGPU ? 1 : 0, g_cullInvert ? 1 : 0, g_entStage,
+              g_labelMirrored, g_cullSets, g_cullLastVal, g_inLockpick ? 1 : 0);
     Log(b);
     DumpFocusInfo();
     for (int i = 0; i < g_recCount; i++) {
@@ -401,12 +401,14 @@ namespace GOTHIC_ENGINE {
     return s.substr(a, b - a + 1);
   }
 
-  // Зеркалирование X в виртуальных координатах view.
-  int GoMirrorXVirtual(zCView* v, int x) {
+  // Зеркалирование X в виртуальных координатах view с учётом ширины текста W.
+  int GoMirrorXVirtual(zCView* v, int x, int w) {
     if (!v) return x;
-    int w = v->vsizex;
-    if (w <= 0) w = 8192;
-    return v->vposx * 2 + w - 1 - x;
+    int vsiz = v->vsizex;
+    if (vsiz <= 0) vsiz = 8192;
+    int right = v->vposx * 2 + vsiz;
+    if (w > 0 && w < vsiz / 2) return right - (x + w);
+    return right - 1 - x;
   }
 
   inline bool ShouldMirrorLabel() {
@@ -426,13 +428,22 @@ namespace GOTHIC_ENGINE {
                  (ts.size() > fs.size() && _strnicmp(ts.c_str(), fs.c_str(), fs.size()) == 0) ||
                  (fs.size() > ts.size() && _strnicmp(fs.c_str(), ts.c_str(), ts.size()) == 0);
     if (match) {
-      x = GoMirrorXVirtual(self, x);
+      int w = self->FontSize(const_cast<zSTRING&>(s));
+      int x0 = x;
+      x = GoMirrorXVirtual(self, x, w);
+      static int dbgFrame = -1;
+      if (dbgFrame != g_frame) {
+        dbgFrame = g_frame;
+        char b[200];
+        sprintf_s(b, sizeof(b), "FOCUS_LABEL diag: x0=%d x1=%d W=%d vsizex=%d vposx=%d",
+                  x0, x, w, self->vsizex, self->vposx);
+        Log(b);
+      }
       g_labelMirrored++;
       RecEx("FOCUS_LABEL mirror", _ReturnAddress(), x, 0, std::string(t), true);
     }
   }
 
-  // Обнаружение режима взлома: индикатор "<>"/"><" при фокусе на запираемом объекте
   inline void DetectLockpick(const char* t) {
     if (g_inLockpick) return;
     if (!t) return;
@@ -547,7 +558,7 @@ namespace GOTHIC_ENGINE {
   // ---------- Клавиши: влево <-> вправо ----------
   inline unsigned short SwapLR(unsigned short key) {
     if (!g_mirror || !ogame || ogame->IsOnPause()) return key;
-    if (zCView::modal || g_inLockpick) return key; // инвентарь, торговля, взлом
+    if (zCView::modal || g_inLockpick) return key;
     switch (key) {
       case GAME_LEFT:        return GAME_RIGHT;
       case GAME_RIGHT:       return GAME_LEFT;
@@ -577,7 +588,7 @@ namespace GOTHIC_ENGINE {
     return Ivk_Input_GetToggled(self, edx, SwapLR(key));
   }
 
-  // ---------- Зеркалирование сущностей ----------
+  // ---------- Зеркалирование сущностей (эксперимент) ----------
   bool IsNpcVob(zCVob* v) {
     if (!v) return false;
     zCClassDef* d = v->_GetClassDef();
@@ -589,8 +600,6 @@ namespace GOTHIC_ENGINE {
     return false;
   }
 
-  // Во время отражённого рендера модели выключаем отсечение граней совсем (NONE),
-  // чтобы не было мерцания лицевых/изнаночных полигонов.
   DWORD g_savedCull = 0;
   void ApplyCullNone(bool on) {
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
@@ -614,8 +623,6 @@ namespace GOTHIC_ENGINE {
     }
     if (!apply) return Ivk_Vob_Render(self, ctx);
 
-    // zMAT4 хранит строки: v[0]=(right.x,up.x,at.x,pos.x), v[1]=(right.y,...), v[2]=(right.z,...).
-    // Отрицаем только right-вектор (m[0], m[4], m[8]); позицию не трогаем.
     float orig[16];
     memcpy(orig, &self->trafoObjToWorld, sizeof(orig));
     float m[16];
@@ -632,6 +639,21 @@ namespace GOTHIC_ENGINE {
     return r;
   }
 
+  // ---------- Карта: зеркалирование позиции стрелки ----------
+  void __fastcall Hook_Map_UpdatePosition(oCViewDocumentMap* self, void* edx);
+  CInvoke<void(__fastcall*)(oCViewDocumentMap*, void*)> Ivk_Map_UpdatePosition(0x0068D7B0, &Hook_Map_UpdatePosition);
+  void __fastcall Hook_Map_UpdatePosition(oCViewDocumentMap* self, void* edx) {
+    Ivk_Map_UpdatePosition(self, edx);
+    if (g_mirror) {
+      int ax = 0, ay = 0;
+      self->ViewArrow.GetPos(ax, ay);
+      int L = self->vposx * 2 + self->vsizex;
+      int nx = L - 1 - ax;
+      self->ViewArrow.SetPos(nx, ay);
+      RecEx("MAP arrow pos", _ReturnAddress(), ax, nx);
+    }
+  }
+
   // ---------- Хук zCWorld::Render ----------
   void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam);
   CInvoke<void(__fastcall*)(zCWorld*, void*, zCCamera&)> Ivk_World_Render(0x00621700, &Hook_World_Render);
@@ -644,7 +666,7 @@ namespace GOTHIC_ENGINE {
     if (main) {
       g_frame++;
       g_inMainWorld = true;
-      g_inLockpick = false; // сброс детектора взлома каждый кадр
+      g_inLockpick = false;
     }
 
     Ivk_World_Render(self, edx, cam);
@@ -660,11 +682,14 @@ namespace GOTHIC_ENGINE {
 
   // ---------- События Union ----------
   void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v10 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest v11 loaded\n", false);
     int m = GetPrivateProfileIntA("ZHORIZMOUSEINVERSION", "MirrorMethod", 0, ExeDirPath("Gothic.ini").c_str());
-    g_methodGPU = (m == 1);
+    if (m == 1) { g_methodGPU = true; g_cullInvert = true; }
+    else if (m == 2) { g_methodGPU = true; g_cullInvert = false; }
+    else { g_methodGPU = false; g_cullInvert = false; }
     char b[96];
-    sprintf_s(b, sizeof(b), "mirror method: %s", g_methodGPU ? "GPU (experimental)" : "CPU fast (SSE2)");
+    if (g_methodGPU) sprintf_s(b, sizeof(b), "mirror method: GPU (projection, cullInvert=%d)", g_cullInvert ? 1 : 0);
+    else sprintf_s(b, sizeof(b), "mirror method: CPU fast (SSE2)");
     Log(b);
   }
 
