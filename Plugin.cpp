@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════
-// zMirrorTest V1.4.0
+// zMirrorTest V1.4.1
 // Плагин зеркального режима для Gothic 2 NotR (Union SDK, G2A).
 //
 // УПРАВЛЕНИЕ:
@@ -40,6 +40,7 @@
 //   V1.4.0 — телеметрия нового образца (UI/ввод/карта/дамп D3D7), режим BLT,
 //            режим GPUv11 (device-level), "]" вне зеркальных режимов +
 //            device-level cull-флип для сущностей, тест "[" (present-mirror).
+//   V1.4.1 — ФИКС вылета: хук SetRenderTarget стоял на слоте 9 (GetRenderTarget), теперь на 8.
 // ═══════════════════════════════════════════════════════════════════
 
 #include "resource.h"
@@ -816,7 +817,7 @@ bool EnsureDeviceHooks() {
     bool ok = true;
     ok = PatchSlot(vt, 5,  &Hook_Dev_BeginScene,            g_oBeginScene) && ok;
     ok = PatchSlot(vt, 6,  &Hook_Dev_EndScene,              g_oEndScene) && ok;
-    ok = PatchSlot(vt, 9,  &Hook_Dev_SetRenderTarget,       g_oSetRT) && ok;   // slot 8 в IDirect3DDevice7 = SetRenderTarget (см. ниже)
+    ok = PatchSlot(vt, 8,  &Hook_Dev_SetRenderTarget,       g_oSetRT) && ok;   // слот 8 = SetRenderTarget (слот 9 = GetRenderTarget!)
     ok = PatchSlot(vt, 11, &Hook_Dev_SetTransform,          g_oSetTransform) && ok;
     ok = PatchSlot(vt, 13, &Hook_Dev_SetViewport,           g_oSetViewport) && ok;
     ok = PatchSlot(vt, 20, &Hook_Dev_SetRenderState,        g_oSetRS) && ok;
@@ -1249,8 +1250,8 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
 // ───────────────────────── События Union ─────────────────────────
 void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.4.0 loaded\n", false);
-    WriteText("zMirror_dump.txt", "zMirrorTest V1.4.0 dump file\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.4.1 loaded\n", false);
+    WriteText("zMirror_dump.txt", "zMirrorTest V1.4.1 dump file\n", false);
 }
 
 void Game_Init() { }
