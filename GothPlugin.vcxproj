@@ -77,9 +77,9 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{33ae2c2e-173d-4ccd-8781-d845faf41a63}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
-    <RootNamespace>Goth2NRPlugin</RootNamespace>
+    <RootNamespace>GothPlugin</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-    <ProjectName>Goth2NRPlugin</ProjectName>
+    <ProjectName>GothPlugin</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MP x4 Debug|Win32'" Label="Configuration">
