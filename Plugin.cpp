@@ -84,6 +84,9 @@ namespace GOTHIC_ENGINE {
 
   inline bool MirrorOn() { return g_mode != 0; }
 
+  // Ранняя декларация (используется в MirrorWorldFast при автоотключении).
+  void SyncMouseFlip();
+
   // ---------- Фаза интерфейса ----------
   bool g_uiPhase = false;
   int g_worldDepth = 0;
@@ -503,7 +506,11 @@ namespace GOTHIC_ENGINE {
       SyncMouseFlip();
       static const char* names[4] = { "OFF", "CPU", "GPUv8", "GPUv10" };
       Log(std::string("mirror mode: ") + names[g_mode]);
-      if (screen) screen->PrintCXY(zSTRING(std::string("MIRROR MODE: ") + names[g_mode]));
+      if (screen) {
+        char buf[64];
+        sprintf_s(buf, sizeof(buf), "MIRROR MODE: %s", names[g_mode]);
+        screen->PrintCXY(zSTRING(buf));
+      }
     }
     wasHome = homeDown;
 
