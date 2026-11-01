@@ -77,9 +77,9 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{33ae2c2e-173d-4ccd-8781-d845faf41a63}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
-    <RootNamespace>zHorizMouseInversion</RootNamespace>
+    <RootNamespace>Goth2NRPlugin</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-    <ProjectName>zHorizMouseInversion</ProjectName>
+    <ProjectName>Goth2NRPlugin</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MP x4 Debug|Win32'" Label="Configuration">

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:      # ручной запуск кнопкой «Run workflow»
 
 env:
-  PLUGIN_NAME: zMirrorTest   # <-- имя итогового DLL (zMirrorTest.dll). Меняйте только здесь.
+  PLUGIN_NAME: zMirrorWorld   # <-- имя итогового DLL. Меняйте только здесь.
 
 jobs:
   build:
@@ -29,7 +29,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path Bin, PDB | Out-Null
-          msbuild zHorizMouseInversion.vcxproj /m `
+          msbuild Goth2NRPlugin.vcxproj /m `
             "/p:Configuration=G2A MT Release" `
             /p:Platform=Win32 `
             /p:PlatformToolset=v143 `
