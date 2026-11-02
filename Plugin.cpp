@@ -1,52 +1,58 @@
 // ═══════════════════════════════════════════════════════════════════
-// zMirrorTest V1.4.1
+// zMirrorTest V1.4.2
 // Плагин зеркального режима для Gothic 2 NotR (Union SDK, G2A).
 //
 // УПРАВЛЕНИЕ:
-//   HOME   — цикл режимов: OFF → CPU → BLT → GPUv8 → GPUv10 → GPUv11 → OFF.
+//   HOME   — цикл режимов: OFF → CPU → GPU → OFF.
 //   END    — телеметрия ON/OFF (лог zMirror_log.txt + дамп zMirror_dump.txt).
 //   ]      — зеркалирование сущностей (все NPC) ON/OFF. Работает в ЛЮБОМ режиме,
 //            в том числе при выключенном зеркале (OFF).
-//   [      — тест "зеркало всего кадра на present" (для будущего режима карты).
-//            Использовать вместе с режимом OFF. Мир + весь интерфейс зеркалятся.
 //   INSERT — (при включённой телеметрии) дамп ОДНОГО кадра вызовов D3D7.
-//   PAGEUP — (телеметрия) метка сценария: пишет MARK в лог и сбрасывает
-//            дедупликацию "кто читает клавиши".
+//   PAGEUP — метка сценария: пишет MARK в лог.
 //
 // РЕЖИМЫ ЗЕРКАЛА:
-//   CPU    — эталон: переворот строк бэкбуфера (Lock + SSE2) после рендера мира.
-//   BLT    — то же, но переворот делает DirectDraw (Blt с DDBLTFX_MIRRORLEFTRIGHT
-//            через временную поверхность). Результат визуально идентичен CPU.
-//            Сам себя проверяет (verify по строке пикселей) и при неудаче
-//            автоматически откатывается на CPU-метод.
-//   GPUv8  — (старый) отражение проекции в Activate + инверсия CULL в XD3D_SetRenderState.
-//   GPUv10 — (старый) отражение трансформаций камеры.
-//   GPUv11 — (НОВЫЙ, экспериментальный) зеркало на уровне D3D7-устройства:
-//            вертикальная инверсия culling для ВСЕХ вызовов SetRenderState,
-//            отражение проекции в SetTransform, зеркалирование pre-transformed
-//            (XYZRHW) вершин в DrawPrimitive/DrawIndexedPrimitive.
+//   CPU  — эталон: переворот строк бэкбуфера (Lock + SSE2) после рендера мира.
+//   GPU  — (наследник GPUv11) зеркало на уровне D3D7-устройства:
+//          вертикальная инверсия culling для ВСЕХ вызовов SetRenderState,
+//          отражение проекции в SetTransform, зеркалирование pre-transformed
+//          (XYZRHW) вершин в DrawPrimitive/DrawIndexedPrimitive И в
+//          DrawPrimitiveVB/DrawIndexedPrimitiveVB (TL-вершины в вершинных
+//          буферах — это PFX, скайбокс, декали и UI-граница).
+//
+// ЧТО НОВОГО ОТНОСИТЕЛЬНО V1.4.1:
+//   - УБРАНЫ режимы BLT, GPUv8, GPUv10 и тест "[" (present-mirror).
+//   - Исправлены слоты vtable для DrawPrimitiveVB/DrawIndexedPrimitiveVB
+//     (были 31/32, стало 32/33 — см. ZM_VB_SLOT_OFFSET, если на конкретной
+//     машине слоты отличаются).
+//   - Зеркалирование TL-вершин теперь работает и для вершинных буферов
+//     (раньше только для "сырых" DrawPrimitive, которые движок не использует).
+//   - Карта: первичное зеркалирование — переворот области просмотра карты
+//     на бэкбуфере в конце кадра (EndScene). Управляется ZM_MAP_REGION_FLIP.
+//   - Телеметрия переработана: убрано логирование чтения клавиш, добавлены
+//     счётчики TL-VB-зеркалирования, авто-арм дампа при открытии карты,
+//     агрегация повторяющихся SetTransform.
 //
 // ОБЩИЕ ПРАВИЛА (для всех режимов):
 //   - Своп LR-клавиш и инверсия мыши по X активны только в зеркале.
 //   - В модальных окнах (zCView::modal) и в режиме взлома замков своп отключается.
 //   - Надписи фокуса (NPC/предметы/Mobsi) зеркалятся по X в виртуальных
-//     координатах view с учётом ширины текста (кроме режима "[": там весь кадр).
+//     координатах view с учётом ширины текста.
 //
 // ИСТОРИЯ ВЕРСИЙ:
 //   V1.0 — только горизонтальная инверсия мыши.
 //   V1.1 — CPU-отзеркаливание мира и управления в обход интерфейсов.
 //   V1.2 — фокусные имена, отзеркаливание сущностей, тесты GPU.
 //   V1.3 — взлом сундуков, режимы на HOME, чистка карт/телеметрии.
-//   V1.4.0 — телеметрия нового образца (UI/ввод/карта/дамп D3D7), режим BLT,
-//            режим GPUv11 (device-level), "]" вне зеркальных режимов +
-//            device-level cull-флип для сущностей, тест "[" (present-mirror).
-//   V1.4.1 — ФИКС вылета: хук SetRenderTarget стоял на слоте 9 (GetRenderTarget), теперь на 8.
+//   V1.4.0 — телеметрия нового образца, режим BLT, режим GPUv11 (device-level),
+//            "]" вне зеркальных режимов, тест "[".
+//   V1.4.1 — ФИКС вылета: хук SetRenderTarget с 9 на 8.
+//   V1.4.2 — чистка режимов (OFF/CPU/GPU), фикс VB-хуков, TL-VB-зеркалирование,
+//            первичное зеркалирование карты, переработанная телеметрия.
 // ═══════════════════════════════════════════════════════════════════
 
 #include "resource.h"
 #include <string>
 #include <vector>
-#include <set>
 #include <map>
 #include <fstream>
 #include <algorithm>
@@ -57,10 +63,17 @@
 #include <intrin.h>
 #include <thread>
 
-// Если вылетает при открытии карты — поставь 0 (отключит хуки oCMapScreen::Show и
-// oCViewDocumentMap::UpdatePosition в телеметрии).
-#ifndef ZM_HOOK_MAP
-#define ZM_HOOK_MAP 1
+// ── Переключатели экспериментальных возможностей ──
+// Если на твоей машине VB-слоты vtable D3D7 сдвинуты (проверяется по дампу:
+// в SUMMARY не видно DP/DIPVB), поставь 1 → хуки встанут на 33/34.
+#ifndef ZM_VB_SLOT_OFFSET
+#define ZM_VB_SLOT_OFFSET 0
+#endif
+
+// Переворот области карты на бэкбуфере (первичное зеркалирование карты).
+// 0 = отключить (если даёт артефакты на твоей машине).
+#ifndef ZM_MAP_REGION_FLIP
+#define ZM_MAP_REGION_FLIP 1
 #endif
 
 namespace GOTHIC_ENGINE {
@@ -104,11 +117,10 @@ std::string Hex(unsigned long v) {
 }
 
 // ───────────────────────── Состояние ─────────────────────────
-enum { MODE_OFF = 0, MODE_CPU = 1, MODE_BLT = 2, MODE_GPU8 = 3, MODE_GPU10 = 4, MODE_GPU11 = 5, MODE_COUNT = 6 };
-const char* const kModeNames[MODE_COUNT] = { "OFF", "CPU", "BLT", "GPUv8", "GPUv10", "GPUv11" };
+enum { MODE_OFF = 0, MODE_CPU = 1, MODE_GPU = 2, MODE_COUNT = 3 };
+const char* const kModeNames[MODE_COUNT] = { "OFF", "CPU", "GPU" };
 
 int  g_mode = MODE_OFF;
-bool g_fullFrame = false;      // тест "[": зеркало всего кадра на present
 bool g_entMirror = false;      // зеркалирование сущностей (все NPC)
 bool g_teleOn = false;         // телеметрия
 int  g_failStreak = 0;
@@ -118,8 +130,7 @@ bool g_focusLockable = false;
 bool g_uiPhase = false;
 int  g_worldDepth = 0;
 
-inline bool MirrorOn() { return g_mode != MODE_OFF || g_fullFrame; }
-inline bool IsPostMirrorMode() { return g_mode == MODE_CPU || g_mode == MODE_BLT; }
+inline bool MirrorOn() { return g_mode != MODE_OFF; }
 
 void SyncMouseFlip();  // ранняя декларация
 
@@ -137,12 +148,13 @@ struct PerfStat {
     double mirrorSum; int mirrorN;
 };
 PerfStat g_perf = {};
-int g_tlMirrored = 0;     // сколько TL-вызовов отзеркалено (GPUv11)
-int g_tlVbSkipped = 0;    // сколько TL-вызовов через VB пропущено (GPUv11)
+int g_tlMirrored = 0;      // сколько TL-вызовов DP/DIP отзеркалено (GPU)
+int g_tlVbMirrored = 0;    // сколько TL-вызовов DPVB/DIPVB отзеркалено (GPU)
+int g_tlVbFailed = 0;      // сколько TL-VB-вызовов НЕ удалось отзеркалить (lock/создание VB)
 
 void PerfReset() {
     memset(&g_perf, 0, sizeof(g_perf));
-    g_tlMirrored = 0; g_tlVbSkipped = 0;
+    g_tlMirrored = 0; g_tlVbMirrored = 0; g_tlVbFailed = 0;
 }
 
 void PerfFrame() {
@@ -157,10 +169,11 @@ void PerfFrame() {
     if (g_perf.frames >= 300) {
         double avg = g_perf.frameSum / g_perf.frames;
         double am = g_perf.mirrorN ? g_perf.mirrorSum / g_perf.mirrorN : 0.0;
-        Log(SFmt("PERF mode=%s ent=%d ff=%d frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms tlMirrored=%d tlVbSkipped=%d",
-            kModeNames[g_mode], g_entMirror ? 1 : 0, g_fullFrame ? 1 : 0, g_perf.frames, avg, 1000.0 / avg, am, g_tlMirrored, g_tlVbSkipped));
+        Log(SFmt("PERF mode=%s ent=%d frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms tlMirrored=%d tlVbMirrored=%d tlVbFailed=%d",
+            kModeNames[g_mode], g_entMirror ? 1 : 0, g_perf.frames, avg, 1000.0 / avg, am,
+            g_tlMirrored, g_tlVbMirrored, g_tlVbFailed));
         g_perf.frameSum = 0; g_perf.frames = 0; g_perf.mirrorSum = 0; g_perf.mirrorN = 0;
-        g_tlMirrored = 0; g_tlVbSkipped = 0;
+        g_tlMirrored = 0; g_tlVbMirrored = 0; g_tlVbFailed = 0;
     }
 }
 
@@ -208,138 +221,6 @@ bool MirrorByLock(IDirectDrawSurface7* s) {
     return ok;
 }
 
-// ───────────────────────── BLT-метод: зеркало силами DirectDraw ─────────────────────────
-IDirectDrawSurface7* g_bltTmp = NULL;
-DWORD g_bltW = 0, g_bltH = 0;
-bool  g_bltBroken = false;
-int   g_bltFails = 0;
-bool  g_bltCapsLogged = false;
-int   g_bltVerify = 0;        // 0 = ещё не проверено, 1 = зеркалит, 2 = НЕ зеркалит (флаг проигнорирован)
-int   g_bltVerifyTries = 0;
-bool  g_inMirror = false;     // защита от рекурсии в нашем же Blt-хуке
-
-void ReleaseBltTmp() {
-    if (g_bltTmp) { g_bltTmp->Release(); g_bltTmp = NULL; }
-    g_bltW = g_bltH = 0;
-}
-
-void LogDDCaps(IDirectDraw7* dd) {
-    DDCAPS hal, hel;
-    ZeroMemory(&hal, sizeof(hal)); ZeroMemory(&hel, sizeof(hel));
-    hal.dwSize = sizeof(DDCAPS); hel.dwSize = sizeof(DDCAPS);
-    if (FAILED(dd->GetCaps(&hal, &hel))) { Log("DDCAPS: GetCaps failed"); return; }
-    Log(SFmt("DDCAPS HAL: caps=0x%08lX fxcaps=0x%08lX mirrorLR=%d | HEL: caps=0x%08lX fxcaps=0x%08lX mirrorLR=%d | vidmem free=%lu total=%lu",
-        (unsigned long)hal.dwCaps, (unsigned long)hal.dwFXCaps, (hal.dwFXCaps & DDFXCAPS_BLTMIRRORLEFTRIGHT) ? 1 : 0,
-        (unsigned long)hel.dwCaps, (unsigned long)hel.dwFXCaps, (hel.dwFXCaps & DDFXCAPS_BLTMIRRORLEFTRIGHT) ? 1 : 0,
-        (unsigned long)hal.dwVidMemFree, (unsigned long)hal.dwVidMemTotal));
-}
-
-bool EnsureBltTmp(IDirectDrawSurface7* rt) {
-    DDSURFACEDESC2 d; ZeroMemory(&d, sizeof(d)); d.dwSize = sizeof(d);
-    if (FAILED(rt->GetSurfaceDesc(&d))) { Log("BLT: GetSurfaceDesc failed"); return false; }
-    if (g_bltTmp && g_bltW == d.dwWidth && g_bltH == d.dwHeight) return true;
-    ReleaseBltTmp();
-
-    IDirectDraw7* dd = NULL;
-    if (FAILED(rt->GetDDInterface((LPVOID*)&dd)) || !dd) { Log("BLT: GetDDInterface failed"); return false; }
-    if (!g_bltCapsLogged) { g_bltCapsLogged = true; LogDDCaps(dd); }
-
-    DDSURFACEDESC2 td; ZeroMemory(&td, sizeof(td)); td.dwSize = sizeof(td);
-    td.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT;
-    td.dwWidth = d.dwWidth; td.dwHeight = d.dwHeight;
-    td.ddpfPixelFormat = d.ddpfPixelFormat;
-    td.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_VIDEOMEMORY;
-    HRESULT hr = dd->CreateSurface(&td, &g_bltTmp, NULL);
-    const char* where = "VIDEO";
-    if (FAILED(hr)) {
-        td.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
-        hr = dd->CreateSurface(&td, &g_bltTmp, NULL);
-        where = "SYSTEM";
-    }
-    dd->Release();
-    if (FAILED(hr) || !g_bltTmp) { Log("BLT: CreateSurface failed " + Hex(hr)); g_bltTmp = NULL; return false; }
-    g_bltW = d.dwWidth; g_bltH = d.dwHeight;
-    Log(SFmt("BLT: temp surface %lux%lu created in %s memory", (unsigned long)g_bltW, (unsigned long)g_bltH, where));
-    return true;
-}
-
-bool ReadRow32(IDirectDrawSurface7* s, DWORD y, std::vector<DWORD>& row) {
-    DDSURFACEDESC2 d; ZeroMemory(&d, sizeof(d)); d.dwSize = sizeof(d);
-    if (FAILED(s->Lock(NULL, &d, DDLOCK_WAIT | DDLOCK_READONLY | DDLOCK_SURFACEMEMORYPTR, NULL))) return false;
-    bool ok = false;
-    if (d.lpSurface && d.ddpfPixelFormat.dwRGBBitCount == 32 && y < d.dwHeight) {
-        const DWORD* src = (const DWORD*)((BYTE*)d.lpSurface + (size_t)y * d.lPitch);
-        row.assign(src, src + d.dwWidth);
-        ok = true;
-    }
-    s->Unlock(NULL);
-    return ok;
-}
-
-// true = кадр зеркален. false = ничего не изменено (или нужен откат на Lock).
-bool MirrorByBlt(IDirectDrawSurface7* rt) {
-    if (!rt || !EnsureBltTmp(rt)) return false;
-    g_inMirror = true;
-    bool ok = false;
-
-    std::vector<DWORD> pre, post;
-    bool wantVerify = (g_bltVerify == 0 && g_bltVerifyTries < 20);
-    DWORD sampleY = g_bltH / 3;
-    bool havePre = wantVerify && ReadRow32(rt, sampleY, pre);
-
-    DDBLTFX fx; ZeroMemory(&fx, sizeof(fx)); fx.dwSize = sizeof(fx);
-    fx.dwDDFX = DDBLTFX_MIRRORLEFTRIGHT;
-    HRESULT hr = g_bltTmp->Blt(NULL, rt, NULL, DDBLT_WAIT | DDBLT_DDFX, &fx);
-    if (FAILED(hr)) {
-        static int n1 = 0;
-        if (n1++ < 3) Log("BLT: mirror Blt (rt->tmp) failed " + Hex(hr));
-    }
-    else {
-        hr = rt->Blt(NULL, g_bltTmp, NULL, DDBLT_WAIT, NULL);
-        if (FAILED(hr)) {
-            static int n2 = 0;
-            if (n2++ < 3) Log("BLT: copy-back Blt (tmp->rt) failed " + Hex(hr));
-        }
-        else ok = true;
-    }
-
-    if (ok && havePre && ReadRow32(rt, sampleY, post) && post.size() == pre.size() && pre.size() > 64) {
-        int informative = 0, match = 0;
-        DWORD w = (DWORD)pre.size();
-        for (DWORD k = 1; k <= 7; k++) {
-            DWORD x = w * k / 8, mx = w - 1 - x;
-            DWORD a = pre[x] & 0x00FFFFFF, b = pre[mx] & 0x00FFFFFF;
-            if (a != b) { informative++; if ((post[mx] & 0x00FFFFFF) == a) match++; }
-        }
-        if (informative >= 3) {
-            g_bltVerify = (match == informative) ? 1 : 2;
-            Log(SFmt("BLT verify: informative=%d match=%d => %s", informative, match,
-                g_bltVerify == 1 ? "MIRROR WORKS (hardware/driver)" : "blit succeeded but did NOT mirror (flag ignored) -> fallback to CPU"));
-            if (g_bltVerify == 2) { g_bltBroken = true; ok = false; }
-        }
-        else g_bltVerifyTries++;
-    }
-    g_inMirror = false;
-    return ok;
-}
-
-// Зеркалит указанную поверхность выбранным методом режима. Вызывать вне сцены (между EndFrame и BeginFrame).
-bool MirrorSurfaceNow(IDirectDrawSurface7* rt) {
-    bool ok = false;
-    if (g_mode == MODE_BLT || g_fullFrame) {
-        if (!g_bltBroken) {
-            ok = MirrorByBlt(rt);
-            if (!ok && ++g_bltFails >= 3 && !g_bltBroken) {
-                g_bltBroken = true;
-                Log("BLT: 3 failures in a row -> permanent fallback to CPU Lock-method");
-            }
-            if (ok) g_bltFails = 0;
-        }
-    }
-    if (!ok) ok = MirrorByLock(rt);
-    return ok;
-}
-
 void MirrorWorldPost() {
     zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
     if (!rnd) return;
@@ -351,7 +232,7 @@ void MirrorWorldPost() {
     QueryPerformanceCounter(&t0);
 
     rnd->EndFrame();
-    bool ok = MirrorSurfaceNow(rt);
+    bool ok = MirrorByLock(rt);
     rnd->BeginFrame();
     rt->Release();
 
@@ -374,8 +255,6 @@ typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawPrimitive)(IDirect3DDevice7*, D3DPRI
 typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawIndexedPrimitive)(IDirect3DDevice7*, D3DPRIMITIVETYPE, DWORD, LPVOID, DWORD, LPWORD, DWORD, DWORD);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawPrimitiveVB)(IDirect3DDevice7*, D3DPRIMITIVETYPE, void*, DWORD, DWORD, DWORD);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawIndexedPrimitiveVB)(IDirect3DDevice7*, D3DPRIMITIVETYPE, void*, DWORD, DWORD, LPWORD, DWORD, DWORD);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_SurfBlt)(IDirectDrawSurface7*, LPRECT, IDirectDrawSurface7*, LPRECT, DWORD, LPDDBLTFX);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_SurfFlip)(IDirectDrawSurface7*, IDirectDrawSurface7*, DWORD);
 
 PFN_BeginScene            g_oBeginScene = NULL;
 PFN_EndScene              g_oEndScene = NULL;
@@ -387,8 +266,6 @@ PFN_DrawPrimitive         g_oDP = NULL;
 PFN_DrawIndexedPrimitive  g_oDIP = NULL;
 PFN_DrawPrimitiveVB       g_oDPVB = NULL;
 PFN_DrawIndexedPrimitiveVB g_oDIPVB = NULL;
-PFN_SurfBlt               g_oSurfBlt = NULL;
-PFN_SurfFlip              g_oSurfFlip = NULL;
 
 bool g_devHooked = false;
 DWORD g_engCull = D3DCULL_CCW;        // последнее значение CULLMODE, которое запросил ДВИЖОК
@@ -396,14 +273,10 @@ D3DMATRIX g_engProj;                  // последняя проекция, к
 bool g_haveEngProj = false;
 D3DVIEWPORT7 g_vp;                    // последний вьюпорт
 bool g_haveVp = false;
-IDirectDrawSurface7* g_backBuf = NULL; // указатель бэкбуфера (без AddRef, только для сравнения)
 
-bool g_devWorldMirror = false;        // GPUv11: идёт рендер главного мира в зеркале
+bool g_devWorldMirror = false;        // GPU: идёт рендер главного мира в зеркале
 bool g_worldCullFlip = false;         // паритет отражений на уровне мира
 bool g_entCullFlip = false;           // паритет отражения сущности (матрица NPC)
-int  g_presentHits = 0;
-int  g_presentMirrorFrame = -1;
-int  g_ffFrames = 0;
 
 inline bool CullFlipNow() { return g_worldCullFlip != g_entCullFlip; }
 
@@ -476,7 +349,7 @@ std::string MatStr(const D3DMATRIX& m) {
 
 // ───────────────────────── Дамп одного кадра вызовов D3D7 (телеметрия, INSERT) ─────────────────────────
 struct DumpEntry {
-    int kind;                 // 0=текст, 1=DP, 2=DIP, 3=DPVB, 4=DIPVB, 12=агрегат SetTransform(WORLD)
+    int kind;                 // 0=текст, 1=DP, 2=DIP, 3=DPVB, 4=DIPVB, 12=агрегат SetTransform(WORLD), 13=агрегат PROJ/OTHER
     std::string text;
     DWORD prim, fvf, cull, caller;
     char phase;               // W = главный мир, w = другой мир, U = UI/после мира
@@ -496,11 +369,15 @@ bool g_dumpActive = false;
 int  g_dumpNo = 0;
 DWORD g_dumpStartTick = 0;
 int  g_dumpDropped = 0;
-int  g_dumpSurfEvents = 0;
 bool g_dumpSawPrint = false;
+
 std::map<void*, DWORD> g_vbFvf;
 
 inline char CurPhase() { return g_inMainWorld ? 'W' : (g_worldDepth > 0 ? 'w' : 'U'); }
+
+// Forward-декларации (определены ниже)
+bool FindVisibleMapView(zCView* v, zCView*& out, int depth);
+void MaybeMirrorMapRegion();
 
 void DumpText(const std::string& s) {
     if (!g_dumpActive) return;
@@ -555,13 +432,21 @@ void DumpTransform(DWORD type, const D3DMATRIX* m) {
         g_dump.push_back(e);
         return;
     }
-    DumpText(std::string("SetTransform ") + n + (g_devWorldMirror ? " (device-mirrored: col0 negated)" : "") + " " + MatStr(*m));
+    // PROJ/OTHER: агрегируем подряд идущие одинаковые матрицы
+    std::string t = std::string("SetTransform ") + n + (g_devWorldMirror ? " (device-mirrored: col0 negated)" : "") + " " + MatStr(*m);
+    if (!g_dump.empty()) {
+        DumpEntry& l = g_dump.back();
+        if (l.kind == 13 && l.phase == CurPhase() && l.text == t) { l.calls++; return; }
+    }
+    if (g_dump.size() >= kDumpCap) { g_dumpDropped++; return; }
+    DumpEntry e; e.kind = 13; e.phase = CurPhase(); e.calls = 1; e.text = t;
+    g_dump.push_back(e);
 }
 
 void StartDump() {
     g_dump.clear();
     g_vbFvf.clear();
-    g_dumpDropped = 0; g_dumpSurfEvents = 0; g_dumpSawPrint = false;
+    g_dumpDropped = 0; g_dumpSawPrint = false;
     g_dumpRequested = false;
     g_dumpActive = true;
     g_dumpNo++;
@@ -569,6 +454,8 @@ void StartDump() {
     DumpText(SFmt("viewport: x=%lu y=%lu w=%lu h=%lu (known=%d)", (unsigned long)g_vp.dwX, (unsigned long)g_vp.dwY,
         (unsigned long)g_vp.dwWidth, (unsigned long)g_vp.dwHeight, g_haveVp ? 1 : 0));
     DumpText(SFmt("engine cull=%lu, engine proj=%s", (unsigned long)g_engCull, g_haveEngProj ? MatStr(g_engProj).c_str() : "unknown"));
+    zCView* mv = NULL;
+    if (screen && FindVisibleMapView(screen, mv, 0)) DumpText("map view visible: YES");
 }
 
 void FinishDump() {
@@ -589,8 +476,8 @@ void FinishDump() {
 
     static const char* kn[5] = { "", "DP", "DIP", "DPVB", "DIPVB" };
     std::string out;
-    out += SFmt("\n===== DUMP #%d  mode=%s ent=%d ff=%d frame=%d entries=%d dropped=%d =====\n",
-        g_dumpNo, kModeNames[g_mode], g_entMirror ? 1 : 0, g_fullFrame ? 1 : 0, g_frame, (int)g_dump.size(), g_dumpDropped);
+    out += SFmt("\n===== DUMP #%d  mode=%s ent=%d frame=%d entries=%d dropped=%d =====\n",
+        g_dumpNo, kModeNames[g_mode], g_entMirror ? 1 : 0, g_frame, (int)g_dump.size(), g_dumpDropped);
     static const char* pn[3] = { "W (main world)", "w (other worlds)", "U (after world / UI)" };
     for (int p = 0; p < 3; p++)
         out += SFmt("SUMMARY phase %-20s : TL(XYZRHW) calls=%d verts=%llu | XYZ(3D) calls=%d verts=%llu | other=%d | of which VB-calls=%d\n",
@@ -600,7 +487,7 @@ void FinishDump() {
     for (size_t i = 0; i < g_dump.size(); i++) {
         const DumpEntry& e = g_dump[i];
         if (e.kind == 0) { out += SFmt("[%c]       %s\n", e.phase, e.text.c_str()); continue; }
-        if (e.kind == 12) { out += SFmt("[%c]       %s  (x%d calls)\n", e.phase, e.text.c_str(), e.calls); continue; }
+        if (e.kind == 12 || e.kind == 13) { out += SFmt("[%c]       %s  (x%d calls)\n", e.phase, e.text.c_str(), e.calls); continue; }
         std::string line = SFmt("[%c] %-5s prim=%lu fvf=0x%03lX %-28s calls=%d verts=%llu idx=%llu cull=%lu%s caller=0x%08lX",
             e.phase, kn[e.kind], (unsigned long)e.prim, (unsigned long)e.fvf, FvfStr(e.fvf).c_str(), e.calls, e.verts, e.idx,
             (unsigned long)e.cull, e.flip ? "(FLIPPED)" : "", (unsigned long)e.caller);
@@ -614,7 +501,6 @@ void FinishDump() {
 }
 
 // ───────────────────────── Хуки D3D7-устройства ─────────────────────────
-// Состояние движка (cull/проекция) отслеживаем на уровне ЛЮБЫХ вызовов устройства.
 void SyncCull() {
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
     if (!dev || !g_oSetRS) return;
@@ -635,13 +521,15 @@ HRESULT STDMETHODCALLTYPE Hook_Dev_BeginScene(IDirect3DDevice7* self) {
 }
 
 HRESULT STDMETHODCALLTYPE Hook_Dev_EndScene(IDirect3DDevice7* self) {
+    HRESULT hr = g_oEndScene(self);
     if (g_dumpActive) DumpText("device EndScene");
-    return g_oEndScene(self);
+    MaybeMirrorMapRegion();
+    return hr;
 }
 
 HRESULT STDMETHODCALLTYPE Hook_Dev_SetRenderTarget(IDirect3DDevice7* self, IDirectDrawSurface7* s, DWORD fl) {
-    if (g_dumpActive) DumpText(SFmt("SetRenderTarget surf=0x%08lX %s flags=0x%lX caller=0x%08lX", (unsigned long)(size_t)s,
-        (s == g_backBuf) ? "(== backbuffer)" : "(OTHER surface)", (unsigned long)fl, (unsigned long)(size_t)_ReturnAddress()));
+    if (g_dumpActive) DumpText(SFmt("SetRenderTarget surf=0x%08lX flags=0x%lX caller=0x%08lX", (unsigned long)(size_t)s,
+        (unsigned long)fl, (unsigned long)(size_t)_ReturnAddress()));
     return g_oSetRT(self, s, fl);
 }
 
@@ -725,63 +613,79 @@ DWORD VbFvf(void* vb) {
     return f;
 }
 
-HRESULT STDMETHODCALLTYPE Hook_Dev_DrawPrimitiveVB(IDirect3DDevice7* self, D3DPRIMITIVETYPE pt, void* vb, DWORD start, DWORD count, DWORD fl) {
-    if (g_dumpActive || g_devWorldMirror) {
-        DWORD f = VbFvf(vb);
-        if (g_devWorldMirror && IsTLFvf(f)) {
-            g_tlVbSkipped++;
-            static bool warned = false;
-            if (!warned) { warned = true; Log("GPUv11 WARNING: pre-transformed (XYZRHW) VertexBuffer draw encountered - NOT mirrored by this method"); }
+// ── TL-зеркалирование через вершинные буферы (PFX/скайбокс/декали/часть UI) ──
+// Исходный VB не трогаем: читаем его через Lock, пишем зеркальную копию в
+// кэшированный временный VB (SYSTEMMEM) и рисуем из него с start=0.
+struct TlVbCache { IDirect3DVertexBuffer7* vb; DWORD fvf; DWORD cap; };
+static TlVbCache g_tlVbCache = { NULL, 0, 0 };
+
+IDirect3DVertexBuffer7* MirrorTLVb(void* vb, DWORD fvf, DWORD start, DWORD count) {
+    if (!vb || count == 0) return NULL;
+    DWORD stride = FvfStride(fvf);
+    if (stride < 16) { g_tlVbFailed++; return NULL; }
+    IDirect3DVertexBuffer7* ovb = (IDirect3DVertexBuffer7*)vb;
+    BYTE* src = NULL;
+    if (FAILED(ovb->Lock(D3DLOCK_READONLY, (BYTE**)&src, NULL)) || !src) {
+        // некоторые драйверы запрещают read-lock на WRITEONLY-буферах — пробуем без флагов
+        if (FAILED(ovb->Lock(0, (BYTE**)&src, NULL)) || !src) {
+            g_tlVbFailed++;
+            return NULL;
         }
-        if (g_dumpActive) DumpDraw(3, (DWORD)pt, f, count, 0, NULL, (DWORD)(size_t)_ReturnAddress(), false);
+    }
+    IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
+    if (!dev) { ovb->Unlock(); g_tlVbFailed++; return NULL; }
+    if (!g_tlVbCache.vb || g_tlVbCache.fvf != fvf || g_tlVbCache.cap < count) {
+        if (g_tlVbCache.vb) { g_tlVbCache.vb->Release(); g_tlVbCache.vb = NULL; }
+        DWORD want = (count + 1023) & ~1023u;
+        if (FAILED(dev->CreateVertexBuffer(want * stride, D3DUSAGE_WRITEONLY, fvf, D3DPOOL_SYSTEMMEM, &g_tlVbCache.vb, NULL))) {
+            g_tlVbCache.vb = NULL; g_tlVbCache.fvf = 0; g_tlVbCache.cap = 0;
+            ovb->Unlock(); g_tlVbFailed++; return NULL;
+        }
+        g_tlVbCache.fvf = fvf;
+        g_tlVbCache.cap = want;
+    }
+    BYTE* dst = NULL;
+    if (FAILED(g_tlVbCache.vb->Lock(D3DLOCK_DISCARD, (BYTE**)&dst, NULL)) || !dst) {
+        ovb->Unlock(); g_tlVbFailed++; return NULL;
+    }
+    float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
+    size_t maxIdx = (size_t)count * stride;
+    for (size_t i = 0; i < maxIdx; i += stride) {
+        memcpy(dst + i, src + (size_t)start * stride + i, stride);
+        float* p = (float*)(dst + i);
+        p[0] = cx - p[0];
+    }
+    g_tlVbCache.vb->Unlock();
+    ovb->Unlock();
+    return g_tlVbCache.vb;
+}
+
+HRESULT STDMETHODCALLTYPE Hook_Dev_DrawPrimitiveVB(IDirect3DDevice7* self, D3DPRIMITIVETYPE pt, void* vb, DWORD start, DWORD count, DWORD fl) {
+    DWORD f = VbFvf(vb);
+    bool mir = g_devWorldMirror && IsTLFvf(f) && g_haveVp;
+    if (g_dumpActive) DumpDraw(3, (DWORD)pt, f, count, 0, NULL, (DWORD)(size_t)_ReturnAddress(), mir);
+    if (mir) {
+        IDirect3DVertexBuffer7* tbv = MirrorTLVb(vb, f, start, count);
+        if (tbv) {
+            static bool loggedOk = false;
+            if (!loggedOk) { loggedOk = true; Log("TL-VB mirror: first success (PFX/skybox/UI-TL path active)"); }
+            g_tlVbMirrored++; return g_oDPVB(self, pt, tbv, 0, count, fl);
+        }
+        static bool loggedFail = false;
+        if (!loggedFail) { loggedFail = true; Log(SFmt("TL-VB mirror: first failure (lock/CreateVertexBuffer) fvf=0x%03lX count=%lu", (unsigned long)f, (unsigned long)count)); }
     }
     return g_oDPVB(self, pt, vb, start, count, fl);
 }
 
 HRESULT STDMETHODCALLTYPE Hook_Dev_DrawIndexedPrimitiveVB(IDirect3DDevice7* self, D3DPRIMITIVETYPE pt, void* vb, DWORD start, DWORD vcount, LPWORD idx, DWORD icount, DWORD fl) {
-    if (g_dumpActive || g_devWorldMirror) {
-        DWORD f = VbFvf(vb);
-        if (g_devWorldMirror && IsTLFvf(f)) {
-            g_tlVbSkipped++;
-            static bool warned = false;
-            if (!warned) { warned = true; Log("GPUv11 WARNING: pre-transformed (XYZRHW) VertexBuffer draw encountered - NOT mirrored by this method"); }
-        }
-        if (g_dumpActive) DumpDraw(4, (DWORD)pt, f, vcount, icount, NULL, (DWORD)(size_t)_ReturnAddress(), false);
+    DWORD f = VbFvf(vb);
+    bool mir = g_devWorldMirror && IsTLFvf(f) && g_haveVp;
+    if (g_dumpActive) DumpDraw(4, (DWORD)pt, f, vcount, icount, NULL, (DWORD)(size_t)_ReturnAddress(), mir);
+    if (mir) {
+        IDirect3DVertexBuffer7* tbv = MirrorTLVb(vb, f, start, vcount);
+        if (tbv) { g_tlVbMirrored++; return g_oDIPVB(self, pt, tbv, 0, vcount, idx, icount, fl); }
     }
     return g_oDIPVB(self, pt, vb, start, vcount, idx, icount, fl);
-}
-
-// Present: windowed -> Blt(back -> front), fullscreen -> Flip.
-void MirrorBackbufferOnPresent() {
-    if (!g_backBuf) return;
-    if (!(g_fullFrame && MirrorOn())) return;
-    if (g_presentMirrorFrame == g_frame) return;   // максимум один раз за кадр движка
-    g_presentMirrorFrame = g_frame;
-    MirrorSurfaceNow(g_backBuf);
-}
-
-HRESULT STDMETHODCALLTYPE Hook_Surf_Blt(IDirectDrawSurface7* self, LPRECT dr, IDirectDrawSurface7* src, LPRECT sr, DWORD fl, LPDDBLTFX fx) {
-    if (!g_inMirror) {
-        bool present = (src && src == g_backBuf && self != g_backBuf);
-        if (g_dumpActive && (present || g_dumpSurfEvents < 120)) {
-            g_dumpSurfEvents++;
-            DumpText(SFmt("Surface.Blt dest=0x%08lX src=0x%08lX flags=0x%08lX%s%s caller=0x%08lX", (unsigned long)(size_t)self, (unsigned long)(size_t)src,
-                (unsigned long)fl, present ? "  <== PRESENT (backbuffer -> other)" : "", (self == g_backBuf) ? "  (dest==backbuffer)" : "",
-                (unsigned long)(size_t)_ReturnAddress()));
-        }
-        if (present) { g_presentHits++; MirrorBackbufferOnPresent(); }
-    }
-    return g_oSurfBlt(self, dr, src, sr, fl, fx);
-}
-
-HRESULT STDMETHODCALLTYPE Hook_Surf_Flip(IDirectDrawSurface7* self, IDirectDrawSurface7* target, DWORD fl) {
-    if (!g_inMirror) {
-        if (g_dumpActive) DumpText(SFmt("Surface.Flip self=0x%08lX target=0x%08lX flags=0x%08lX  <== PRESENT (flip) caller=0x%08lX",
-            (unsigned long)(size_t)self, (unsigned long)(size_t)target, (unsigned long)fl, (unsigned long)(size_t)_ReturnAddress()));
-        g_presentHits++;
-        MirrorBackbufferOnPresent();
-    }
-    return g_oSurfFlip(self, target, fl);
 }
 
 template <class F>
@@ -795,13 +699,7 @@ bool PatchSlot(void** vt, int idx, F hook, F& orig) {
     return orig != NULL;
 }
 
-void RefreshBackBuf() {
-    IDirectDrawSurface7* rt = AcquireTarget();
-    g_backBuf = rt;
-    if (rt) rt->Release();
-}
-
-// Устанавливает vtable-хуки на D3D7-устройство и DirectDraw-поверхность. Один раз за сессию.
+// Устанавливает vtable-хуки на D3D7-устройство. Один раз за сессию.
 bool EnsureDeviceHooks() {
     if (g_devHooked) return true;
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
@@ -820,88 +718,95 @@ bool EnsureDeviceHooks() {
     ok = PatchSlot(vt, 8,  &Hook_Dev_SetRenderTarget,       g_oSetRT) && ok;   // слот 8 = SetRenderTarget (слот 9 = GetRenderTarget!)
     ok = PatchSlot(vt, 11, &Hook_Dev_SetTransform,          g_oSetTransform) && ok;
     ok = PatchSlot(vt, 13, &Hook_Dev_SetViewport,           g_oSetViewport) && ok;
-    ok = PatchSlot(vt, 20, &Hook_Dev_SetRenderState,        g_oSetRS) && ok;
+    ok = PatchSlot(vt, 20, &Hook_Dev_SetRenderState,        g_oSetRS) && ok;   // эмпирически на этой сборке SetRenderState = 20
     ok = PatchSlot(vt, 25, &Hook_Dev_DrawPrimitive,         g_oDP) && ok;
     ok = PatchSlot(vt, 26, &Hook_Dev_DrawIndexedPrimitive,  g_oDIP) && ok;
-    ok = PatchSlot(vt, 31, &Hook_Dev_DrawPrimitiveVB,       g_oDPVB) && ok;
-    ok = PatchSlot(vt, 32, &Hook_Dev_DrawIndexedPrimitiveVB, g_oDIPVB) && ok;
-
-    RefreshBackBuf();
-    if (g_backBuf) {
-        void** svt = *(void***)g_backBuf;
-        ok = PatchSlot(svt, 5,  &Hook_Surf_Blt,  g_oSurfBlt) && ok;
-        ok = PatchSlot(svt, 11, &Hook_Surf_Flip, g_oSurfFlip) && ok;
-    }
-    else ok = false;
+    ok = PatchSlot(vt, 32 + ZM_VB_SLOT_OFFSET, &Hook_Dev_DrawPrimitiveVB, g_oDPVB) && ok;
+    ok = PatchSlot(vt, 33 + ZM_VB_SLOT_OFFSET, &Hook_Dev_DrawIndexedPrimitiveVB, g_oDIPVB) && ok;
 
     g_devHooked = ok;
-    Log(ok ? SFmt("device hooks installed (cull=%lu, viewport %lux%lu)", (unsigned long)g_engCull, (unsigned long)g_vp.dwWidth, (unsigned long)g_vp.dwHeight)
+    Log(ok ? SFmt("device hooks installed (cull=%lu, viewport %lux%lu, vbSlotOffset=%d)",
+        (unsigned long)g_engCull, (unsigned long)g_vp.dwWidth, (unsigned long)g_vp.dwHeight, ZM_VB_SLOT_OFFSET)
            : std::string("device hooks: FAILED (see slots)"));
     return ok;
 }
 
-// ───────────────────────── GPUv8: отражение первой строки проекции ─────────────────────────
-void ApplyMirrorProjectionV8() {
-    IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
-    if (!dev) return;
-    D3DMATRIX p;
-    if (SUCCEEDED(dev->GetTransform(D3DTRANSFORMSTATE_PROJECTION, &p))) {
-        p._11 = -p._11; p._12 = -p._12; p._13 = -p._13; p._14 = -p._14;
-        // Обходим наш хук, чтобы g_engProj не запоминал уже отражённую матрицу.
-        if (g_oSetTransform) g_oSetTransform(dev, D3DTRANSFORMSTATE_PROJECTION, &p);
-        else dev->SetTransform(D3DTRANSFORMSTATE_PROJECTION, &p);
+// ───────────────────────── Карта: зеркалирование области просмотра ─────────────────────────
+// Ищем в дереве экрана видимый oCViewDocumentMap и переворачиваем его
+// пиксельную область на бэкбуфере сразу после EndScene (до Present).
+// Детект карты по адресу vtable oCViewDocumentMap (G2A 2.6): надёжнее, чем
+// имя класса через zCObject-каст (для view-объектов он возвращает имя базового
+// класса — см. лог 1.4.1: "class=zCViewDialog").
+inline bool IsMapView(zCView* v) {
+    return v && *(void**)v == (void*)0x0083BA9C;
+}
+
+bool FindVisibleMapView(zCView* v, zCView*& out, int depth) {
+    if (!v || depth > 32) return false;
+    if (IsMapView(v)) {
+        if (v->isOpen && !v->isClosed) { out = v; return true; }
     }
-}
-
-// ───────────────────────── GPUv10: отражение трасформаций камеры ─────────────────────────
-void MirrorMatrixRow0(zMAT4& m) {
-    m.v[0][0] = -m.v[0][0];
-    m.v[0][1] = -m.v[0][1];
-    m.v[0][2] = -m.v[0][2];
-    m.v[0][3] = -m.v[0][3];
-}
-
-void MirrorMatrixCol0(zMAT4& m) {
-    m.v[0][0] = -m.v[0][0];
-    m.v[1][0] = -m.v[1][0];
-    m.v[2][0] = -m.v[2][0];
-    m.v[3][0] = -m.v[3][0];
-}
-
-void ApplyMirrorView(zCCamera* cam) {
-    if (!cam) return;
-    MirrorMatrixRow0(cam->trafoView);
-    MirrorMatrixCol0(cam->trafoViewInv);
-    // zCMatrixStack: int pos (4 байта) + T stack[SIZE] — элементы на смещении 4.
-    zMAT4* viewStack = reinterpret_cast<zMAT4*>((char*)&cam->trafoViewStack + 4);
-    zMAT4* wvStack = reinterpret_cast<zMAT4*>((char*)&cam->trafoWorldViewStack + 4);
-    for (int i = 0; i < 8; i++) {
-        MirrorMatrixRow0(viewStack[i]);
-        MirrorMatrixRow0(wvStack[i]);
+    for (zCView* c = v->childs.root; c; c = c->next) {
+        if (FindVisibleMapView(c, out, depth + 1)) return true;
     }
+    return false;
 }
 
-// zCCamera::Activate
-void __fastcall Hook_Cam_Activate(zCCamera* self, void* edx);
-CInvoke<void(__fastcall*)(zCCamera*, void*)> Ivk_Cam_Activate(0x0054A700, &Hook_Cam_Activate);
-void __fastcall Hook_Cam_Activate(zCCamera* self, void* edx) {
-    Ivk_Cam_Activate(self, edx);
-    if (!g_inMainWorld || !MirrorOn()) return;
-    if (g_mode == MODE_GPU8) ApplyMirrorProjectionV8();
-    else if (g_mode == MODE_GPU10) ApplyMirrorView(self);
+bool MapViewPixelRect(zCView* mv, int& x1, int& y1, int& x2, int& y2) {
+    if (!mv || !screen) return false;
+    long vx = mv->vposx, vy = mv->vposy, vw = mv->vsizex, vh = mv->vsizey;
+    zCView* p = mv->owner;
+    int guard = 0;
+    while (p && p != screen && guard++ < 32) { vx += p->vposx; vy += p->vposy; p = p->owner; }
+    if (vw <= 0 || vh <= 0) return false;
+    x1 = screen->nax((int)vx);
+    y1 = screen->nay((int)vy);
+    x2 = screen->nax((int)(vx + vw));
+    y2 = screen->nay((int)(vy + vh));
+    if (x2 < x1) { int t = x1; x1 = x2; x2 = t; }
+    if (y2 < y1) { int t = y1; y1 = y2; y2 = t; }
+    if (x1 < 0) x1 = 0;
+    if (y1 < 0) y1 = 0;
+    return true;
 }
 
-// zCRnd_D3D::XD3D_SetRenderState (используется только старым GPUv8)
-int __fastcall Hook_SetRenderState(zCRnd_D3D* self, void* edx, D3DRENDERSTATETYPE t, DWORD v);
-CInvoke<int(__fastcall*)(zCRnd_D3D*, void*, D3DRENDERSTATETYPE, DWORD)> Ivk_SetRenderState(0x00644EF0, &Hook_SetRenderState);
-int __fastcall Hook_SetRenderState(zCRnd_D3D* self, void* edx, D3DRENDERSTATETYPE t, DWORD v) {
-    if (t == D3DRENDERSTATE_CULLMODE && g_inMainWorld && g_mode == MODE_GPU8 && MirrorOn())
-        v = InvertCull(v);
-    return Ivk_SetRenderState(self, edx, t, v);
+void MirrorRegion32(IDirectDrawSurface7* s, int x1, int y1, int x2, int y2) {
+    DDSURFACEDESC2 d; ZeroMemory(&d, sizeof(d)); d.dwSize = sizeof(d);
+    if (FAILED(s->Lock(NULL, &d, DDLOCK_WAIT | DDLOCK_SURFACEMEMORYPTR, NULL))) return;
+    if (d.lpSurface && d.ddpfPixelFormat.dwRGBBitCount == 32) {
+        int W = (int)d.dwWidth, H = (int)d.dwHeight;
+        if (x2 > W) x2 = W;
+        if (y2 > H) y2 = H;
+        if (x2 > x1 && y2 > y1) {
+            BYTE* base = (BYTE*)d.lpSurface;
+            for (int y = y1; y < y2; y++) {
+                DWORD* row = (DWORD*)(base + (size_t)y * d.lPitch);
+                FlipRow32(row + x1, x2 - x1);
+            }
+        }
+    }
+    s->Unlock(NULL);
 }
 
-inline bool IsMainWorld(zCWorld* w) {
-    return ogame && w == (zCWorld*)ogame->GetGameWorld();
+void MaybeMirrorMapRegion() {
+    if (!ZM_MAP_REGION_FLIP) return;
+    if (!MirrorOn()) return;
+    if (g_devWorldMirror) return;
+    if (!screen) return;
+    zCView* mv = NULL;
+    if (!FindVisibleMapView(screen, mv, 0)) return;
+    int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+    if (!MapViewPixelRect(mv, x1, y1, x2, y2)) return;
+    IDirectDrawSurface7* rt = AcquireTarget();
+    if (!rt) return;
+    static int lastX1 = -1, lastY1 = -1, lastX2 = -1, lastY2 = -1, lastFrameLog = -1;
+    if ((lastX1 != x1 || lastY1 != y1 || lastX2 != x2 || lastY2 != y2) && lastFrameLog != g_frame) {
+        lastFrameLog = g_frame;
+        Log(SFmt("MAP region flip applied rect=(%d,%d)-(%d,%d) frame=%d mode=%s", x1, y1, x2, y2, g_frame, kModeNames[g_mode]));
+        lastX1 = x1; lastY1 = y1; lastX2 = x2; lastY2 = y2;
+    }
+    MirrorRegion32(rt, x1, y1, x2, y2);
+    rt->Release();
 }
 
 // ───────────────────────── Инверсия мыши по X вместе с зеркалом ─────────────────────────
@@ -921,6 +826,14 @@ void SyncMouseFlip() {
         zinput->SetMouseFlipXY(g_baseFlipX, fy);
         g_mouseFlipApplied = false;
     }
+}
+
+// ───────────────────────── Телеметрия: общие помощники ─────────────────────────
+int g_mark = 0;
+
+std::string ClassOf(zCObject* obj);
+std::string ModalName() {
+    return zCView::modal ? ClassOf((zCObject*)zCView::modal) : std::string("none");
 }
 
 // ───────────────────────── Класс объекта (для детекта UI-режимов) ─────────────────────────
@@ -953,7 +866,6 @@ bool IsFocusLockableNow() {
 }
 
 // ───────────────────────── Кандидаты имени фокуса (кэш на кадр) ─────────────────────────
-// Используется ТОЛЬКО для зеркалирования надписей (не для телеметрии).
 const std::vector<std::string>& FocusNamesCached() {
     static std::vector<std::string> cached;
     static int cachedFrame = -1;
@@ -982,7 +894,6 @@ const std::vector<std::string>& FocusNamesCached() {
         if (ogame) {
             zSTRING n = oCNpcFocus::GetFocusName();
             const char* ch = n.ToChar();
-            // GetFocusName() может вернуть имя РЕЖИМА ("FOCUS_*") — пропускаем.
             if (ch && ch[0] && strncmp(ch, "FOCUS_", 6) != 0) {
                 bool exists = false;
                 for (size_t i = 0; i < cached.size(); i++) if (cached[i] == ch) { exists = true; break; }
@@ -1010,9 +921,8 @@ int GoMirrorXVirtual(zCView* v, int x, int w) {
     return right - 1 - x;
 }
 
-// В режиме "[" (зеркало всего кадра) надписи зеркалятся вместе с кадром — вручную их двигать не нужно.
 inline bool ShouldMirrorLabel() {
-    return MirrorOn() && !g_fullFrame && g_uiPhase && g_worldDepth == 0;
+    return MirrorOn() && g_uiPhase && g_worldDepth == 0;
 }
 
 void MaybeMirrorLabel(zCView* self, int& x, const zSTRING& s) {
@@ -1055,33 +965,13 @@ zCViewText* __fastcall Hook_View_CreateText3(zCView* self, void* edx, int x, int
     return Ivk_View_CreateText3(self, edx, x, y, s);
 }
 
-// ───────────────────────── Телеметрия: кто читает клавиши ─────────────────────────
-// Дедупликация по (адрес вызывающего, клавиша, флаги). PAGEUP очищает набор и пишет MARK.
-std::set<unsigned long long> g_inputSeen;
-int g_mark = 0;
-
-std::string ModalName() {
-    return zCView::modal ? ClassOf((zCObject*)zCView::modal) : std::string("none");
-}
-
-void TeleInput(unsigned short key, DWORD caller) {
-    unsigned long long flags = (zCView::modal ? 1ULL : 0ULL) | ((ogame && ogame->IsOnPause()) ? 2ULL : 0ULL);
-    unsigned long long k = ((unsigned long long)caller << 32) | ((unsigned long long)key << 8) | flags;
-    if (g_inputSeen.size() > 3000) return;
-    if (!g_inputSeen.insert(k).second) return;
-    Log(SFmt("INPUT mark=%d caller=0x%08lX key=%u modal=%s pause=%d", g_mark, (unsigned long)caller, (unsigned)key,
-        ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0));
-}
-
 // ───────────────────────── Клавиши: влево <-> вправо ─────────────────────────
-// Вызывающие коды режима взлома/навигации по замку (найдены телеметрией ранее).
 inline bool IsLockpickCaller(DWORD c) {
     return c == 0x0069857D || c == 0x00698593 || c == 0x006985B9 || c == 0x006985CF ||
            c == 0x00723E6D || c == 0x00723E7E;
 }
 
 inline unsigned short SwapLR(unsigned short key, DWORD caller) {
-    if (g_teleOn) TeleInput(key, caller);
     if (!MirrorOn() || !ogame || ogame->IsOnPause()) return key;
     if (zCView::modal) return key;   // инвентарь, торговля и т.п.
     if (IsFocusLockableNow() && IsLockpickCaller(caller)) return key;   // взлом замков — без свопа
@@ -1109,9 +999,14 @@ int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned sh
 }
 
 // ───────────────────────── Телеметрия карты ─────────────────────────
+#ifndef ZM_HOOK_MAP
+#define ZM_HOOK_MAP 1
+#endif
+
 #if ZM_HOOK_MAP
 int g_mapShowCount = 0;
 int g_mapUpdCount = 0;
+int g_mapUpdLogged = 0;
 
 // oCMapScreen::Show(int)
 int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a);
@@ -1119,8 +1014,8 @@ CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_MapScreen_Show(0x0047F9C0, &Hoo
 int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a) {
     DWORD caller = (DWORD)_ReturnAddress();
     g_mapShowCount++;
-    if (g_teleOn) Log(SFmt("MAP oCMapScreen::Show(arg=%d) BEGIN self=0x%08lX caller=0x%08lX frame=%d modal=%s pause=%d mode=%s ff=%d",
-        a, (unsigned long)(size_t)self, (unsigned long)caller, g_frame, ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, kModeNames[g_mode], g_fullFrame ? 1 : 0));
+    if (g_teleOn) Log(SFmt("MAP oCMapScreen::Show(arg=%d) BEGIN self=0x%08lX caller=0x%08lX frame=%d modal=%s pause=%d mode=%s",
+        a, (unsigned long)(size_t)self, (unsigned long)caller, g_frame, ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, kModeNames[g_mode]));
     DumpText(SFmt("EVENT oCMapScreen::Show(arg=%d) BEGIN", a));
     int r = Ivk_MapScreen_Show(self, edx, a);
     if (g_teleOn) Log(SFmt("MAP oCMapScreen::Show(arg=%d) END   frame=%d modal=%s pause=%d", a, g_frame, ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0));
@@ -1133,10 +1028,15 @@ void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx);
 CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_UpdatePosition(0x0068D7B0, &Hook_MapView_UpdatePosition);
 void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
     g_mapUpdCount++;
-    if (g_teleOn && g_mapUpdCount <= 60) Log(SFmt("MAP oCViewDocumentMap::UpdatePosition #%d class=%s self=0x%08lX caller=0x%08lX frame=%d modal=%s",
-        g_mapUpdCount, ClassOf((zCObject*)self).c_str(), (unsigned long)(size_t)self, (unsigned long)(size_t)_ReturnAddress(), g_frame, ModalName().c_str()));
+    if (g_teleOn && g_mapUpdLogged < 10) {
+        g_mapUpdLogged++;
+        Log(SFmt("MAP oCViewDocumentMap::UpdatePosition #%d class=%s self=0x%08lX caller=0x%08lX frame=%d modal=%s",
+            g_mapUpdCount, ClassOf((zCObject*)self).c_str(), (unsigned long)(size_t)self, (unsigned long)(size_t)_ReturnAddress(), g_frame, ModalName().c_str()));
+    }
     DumpText("EVENT oCViewDocumentMap::UpdatePosition");
     Ivk_MapView_UpdatePosition(self, edx);
+    // Авто-арм дампа при открытии карты — чтобы поймать кадр с отрисовкой карты.
+    if (g_teleOn && !g_dumpActive && !g_dumpRequested) g_dumpRequested = true;
 }
 #endif
 
@@ -1145,7 +1045,7 @@ bool IsNpcVob(zCVob* v) {
     if (!v) return false;
     zCClassDef* cd = v->_GetClassDef();
     if (!cd) return false;
-    static std::map<zCClassDef*, bool> cache;   // классы стабильны — кэшируем результат по указателю
+    static std::map<zCClassDef*, bool> cache;
     std::map<zCClassDef*, bool>::iterator it = cache.find(cd);
     if (it != cache.end()) return it->second;
     bool r = false;
@@ -1163,12 +1063,9 @@ bool IsNpcVob(zCVob* v) {
 int __fastcall Hook_Vob_Render(zCVob* self, zTRenderContext& ctx);
 CInvoke<int(__fastcall*)(zCVob*, zTRenderContext&)> Ivk_Vob_Render(0x006015D0, &Hook_Vob_Render);
 int __fastcall Hook_Vob_Render(zCVob* self, zTRenderContext& ctx) {
-    // V1.4: работает и при выключенном зеркале мира (OFF).
     bool entApply = g_entMirror && IsNpcVob(self);
     if (!entApply) return Ivk_Vob_Render(self, ctx);
 
-    // zMAT4 хранит строки: v[0]=(right.x,up.x,at.x,pos.x), v[1]=(right.y,...), v[2]=(right.z,...).
-    // Отрицаем только right-вектор (m[0], m[4], m[8]); позицию не трогаем.
     float orig[16];
     memcpy(orig, &self->trafoObjToWorld, sizeof(orig));
     float m[16];
@@ -1178,8 +1075,6 @@ int __fastcall Hook_Vob_Render(zCVob* self, zTRenderContext& ctx) {
     m[8] = -m[8];
     memcpy(&self->trafoObjToWorld, m, sizeof(m));
 
-    // Отражение матрицы меняет намотку полигонов -> инвертируем culling на уровне устройства
-    // на время отрисовки этой сущности (устройство видит ВСЕ SetRenderState, в отличие от XD3D-хука).
     bool flip = g_devHooked || EnsureDeviceHooks();
     if (flip) { g_entCullFlip = true; SyncCull(); }
 
@@ -1207,14 +1102,9 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
         g_inMainWorld = true;
         if (g_dumpRequested) StartDump();
         if (g_teleOn) PerfFrame();
-        if (g_devHooked) RefreshBackBuf();
-        if (g_fullFrame && MirrorOn()) {
-            g_ffFrames++;
-            if (g_ffFrames == 180 && g_presentHits == 0) Log("WARNING: '[' full-frame mirror is ON but present (Surface Blt/Flip from backbuffer) was never detected");
-        }
         DumpText(SFmt("main World_Render BEGIN (frame %d, mode %s)", g_frame, kModeNames[g_mode]));
 
-        if (g_mode == MODE_GPU11) {
+        if (g_mode == MODE_GPU) {
             if (EnsureDeviceHooks()) {
                 g_devWorldMirror = true;
                 g_worldCullFlip = true;
@@ -1224,7 +1114,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
             }
             else {
                 static bool w = false;
-                if (!w) { w = true; Log("GPUv11: device hooks could not be installed - world will NOT be mirrored"); }
+                if (!w) { w = true; Log("GPU: device hooks could not be installed - world will NOT be mirrored"); }
             }
         }
     }
@@ -1241,8 +1131,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
             SyncProj();
         }
         DumpText("main World_Render END");
-        // В режиме "[" мир НЕ зеркалим здесь: весь кадр зеркалится один раз на present.
-        if (!g_fullFrame && IsPostMirrorMode()) MirrorWorldPost();
+        if (g_mode == MODE_CPU) MirrorWorldPost();
         g_uiPhase = true;
     }
     else g_uiPhase = prevUi;
@@ -1250,13 +1139,15 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
 // ───────────────────────── События Union ─────────────────────────
 void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.4.1 loaded\n", false);
-    WriteText("zMirror_dump.txt", "zMirrorTest V1.4.1 dump file\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.4.2 loaded\n", false);
+    WriteText("zMirror_dump.txt", "zMirrorTest V1.4.2 dump file\n", false);
 }
 
 void Game_Init() { }
 
-void Game_Exit() { ReleaseBltTmp(); }
+void Game_Exit() {
+    if (g_tlVbCache.vb) { g_tlVbCache.vb->Release(); g_tlVbCache.vb = NULL; }
+}
 
 void Game_PreLoop() { DumpText("event Game_PreLoop"); }
 
@@ -1274,7 +1165,7 @@ void Msg(const std::string& s) {
 void Game_Loop() {
     DumpText("event Game_Loop");
 
-    // HOME — цикл режимов: OFF -> CPU -> BLT -> GPUv8 -> GPUv10 -> GPUv11 -> OFF
+    // HOME — цикл режимов: OFF -> CPU -> GPU -> OFF
     static bool wasHome = false;
     if (KeyEdge(VK_HOME, wasHome)) {
         g_mode = (g_mode + 1) % MODE_COUNT;
@@ -1302,17 +1193,6 @@ void Game_Loop() {
         Msg(g_entMirror ? "ENT-MIRROR: ALL NPCs" : "ENT-MIRROR: OFF");
     }
 
-    // [ — тест зеркала всего кадра на present (мир + интерфейс), для карты
-    static bool wasLB = false;
-    if (KeyEdge(VK_OEM_4, wasLB)) {
-        g_fullFrame = !g_fullFrame;
-        g_presentHits = 0; g_ffFrames = 0; g_presentMirrorFrame = -1;
-        if (g_fullFrame) EnsureDeviceHooks();
-        SyncMouseFlip();
-        Log(std::string("fullFrame(present-mirror)=") + (g_fullFrame ? "ON" : "OFF") + SFmt(" (mode=%s)", kModeNames[g_mode]));
-        Msg(g_fullFrame ? "FULL-FRAME MIRROR: ON" : "FULL-FRAME MIRROR: OFF");
-    }
-
     // INSERT — дамп одного кадра D3D7 (только при включённой телеметрии)
     static bool wasIns = false;
     if (KeyEdge(VK_INSERT, wasIns)) {
@@ -1325,9 +1205,8 @@ void Game_Loop() {
     static bool wasPgUp = false;
     if (KeyEdge(VK_PRIOR, wasPgUp)) {
         g_mark++;
-        g_inputSeen.clear();
-        Log(SFmt("=== MARK %d === mode=%s ent=%d ff=%d modal=%s pause=%d frame=%d", g_mark, kModeNames[g_mode], g_entMirror ? 1 : 0,
-            g_fullFrame ? 1 : 0, ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, g_frame));
+        Log(SFmt("=== MARK %d === mode=%s ent=%d modal=%s pause=%d frame=%d", g_mark, kModeNames[g_mode], g_entMirror ? 1 : 0,
+            ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, g_frame));
         Msg(SFmt("MARK %d", g_mark));
     }
 
