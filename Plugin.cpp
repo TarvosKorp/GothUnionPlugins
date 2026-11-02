@@ -402,6 +402,7 @@ int g_flushSimpleAlphaDepth = 0;   // глубина вложенности zCRe
 int g_pfxDepth = 0;          // глубина вложенности zCParticleFX::Render
 long g_vbPfxCalls = 0, g_vbPfxVerts = 0;   // DrawVertexBuffer внутри PFX
 long g_psPfxCalls = 0, g_psPfxVerts = 0;   // DrawPolySimple внутри PFX
+int g_mapDbg[6] = { 0, 0, 0, 0, 0, 0 };  // диагностика карты: 0=попыток,1=нет screen,2=нет g_mapView,3=closed,4=rect fail,5=нет rt
 
 inline char CurPhase() { return g_inMainWorld ? 'W' : (g_worldDepth > 0 ? 'w' : 'U'); }
 
@@ -485,6 +486,7 @@ void StartDump() {
     g_pfxDepth = 0;
     g_vbPfxCalls = 0; g_vbPfxVerts = 0;
     g_psPfxCalls = 0; g_psPfxVerts = 0;
+    memset(g_mapDbg, 0, sizeof(g_mapDbg));
     memset(g_agg, 0, sizeof(g_agg));
     memset(g_aggV, 0, sizeof(g_aggV));
     memset(g_aggI, 0, sizeof(g_aggI));
@@ -524,6 +526,8 @@ void FinishDump() {
         g_mapView ? "tracked" : "none");
     out += SFmt("PFX this frame: DrawVertexBuffer calls=%ld verts=%ld | DrawPolySimple calls=%ld verts=%ld\n",
         g_vbPfxCalls, g_vbPfxVerts, g_psPfxCalls, g_psPfxVerts);
+    out += SFmt("MAP debug: attempts=%d noscreen=%d nomap=%d closed=%d rectfail=%d nort=%d\n",
+        g_mapDbg[0], g_mapDbg[1], g_mapDbg[2], g_mapDbg[3], g_mapDbg[4], g_mapDbg[5]);
     {
         long wE = 0, pE = 0, oE = 0;
         for (int p = 0; p < 3; p++) { wE += g_aggWorldExtra[p]; pE += g_aggProjOtherExtra[p][0]; oE += g_aggProjOtherExtra[p][1]; }
@@ -904,6 +908,29 @@ bool EnsureDeviceHooks() {
     Log(ok ? SFmt("device hooks installed (cull=%lu, viewport %lux%lu, slots DP25/DIP26/DPS29/DIPS30/DPVB31/DIPVB32)",
         (unsigned long)g_engCull, (unsigned long)g_vp.dwWidth, (unsigned long)g_vp.dwHeight)
            : std::string("device hooks: FAILED (see slots)"));
+
+    // Зонд: есть ли второе «устройство» (D3DX-контекст)? Снимаем образцы vtable
+    // ОБОИХ объектов — если PFX/UI рисуются через него, это видно по адресам.
+    static bool loggedVt = false;
+    if (!loggedVt) {
+        loggedVt = true;
+        {
+            std::string s = "MAIN DEV vtable: ";
+            void** vt = *(void***)dev;
+            for (int i = 0; i < 40; i += 4)
+                s += SFmt("[%d]=0x%08lX ", i, (unsigned long)(size_t)vt[i]);
+            Log(s);
+        }
+        IDirect3DDevice7* alt = (IDirect3DDevice7*)(void*)zCRnd_D3D::xd3d_pd3dx;
+        if (alt) {
+            std::string s = SFmt("ALT DEV (xd3d_pd3dx) ptr=0x%08lX vtable: ", (unsigned long)(size_t)alt);
+            void** vt = *(void***)alt;
+            for (int i = 0; i < 40 && vt[i]; i += 4)
+                s += SFmt("[%d]=0x%08lX ", i, (unsigned long)(size_t)vt[i]);
+            Log(s);
+        }
+        else Log("ALT DEV (xd3d_pd3dx) ptr=NULL");
+    }
     return ok;
 }
 
@@ -959,16 +986,18 @@ void MirrorRegion32(IDirectDrawSurface7* s, int x1, int y1, int x2, int y2) {
 }
 
 void MaybeMirrorMapRegion() {
+    g_mapDbg[0]++;
     if (!ZM_MAP_REGION_FLIP) return;
     if (!MirrorOn()) return;
     if (g_devWorldMirror) return;
-    if (!screen || !g_mapView) return;
-    if (!g_mapView->isOpen || g_mapView->isClosed) return;   // g_mapView очищается в деструкторе карты
+    if (!screen) { g_mapDbg[1]++; return; }
+    if (!g_mapView) { g_mapDbg[2]++; return; }
+    if (!g_mapView->isOpen || g_mapView->isClosed) { g_mapDbg[3]++; return; }   // g_mapView очищается в деструкторе карты
     zCView* mv = g_mapView;
     int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
-    if (!MapViewPixelRect(mv, x1, y1, x2, y2)) return;
+    if (!MapViewPixelRect(mv, x1, y1, x2, y2)) { g_mapDbg[4]++; return; }
     IDirectDrawSurface7* rt = AcquireTarget();
-    if (!rt) return;
+    if (!rt) { g_mapDbg[5]++; return; }
     static int lastX1 = -1, lastY1 = -1, lastX2 = -1, lastY2 = -1, lastFrameLog = -1;
     if ((lastX1 != x1 || lastY1 != y1 || lastX2 != x2 || lastY2 != y2) && lastFrameLog != g_frame) {
         lastFrameLog = g_frame;
