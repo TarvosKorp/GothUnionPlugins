@@ -15,29 +15,20 @@
 // РЕЖИМЫ ЗЕРКАЛА:
 //   CPU  — эталон: переворот строк бэкбуфера (Lock + SSE2) после рендера мира.
 //   GPU  — (наследник GPUv11) зеркало на уровне D3D7-устройства:
-//          вертикальная инверсия culling для ВСЕХ вызовов SetRenderState,
-//          отражение проекции в SetTransform, зеркалирование pre-transformed
-//          (XYZRHW) вершин в DrawPrimitive/DrawIndexedPrimitive И в
-//          DrawPrimitiveVB/DrawIndexedPrimitiveVB (TL-вершины в вершинных
-//          буферах — это PFX, скайбокс, декали и UI-граница).
+//          отражение проекции в SetTransform (столбец 0), инверсия culling
+//          в SetRenderState, плюс зеркалирование TL-вершин (XYZRHW) на уровне
+//          движка: DrawPolySimple (экранные квады) и DrawVertexBuffer
+//          (vb->array.XYZRHWPtr) — это покрывает PFX/скайбокс/UI-квады
+//          там, где движок реально уводит их через устройство.
 //
-// ЧТО НОВОГО ОТНОСИТЕЛЬНО V1.4.1:
-//   - УБРАНЫ режимы BLT, GPUv8, GPUv10 и тест "[" (present-mirror).
-//   - Хуки на ВСЕ методы отрисовки устройства: DrawPrimitive(25),
-//     DrawIndexedPrimitive(26), DrawPrimitiveStrided(29),
-//     DrawIndexedPrimitiveStrided(30), DrawPrimitiveVB(31),
-//     DrawIndexedPrimitiveVB(32) — порядок слотов по SDK-заголовку
-//     Union (DirectX7), он нестандартный (там есть MultiplyTransform,
-//     SetClipStatus, Strided и т.д.).
-//   - Зеркалирование TL-вершин теперь работает и для вершинных буферов
-//     (раньше только для "сырых" DrawPrimitive, которые движок не использует).
-//     Метод: in-place флип X + откат (в этом SDK нет CreateVertexBuffer,
-//     поэтому временный VB создать нельзя).
-//   - Карта: первичное зеркалирование — переворот области просмотра карты
-//     на бэкбуфере в конце кадра (EndScene). Управляется ZM_MAP_REGION_FLIP.
-//   - Телеметрия переработана: убрано логирование чтения клавиш, добавлены
-//     счётчики TL-VB-зеркалирования, авто-арм дампа при открытии карты,
-//     агрегация повторяющихся SetTransform.
+// РЕВИЗИЯ-ЧИСТКА (после экспериментов с картой/PFX/GD3D11):
+//   - Удалены все устройственные Draw*-хуки (в ванилле 0 вызовов), хуки-
+//     наблюдатели сцены (BeginScene/EndScene/SetRenderTarget), поверхностные
+//     Lock/Unlock/Blt, инструментовка PFX/QuadMark/alphaSort/XFLAT/FlushSimple,
+//     BlitTexture, зонды vtable, F9/cullNoneWorld, регион-флип карты.
+//   - Оставлены: ядро зеркала (проекция+cull), движковые DrawPolySimple/
+//     DrawVertexBuffer (TL), NPC, управление, надписи, карта-слежение (g_mapView),
+//     компактная телеметрия (PERF + дамп кадра по INSERT).
 //
 // ОБЩИЕ ПРАВИЛА (для всех режимов):
 //   - Своп LR-клавиш и инверсия мыши по X активны только в зеркале.
@@ -55,6 +46,10 @@
 //   V1.4.1 — ФИКС вылета: хук SetRenderTarget с 9 на 8.
 //   V1.4.2 — чистка режимов (OFF/CPU/GPU), фикс VB-хуков, TL-VB-зеркалирование,
 //            первичное зеркалирование карты, переработанная телеметрия.
+//   V1.4.2r — ревизия-чистка: удалены мёртвые перехваты (устройственные Draw*,
+//            поверхности, PFX/QuadMark/XFLAT/Flush/BlitTexture-инструментовка,
+//            зонды vtable, F9, регион-флип карты); оставлено ядро + компактная
+//            телеметрия (PERF, дамп по INSERT, карта-слежение).
 // ═══════════════════════════════════════════════════════════════════
 
 #include "resource.h"
@@ -71,13 +66,6 @@
 #include <cstdarg>
 #include <intrin.h>
 #include <thread>
-
-// ── Переключатели экспериментальных возможностей ──
-// Переворот области карты на бэкбуфере — ОТКЛЮЧЁН (0): даёт инверсию всего экрана
-// и дорогой CPU-переворот. Вместо него — перехват Surface.Blt (см. ниже).
-#ifndef ZM_MAP_REGION_FLIP
-#define ZM_MAP_REGION_FLIP 0
-#endif
 
 namespace GOTHIC_ENGINE {
 
@@ -151,9 +139,6 @@ struct PerfStat {
     double mirrorSum; int mirrorN;
 };
 PerfStat g_perf = {};
-int g_tlMirrored = 0;      // сколько TL-вызовов DP/DIP отзеркалено (GPU)
-int g_tlVbMirrored = 0;    // сколько TL-вызовов DPVB/DIPVB отзеркалено (GPU)
-int g_tlVbFailed = 0;      // сколько TL-VB-вызовов НЕ удалось отзеркалить (lock)
 int g_psMirrored = 0;      // сколько вершин DrawPolySimple отзеркалено (GPU)
 int g_vbTlMirrored = 0;    // сколько TL-вершин DrawVertexBuffer отзеркалено (GPU)
 int g_dumpPS = 0;          // дамп: всего вершин DrawPolySimple за кадр
@@ -163,7 +148,6 @@ float g_vbTlMinX = 1e30f, g_vbTlMaxX = -1e30f;  // диапазон X у TL-Draw
 
 void PerfReset() {
     memset(&g_perf, 0, sizeof(g_perf));
-    g_tlMirrored = 0; g_tlVbMirrored = 0; g_tlVbFailed = 0;
     g_psMirrored = 0; g_vbTlMirrored = 0;
 }
 
@@ -179,11 +163,10 @@ void PerfFrame() {
     if (g_perf.frames >= 300) {
         double avg = g_perf.frameSum / g_perf.frames;
         double am = g_perf.mirrorN ? g_perf.mirrorSum / g_perf.mirrorN : 0.0;
-        Log(SFmt("PERF mode=%s ent=%d frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms tlMirrored=%d tlVbMirrored=%d tlVbFailed=%d psMirrored=%d vbTlMirrored=%d",
+        Log(SFmt("PERF mode=%s ent=%d frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms psMirrored=%d vbTlMirrored=%d",
             kModeNames[g_mode], g_entMirror ? 1 : 0, g_perf.frames, avg, 1000.0 / avg, am,
-            g_tlMirrored, g_tlVbMirrored, g_tlVbFailed, g_psMirrored, g_vbTlMirrored));
+            g_psMirrored, g_vbTlMirrored));
         g_perf.frameSum = 0; g_perf.frames = 0; g_perf.mirrorSum = 0; g_perf.mirrorN = 0;
-        g_tlMirrored = 0; g_tlVbMirrored = 0; g_tlVbFailed = 0;
         g_psMirrored = 0; g_vbTlMirrored = 0;
     }
 }
@@ -256,31 +239,13 @@ void MirrorWorldPost() {
 }
 
 // ───────────────────────── D3D7-устройство: типы функций и состояние ─────────────────────────
-typedef HRESULT (STDMETHODCALLTYPE *PFN_BeginScene)(IDirect3DDevice7*);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_EndScene)(IDirect3DDevice7*);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_SetRenderTarget)(IDirect3DDevice7*, IDirectDrawSurface7*, DWORD);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_SetTransform)(IDirect3DDevice7*, D3DTRANSFORMSTATETYPE, LPD3DMATRIX);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_SetViewport)(IDirect3DDevice7*, D3DVIEWPORT7*);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_SetRenderState)(IDirect3DDevice7*, D3DRENDERSTATETYPE, DWORD);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawPrimitive)(IDirect3DDevice7*, D3DPRIMITIVETYPE, DWORD, LPVOID, DWORD, DWORD);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawIndexedPrimitive)(IDirect3DDevice7*, D3DPRIMITIVETYPE, DWORD, LPVOID, DWORD, LPWORD, DWORD, DWORD);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawPrimitiveVB)(IDirect3DDevice7*, D3DPRIMITIVETYPE, void*, DWORD, DWORD, DWORD);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawIndexedPrimitiveVB)(IDirect3DDevice7*, D3DPRIMITIVETYPE, void*, DWORD, DWORD, LPWORD, DWORD, DWORD);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawPrimitiveStrided)(IDirect3DDevice7*, D3DPRIMITIVETYPE, DWORD, LPD3DDRAWPRIMITIVESTRIDEDDATA, DWORD, DWORD);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawIndexedPrimitiveStrided)(IDirect3DDevice7*, D3DPRIMITIVETYPE, DWORD, LPD3DDRAWPRIMITIVESTRIDEDDATA, DWORD, LPWORD, DWORD, DWORD);
 
-PFN_BeginScene            g_oBeginScene = NULL;
-PFN_EndScene              g_oEndScene = NULL;
-PFN_SetRenderTarget       g_oSetRT = NULL;
 PFN_SetTransform          g_oSetTransform = NULL;
 PFN_SetViewport           g_oSetViewport = NULL;
 PFN_SetRenderState        g_oSetRS = NULL;
-PFN_DrawPrimitive         g_oDP = NULL;
-PFN_DrawIndexedPrimitive  g_oDIP = NULL;
-PFN_DrawPrimitiveVB       g_oDPVB = NULL;
-PFN_DrawIndexedPrimitiveVB g_oDIPVB = NULL;
-PFN_DrawPrimitiveStrided  g_oDPS = NULL;
-PFN_DrawIndexedPrimitiveStrided g_oDIPS = NULL;
 
 bool g_devHooked = false;
 DWORD g_engCull = D3DCULL_CCW;        // последнее значение CULLMODE, которое запросил ДВИЖОК
@@ -289,7 +254,6 @@ bool g_haveEngProj = false;
 D3DVIEWPORT7 g_vp;                    // последний вьюпорт
 bool g_haveVp = false;
 
-int  g_cullNoneWorld = 0;            // F9: 0=авто-инверсия cull (ванилла), 1=CULL=NONE в мире (для GD3D11)
 bool g_devWorldMirror = false;        // GPU: идёт рендер главного мира в зеркале
 bool g_worldCullFlip = false;         // паритет отражений на уровне мира
 bool g_entCullFlip = false;           // паритет отражения сущности (матрица NPC)
@@ -307,76 +271,19 @@ inline void MirrorProjCol0(D3DMATRIX& p) {   // D3D: v' = v * M, столбец 
     p._11 = -p._11; p._21 = -p._21; p._31 = -p._31; p._41 = -p._41;
 }
 
-// ───────────────────────── Размер вершины по FVF (константы DX7 заданы числами) ─────────────────────────
-inline bool IsTLFvf(DWORD f) { return (f & 0x00E) == 0x004; }   // D3DFVF_XYZRHW
-
-DWORD FvfStride(DWORD f) {
-    DWORD s = 0;
-    switch (f & 0x00E) {
-    case 0x002: s = 12; break;  // XYZ
-    case 0x004: s = 16; break;  // XYZRHW
-    case 0x006: s = 16; break;  // XYZB1
-    case 0x008: s = 20; break;  // XYZB2
-    case 0x00A: s = 24; break;  // XYZB3
-    case 0x00C: s = 28; break;  // XYZB4
-    case 0x00E: s = 32; break;  // XYZB5
-    default: return 0;
-    }
-    if (f & 0x010) s += 12;   // NORMAL
-    if (f & 0x020) s += 4;    // RESERVED1 / point size
-    if (f & 0x040) s += 4;    // DIFFUSE
-    if (f & 0x080) s += 4;    // SPECULAR
-    DWORD tc = (f & 0xF00) >> 8;
-    if ((f >> 16) == 0) s += tc * 8;
-    else {
-        for (DWORD i = 0; i < tc; i++) {
-            DWORD bits = (f >> (16 + 2 * i)) & 3;
-            s += (bits == 0) ? 8 : (bits == 1) ? 12 : (bits == 2) ? 16 : 4;
-        }
-    }
-    return s;
-}
-
-std::string FvfStr(DWORD f) {
-    std::string s;
-    switch (f & 0x00E) {
-    case 0x002: s = "XYZ"; break;
-    case 0x004: s = "XYZRHW"; break;
-    case 0x006: s = "XYZB1"; break;
-    case 0x008: s = "XYZB2"; break;
-    case 0x00A: s = "XYZB3"; break;
-    case 0x00C: s = "XYZB4"; break;
-    case 0x00E: s = "XYZB5"; break;
-    default: s = "POS?"; break;
-    }
-    if (f & 0x010) s += "|NORMAL";
-    if (f & 0x020) s += "|PSIZE";
-    if (f & 0x040) s += "|DIFFUSE";
-    if (f & 0x080) s += "|SPECULAR";
-    DWORD tc = (f & 0xF00) >> 8;
-    if (tc) s += SFmt("|TEX%lu", (unsigned long)tc);
-    return s;
-}
-
 std::string MatStr(const D3DMATRIX& m) {
     return SFmt("[%.3f %.3f %.3f %.3f | %.3f %.3f %.3f %.3f | %.3f %.3f %.3f %.3f | %.3f %.3f %.3f %.3f]",
         m._11, m._12, m._13, m._14, m._21, m._22, m._23, m._24,
         m._31, m._32, m._33, m._34, m._41, m._42, m._43, m._44);
 }
 
-// ───────────────────────── Дамп одного кадра вызовов D3D7 (телеметрия, INSERT) ─────────────────────────
+// ───────────────────────── Дамп одного кадра (телеметрия, INSERT) ─────────────────────────
 struct DumpEntry {
-    int kind;                 // 0=текст, 1=DP, 2=DIP, 3=DPVB, 4=DIPVB, 5=DPS, 6=DIPS, 12=агрегат SetTransform(WORLD), 13=агрегат PROJ/OTHER
+    int kind;                 // 0=текст, 12=SetTransform(WORLD), 13=SetTransform(PROJ/OTHER)
     std::string text;
-    DWORD prim, fvf, cull, caller;
     char phase;               // W = главный мир, w = другой мир, U = UI/после мира
-    bool flip, tlMirrored;
     int calls;
-    unsigned long long verts, idx;
-    float minX, maxX, minY, maxY, rhw0;
-    bool tlSamples;
-    DumpEntry() : kind(0), prim(0), fvf(0), cull(0), caller(0), phase('?'), flip(false), tlMirrored(false),
-        calls(0), verts(0), idx(0), minX(1e30f), maxX(-1e30f), minY(1e30f), maxY(-1e30f), rhw0(0), tlSamples(false) {}
+    DumpEntry() : kind(0), phase('?'), calls(0) {}
 };
 
 const size_t kDumpCap = 256;   // лимит ДЕТАЛЬНЫХ записей; дальше — только агрегаты
@@ -388,92 +295,20 @@ DWORD g_dumpStartTick = 0;
 int  g_dumpDropped = 0;
 bool g_dumpSawPrint = false;
 
-// Агрегаты всегда (независимо от лимита деталей):
-// g_agg[фаза][kind] — вызовы, g_aggV — вершины, g_aggI — индексы.
-long g_agg[3][7];
-long g_aggV[3][7];
-long g_aggI[3][7];
 long g_aggWorldExtra[3];          // SetTransform WORLD сверх деталей
 long g_aggProjOtherExtra[3][2];   // [фаза][0=PROJ, 1=OTHER] сверх деталей
 long g_worldDetailN = 0;          // сколько детальных WORLD-матриц уже записано
 long g_projOtherDetailN[3][2];
 std::map<DWORD, int> g_dumpCallers;  // адрес вызывающего -> сколько вызовов
 
-std::map<void*, DWORD> g_vbFvf;
-
 zCView* g_mapView = NULL;   // последний открытый oCViewDocumentMap (ловится в UpdatePosition)
-unsigned long g_mapUntilTick = 0;   // флип карты активен до этого тика (анти-«залипание»)
-bool g_mapSessionActive = false;   // сессия карты (между Show BEGIN и END)
-int g_flushSimpleAlphaDepth = 0;   // глубина вложенности zCRenderManager::FlushSimpleAlphaPolys
-int g_pfxDepth = 0;          // глубина вложенности zCParticleFX::Render
-long g_vbPfxCalls = 0, g_vbPfxVerts = 0;   // DrawVertexBuffer внутри PFX
-long g_psPfxCalls = 0, g_psPfxVerts = 0;   // DrawPolySimple внутри PFX
-int g_qmDepth = 0;           // глубина вложенности zCQuadMark::Render
-long g_vbQmCalls = 0, g_vbQmVerts = 0;     // DrawVertexBuffer внутри QuadMark
-long g_psQmCalls = 0, g_psQmVerts = 0;     // DrawPolySimple внутри QuadMark
-int g_alphaSortDepth = 0;    // глубина вложенности RenderAlphaSortList
-long g_vbXFlatCalls = 0, g_vbXFlatVerts = 0;   // XD3D_DrawVertexBufferFlat
-long g_vbTlXFlat = 0;                            // TL-вершины внутри XD3D_DrawVertexBufferFlat
-bool g_inOurLock = false;   // защита от учёта собственных Lock (MirrorRegion32)
-long g_surfLockCalls = 0;   // вызовы Lock бэкбуфера за кадр (программный рендер?)
-long g_surfLockBytes = 0;
-DWORD g_surfLockCaller = 0; // первый вызывающий Lock
-bool g_inOurBlt = false;    // защита от рекурсии в нашем Blt-хуке
-long g_dumpBltCalls = 0;    // всего Blt за кадр (телеметрия)
-long g_dumpBltCallsMap = 0; // Blt при активной карте
-int  g_dumpBltDst[4];       // первый прямоугольник назначения (x,y,w,h)
-DWORD g_dumpBltSrcW = 0, g_dumpBltSrcH = 0;  // размер источника первого Blt
-DWORD g_dumpBltCaller = 0;
-int g_mapDbg[6] = { 0, 0, 0, 0, 0, 0 };  // диагностика карты: 0=попыток,1=нет screen,2=нет g_mapView,3=closed,4=rect fail,5=нет rt
 
 inline char CurPhase() { return g_inMainWorld ? 'W' : (g_worldDepth > 0 ? 'w' : 'U'); }
-
-// Forward-декларации (определены ниже)
-bool FindPtrInTree(zCView* v, zCView* wanted, int depth);
-void MaybeMirrorMapRegion();
 
 void DumpText(const std::string& s) {
     if (!g_dumpActive) return;
     if (g_dump.size() >= kDumpCap) { g_dumpDropped++; return; }
     DumpEntry e; e.kind = 0; e.text = s; e.phase = CurPhase();
-    g_dump.push_back(e);
-}
-
-void SampleTL(DumpEntry& e, const void* verts, DWORD fvf, DWORD n) {
-    DWORD stride = FvfStride(fvf);
-    if (!verts || stride < 16 || n == 0 || n > 200000) return;
-    for (DWORD i = 0; i < n; i++) {
-        const float* p = (const float*)((const BYTE*)verts + (size_t)i * stride);
-        if (i == 0 && !e.tlSamples) e.rhw0 = p[3];
-        if (p[0] < e.minX) e.minX = p[0];
-        if (p[0] > e.maxX) e.maxX = p[0];
-        if (p[1] < e.minY) e.minY = p[1];
-        if (p[1] > e.maxY) e.maxY = p[1];
-        e.tlSamples = true;
-    }
-}
-
-void DumpDraw(int kind, DWORD prim, DWORD fvf, DWORD vcount, DWORD icount, const void* verts, DWORD caller, bool tlMirrored) {
-    if (!g_dumpActive) return;
-    int pi = (g_inMainWorld ? 0 : (g_worldDepth > 0 ? 1 : 2));
-    if (kind >= 1 && kind <= 6) { g_agg[pi][kind]++; g_aggV[pi][kind] += vcount; g_aggI[pi][kind] += icount; }
-    if (g_dumpCallers.size() < 128) g_dumpCallers[caller]++;
-    if (g_dump.size() >= kDumpCap) { g_dumpDropped++; return; }
-    bool flip = CullFlipNow();
-    char ph = CurPhase();
-    if (!g_dump.empty()) {
-        DumpEntry& l = g_dump.back();
-        if (l.kind == kind && l.prim == prim && l.fvf == fvf && l.cull == g_engCull && l.caller == caller &&
-            l.phase == ph && l.flip == flip && l.tlMirrored == tlMirrored) {
-            l.calls++; l.verts += vcount; l.idx += icount;
-            if ((kind == 1 || kind == 2) && IsTLFvf(fvf)) SampleTL(l, verts, fvf, vcount);
-            return;
-        }
-    }
-    DumpEntry e;
-    e.kind = kind; e.prim = prim; e.fvf = fvf; e.cull = g_engCull; e.caller = caller; e.phase = ph;
-    e.flip = flip; e.tlMirrored = tlMirrored; e.calls = 1; e.verts = vcount; e.idx = icount;
-    if ((kind == 1 || kind == 2) && IsTLFvf(fvf)) SampleTL(e, verts, fvf, vcount);
     g_dump.push_back(e);
 }
 
@@ -500,31 +335,10 @@ void DumpTransform(DWORD type, const D3DMATRIX* m) {
 
 void StartDump() {
     g_dump.clear();
-    g_vbFvf.clear();
     g_dumpDropped = 0; g_dumpSawPrint = false;
     g_dumpPS = 0; g_dumpVBTL = 0;
     g_psMinX = 1e30f; g_psMaxX = -1e30f;
     g_vbTlMinX = 1e30f; g_vbTlMaxX = -1e30f;
-    g_pfxDepth = 0;
-    g_vbPfxCalls = 0; g_vbPfxVerts = 0;
-    g_psPfxCalls = 0; g_psPfxVerts = 0;
-    g_qmDepth = 0;
-    g_vbQmCalls = 0; g_vbQmVerts = 0;
-    g_psQmCalls = 0; g_psQmVerts = 0;
-    g_alphaSortDepth = 0;
-    g_vbXFlatCalls = 0; g_vbXFlatVerts = 0;
-    g_vbTlXFlat = 0;
-    g_inOurLock = false;
-    g_surfLockCalls = 0; g_surfLockBytes = 0; g_surfLockCaller = 0;
-    g_inOurBlt = false;
-    g_dumpBltCalls = 0; g_dumpBltCallsMap = 0;
-    g_dumpBltDst[0] = g_dumpBltDst[1] = g_dumpBltDst[2] = g_dumpBltDst[3] = 0;
-    g_dumpBltSrcW = g_dumpBltSrcH = 0;
-    g_dumpBltCaller = 0;
-    memset(g_mapDbg, 0, sizeof(g_mapDbg));
-    memset(g_agg, 0, sizeof(g_agg));
-    memset(g_aggV, 0, sizeof(g_aggV));
-    memset(g_aggI, 0, sizeof(g_aggI));
     memset(g_aggWorldExtra, 0, sizeof(g_aggWorldExtra));
     memset(g_aggProjOtherExtra, 0, sizeof(g_aggProjOtherExtra));
     g_worldDetailN = 0;
@@ -544,35 +358,13 @@ void FinishDump() {
     if (!g_dumpActive) return;
     g_dumpActive = false;
 
-    static const char* kn[7] = { "", "DP", "DIP", "DPVB", "DIPVB", "DPS", "DIPS" };
-    static const char* pn[3] = { "W (main world)", "w (other worlds)", "U (after world / UI)" };
     std::string out;
     out += SFmt("\n===== DUMP #%d  mode=%s ent=%d frame=%d entries=%d dropped=%d =====\n",
         g_dumpNo, kModeNames[g_mode], g_entMirror ? 1 : 0, g_frame, (int)g_dump.size(), g_dumpDropped);
-    for (int p = 0; p < 3; p++) {
-        out += SFmt("SUMMARY phase %-20s : ", pn[p]);
-        for (int k = 1; k <= 6; k++)
-            out += SFmt("%s=%ld/%lld ", kn[k], g_agg[p][k], (long long)g_aggV[p][k]);
-        out += "\n";
-    }
     out += "-----\n";
     out += SFmt("ENGINE this frame: DrawPolySimple verts=%d x=[%.0f..%.0f] | DrawVertexBuffer-TL verts=%d x=[%.0f..%.0f] | mapView=%s\n",
         g_dumpPS, g_psMinX, g_psMaxX, g_dumpVBTL, g_vbTlMinX, g_vbTlMaxX,
         g_mapView ? "tracked" : "none");
-    out += SFmt("PFX this frame: DrawVertexBuffer calls=%ld verts=%ld | DrawPolySimple calls=%ld verts=%ld\n",
-        g_vbPfxCalls, g_vbPfxVerts, g_psPfxCalls, g_psPfxVerts);
-    out += SFmt("QUADMARK this frame: DrawVertexBuffer calls=%ld verts=%ld | DrawPolySimple calls=%ld verts=%ld\n",
-        g_vbQmCalls, g_vbQmVerts, g_psQmCalls, g_psQmVerts);
-    out += SFmt("XFLAT this frame: calls=%ld verts=%ld tlVerts=%ld | alphaSortDepth=%d\n",
-        g_vbXFlatCalls, g_vbXFlatVerts, g_vbTlXFlat, g_alphaSortDepth);
-    out += SFmt("BACKBUF Lock: calls=%ld bytes=%ld firstCaller=0x%08lX\n",
-        g_surfLockCalls, g_surfLockBytes, (unsigned long)g_surfLockCaller);
-    out += SFmt("BACKBUF Blt: calls=%ld mapCalls=%ld firstDst=(%d,%d,%d,%d) src=%lux%lu caller=0x%08lX\n",
-        g_dumpBltCalls, g_dumpBltCallsMap,
-        g_dumpBltDst[0], g_dumpBltDst[1], g_dumpBltDst[2], g_dumpBltDst[3],
-        (unsigned long)g_dumpBltSrcW, (unsigned long)g_dumpBltSrcH, (unsigned long)g_dumpBltCaller);
-    out += SFmt("MAP debug: attempts=%d noscreen=%d nomap=%d closed=%d rectfail=%d nort=%d\n",
-        g_mapDbg[0], g_mapDbg[1], g_mapDbg[2], g_mapDbg[3], g_mapDbg[4], g_mapDbg[5]);
     {
         long wE = 0, pE = 0, oE = 0;
         for (int p = 0; p < 3; p++) { wE += g_aggWorldExtra[p]; pE += g_aggProjOtherExtra[p][0]; oE += g_aggProjOtherExtra[p][1]; }
@@ -594,13 +386,7 @@ void FinishDump() {
     for (size_t i = 0; i < g_dump.size(); i++) {
         const DumpEntry& e = g_dump[i];
         if (e.kind == 0) { out += SFmt("[%c]       %s\n", e.phase, e.text.c_str()); continue; }
-        if (e.kind == 12 || e.kind == 13) { out += SFmt("[%c]       %s  (x%d calls)\n", e.phase, e.text.c_str(), e.calls); continue; }
-        std::string line = SFmt("[%c] %-5s prim=%lu fvf=0x%03lX %-28s calls=%d verts=%llu idx=%llu cull=%lu%s caller=0x%08lX",
-            e.phase, kn[e.kind], (unsigned long)e.prim, (unsigned long)e.fvf, FvfStr(e.fvf).c_str(), e.calls, e.verts, e.idx,
-            (unsigned long)e.cull, e.flip ? "(FLIPPED)" : "", (unsigned long)e.caller);
-        if (e.tlMirrored) line += " TL-MIRRORED";
-        if (e.tlSamples) line += SFmt(" sx=[%.1f..%.1f] sy=[%.1f..%.1f] rhw0=%.5f", e.minX, e.maxX, e.minY, e.maxY, e.rhw0);
-        out += line + "\n";
+        out += SFmt("[%c]       %s  (x%d calls)\n", e.phase, e.text.c_str(), e.calls);
     }
     WriteText("zMirror_dump.txt", out, true);
     Log(SFmt("dump #%d written to zMirror_dump.txt (%d entries)", g_dumpNo, (int)g_dump.size()));
@@ -615,16 +401,6 @@ void FinishDump() {
 //     координатах (pos.x/pos.y), z отдельно.
 //   DrawVertexBuffer(zCVertexBuffer*, int, int, unsigned short*, unsigned long)
 //     — основной путь отрисовки; TL-вершины доступны через vb->array.XYZRHWPtr.
-void __fastcall Hook_Rnd_FlushSimpleAlphaPolys(void* self, void* edx);
-CInvoke<void(__fastcall*)(void*, void*)> Ivk_Rnd_FlushSimpleAlphaPolys(0x005D7900, &Hook_Rnd_FlushSimpleAlphaPolys);
-void __fastcall Hook_Rnd_FlushSimpleAlphaPolys(void* self, void* edx) {
-    g_flushSimpleAlphaDepth++;
-    if (g_dumpActive) DumpText("FlushSimpleAlphaPolys BEGIN");
-    Ivk_Rnd_FlushSimpleAlphaPolys(self, edx);
-    g_flushSimpleAlphaDepth--;
-    if (g_dumpActive) DumpText("FlushSimpleAlphaPolys END");
-}
-
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
 CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(0x0064AC30, &Hook_Rnd_DrawPolySimple);
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
@@ -632,39 +408,7 @@ void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, z
         g_dumpPS += count;
         if (g_dumpCallers.size() < 128) g_dumpCallers[(DWORD)(size_t)_ReturnAddress()]++;
     }
-    if (g_qmDepth > 0) {
-        g_psQmCalls++; g_psQmVerts += count;
-        static bool loggedQmPs = false;
-        if (!loggedQmPs && verts && count > 0) {
-            loggedQmPs = true;
-            Log(SFmt("QM-PS: count=%d x0=%.1f y0=%.1f ctx ui=%d wd=%d flush=%d mir=%d",
-                count, verts[0].pos.n[0], verts[0].pos.n[1],
-                g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth,
-                (g_devWorldMirror || g_flushSimpleAlphaDepth > 0) ? 1 : 0));
-        }
-    }
-    if (g_pfxDepth > 0) {
-        g_psPfxCalls++; g_psPfxVerts += count;
-        static bool loggedPfxPs = false;
-        if (!loggedPfxPs && verts && count > 0) {
-            loggedPfxPs = true;
-            Log(SFmt("PFX-PS: count=%d x0=%.1f y0=%.1f ctx ui=%d wd=%d flush=%d mir=%d",
-                count, verts[0].pos.n[0], verts[0].pos.n[1],
-                g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth,
-                (g_devWorldMirror || g_flushSimpleAlphaDepth > 0) ? 1 : 0));
-        }
-    }
-    bool mirrorBranch = (g_devWorldMirror || g_flushSimpleAlphaDepth > 0 || g_alphaSortDepth > 0) && g_haveVp && verts && count > 0 && count <= 200000;
-    {
-        static bool loggedPS = false;
-        if (!loggedPS && verts && count > 0) {
-            loggedPS = true;
-            Log(SFmt("PS sample: x0=%.1f y0=%.1f z=%.1f uv=(%.2f,%.2f) count=%d ctx ui=%d wd=%d flush=%d mir=%d",
-                verts[0].pos.n[0], verts[0].pos.n[1], verts[0].z,
-                verts[0].uv.n[0], verts[0].uv.n[1], count,
-                g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth, mirrorBranch ? 1 : 0));
-        }
-    }
+    bool mirrorBranch = g_devWorldMirror && g_haveVp && verts && count > 0 && count <= 200000;
     if (mirrorBranch) {
         for (int i = 0; i < count && i < 64; i++) {
             if (verts[i].pos.n[0] < g_psMinX) g_psMinX = verts[i].pos.n[0];
@@ -682,115 +426,11 @@ void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, z
     Ivk_Rnd_DrawPolySimple(self, edx, tex, verts, count);
 }
 
-// zCParticleFX::Render — инструментовка пути частиц
-int __fastcall Hook_Pfx_Render(zCParticleFX* self, void* edx, zTRenderContext& ctx);
-CInvoke<int(__fastcall*)(zCParticleFX*, void*, zTRenderContext&)> Ivk_Pfx_Render(0x005B0310, &Hook_Pfx_Render);
-int __fastcall Hook_Pfx_Render(zCParticleFX* self, void* edx, zTRenderContext& ctx) {
-    g_pfxDepth++;
-    int r = Ivk_Pfx_Render(self, edx, ctx);
-    g_pfxDepth--;
-    return r;
-}
-
-// zCQuadMark::Render — инструментовка пути декал-квадов (пламя факелов и т.п.)
-int __fastcall Hook_QuadMark_Render(zCQuadMark* self, void* edx, zTRenderContext& ctx);
-CInvoke<int(__fastcall*)(zCQuadMark*, void*, zTRenderContext&)> Ivk_QuadMark_Render(0x005D0D00, &Hook_QuadMark_Render);
-int __fastcall Hook_QuadMark_Render(zCQuadMark* self, void* edx, zTRenderContext& ctx) {
-    g_qmDepth++;
-    int r = Ivk_QuadMark_Render(self, edx, ctx);
-    g_qmDepth--;
-    return r;
-}
-
-// zCViewDraw::BlitTexture — текстурированные квады UI (страницы документов и карты).
-// Во время сессии карты зеркалим UV по горизонтали (u -> 1-u): дёшево, не трогает
-// другие интерфейсы и не требует переворота кадра.
-void __fastcall Hook_ViewDraw_BlitTexture(void* self, void* edx);
-CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewDraw_BlitTexture(0x00690490, &Hook_ViewDraw_BlitTexture);
-void __fastcall Hook_ViewDraw_BlitTexture(void* self, void* edx) {
-    if (g_mapSessionActive && !g_devWorldMirror) {
-        // zCViewDraw: TexturePosition[2] (zVEC2) по смещению 0x6C
-        zVEC2* tp = (zVEC2*)((char*)self + 0x6C);
-        tp[0].n[0] = 1.0f - tp[0].n[0];
-        tp[1].n[0] = 1.0f - tp[1].n[0];
-        static bool loggedBlit = false;
-        if (!loggedBlit) {
-            loggedBlit = true;
-            Log(SFmt("BlitTexture mirrored: self=0x%08lX u0=%.3f u1=%.3f ctx ui=%d wd=%d",
-                (unsigned long)(size_t)self, tp[0].n[0], tp[1].n[0],
-                g_uiPhase ? 1 : 0, g_worldDepth));
-        }
-    }
-    Ivk_ViewDraw_BlitTexture(self, edx);
-}
-
-// RenderAlphaSortList — граница альфа-сортировки (здесь часто рисуются прозрачные элементы)
-int __fastcall Hook_Rnd_RenderAlphaSortList(void* self, void* edx);
-CInvoke<int(__fastcall*)(void*, void*)> Ivk_Rnd_RenderAlphaSortList(0x00650A60, &Hook_Rnd_RenderAlphaSortList);
-int __fastcall Hook_Rnd_RenderAlphaSortList(void* self, void* edx) {
-    g_alphaSortDepth++;
-    int r = Ivk_Rnd_RenderAlphaSortList(self, edx);
-    g_alphaSortDepth--;
-    return r;
-}
-
-// XD3D_DrawVertexBufferFlat/Wire — внутренние помощники zCRnd_D3D (непосредственно
-// перед отправкой в D3D). Если TL-вершины уходят здесь — зеркалим in-place.
-int __fastcall Hook_Rnd_XDrawVertexBufferFlat(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl);
-CInvoke<int(__fastcall*)(void*, void*, zCVertexBuffer*, int, int, unsigned short*, unsigned long)> Ivk_Rnd_XDrawVertexBufferFlat(0x006518D0, &Hook_Rnd_XDrawVertexBufferFlat);
-int __fastcall Hook_Rnd_XDrawVertexBufferFlat(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl) {
-    bool mirrored = false;
-    g_vbXFlatCalls++; g_vbXFlatVerts += count;
-    if (g_devWorldMirror && g_haveVp && vb && count > 0 && vb->array.XYZRHWPtr) {
-        if (start >= 0 && start + count <= (int)vb->numVertex) {
-            float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
-            zVEC4* p = vb->array.XYZRHWPtr + start;
-            static bool loggedFlat = false;
-            if (!loggedFlat) {
-                loggedFlat = true;
-                Log(SFmt("XFLAT-TL: count=%d x0=%.1f y0=%.1f z=%.1f w=%.1f ctx ui=%d wd=%d flush=%d as=%d",
-                    count, p[0].n[0], p[0].n[1], p[0].n[2], p[0].n[3],
-                    g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth, g_alphaSortDepth));
-            }
-            for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];
-            mirrored = true;
-            g_vbTlXFlat += count;
-        }
-    }
-    int r = Ivk_Rnd_XDrawVertexBufferFlat(self, edx, vb, start, count, idx, fl);
-    if (mirrored) {
-        float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
-        zVEC4* p = vb->array.XYZRHWPtr + start;
-        for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];   // откат
-    }
-    return r;
-}
-
 int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl);
 CInvoke<int(__fastcall*)(void*, void*, zCVertexBuffer*, int, int, unsigned short*, unsigned long)> Ivk_Rnd_DrawVertexBuffer(0x006519F0, &Hook_Rnd_DrawVertexBuffer);
 int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl) {
     bool mirrored = false;
     if (g_dumpActive && g_dumpCallers.size() < 128) g_dumpCallers[(DWORD)(size_t)_ReturnAddress()]++;
-    if (g_qmDepth > 0) {
-        g_vbQmCalls++; g_vbQmVerts += count;
-        static bool loggedQmVb = false;
-        if (!loggedQmVb && vb && count > 0) {
-            loggedQmVb = true;
-            Log(SFmt("QM-VB: count=%d numVertex=%lu TLptr=%d XYZptr=%d ctx ui=%d wd=%d flush=%d mir=%d",
-                count, vb->numVertex, vb->array.XYZRHWPtr ? 1 : 0, vb->array.XYZPtr ? 1 : 0,
-                g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth, g_devWorldMirror ? 1 : 0));
-        }
-    }
-    if (g_pfxDepth > 0) {
-        g_vbPfxCalls++; g_vbPfxVerts += count;
-        static bool loggedPfxVb = false;
-        if (!loggedPfxVb && vb && count > 0) {
-            loggedPfxVb = true;
-            Log(SFmt("PFX-VB: count=%d numVertex=%lu TLptr=%d XYZptr=%d ctx ui=%d wd=%d flush=%d mir=%d",
-                count, vb->numVertex, vb->array.XYZRHWPtr ? 1 : 0, vb->array.XYZPtr ? 1 : 0,
-                g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth, g_devWorldMirror ? 1 : 0));
-        }
-    }
     if (g_devWorldMirror && g_haveVp && vb && count > 0 && vb->array.XYZRHWPtr) {
         if (start >= 0 && start + count <= (int)vb->numVertex) {
             float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
@@ -798,13 +438,6 @@ int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* 
             for (int i = 0; i < count && i < 64; i++) {
                 if (p[i].n[0] < g_vbTlMinX) g_vbTlMinX = p[i].n[0];
                 if (p[i].n[0] > g_vbTlMaxX) g_vbTlMaxX = p[i].n[0];
-            }
-            static bool loggedSample = false;
-            if (!loggedSample && count > 0) {
-                loggedSample = true;
-                Log(SFmt("VB-TL sample: x0=%.1f y0=%.1f z=%.1f w=%.1f count=%d ctx ui=%d wd=%d flush=%d",
-                    p[0].n[0], p[0].n[1], p[0].n[2], p[0].n[3], count,
-                    g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth));
             }
             for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];
             mirrored = true;
@@ -825,9 +458,7 @@ int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* 
 void SyncCull() {
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
     if (!dev || !g_oSetRS) return;
-    DWORD v = CullFlipNow() ? InvertCull(g_engCull) : g_engCull;
-    if (g_cullNoneWorld && g_worldCullFlip) v = D3DCULL_NONE;
-    g_oSetRS(dev, D3DRENDERSTATE_CULLMODE, v);
+    g_oSetRS(dev, D3DRENDERSTATE_CULLMODE, CullFlipNow() ? InvertCull(g_engCull) : g_engCull);
 }
 
 void SyncProj() {
@@ -838,28 +469,8 @@ void SyncProj() {
     g_oSetTransform(dev, D3DTRANSFORMSTATE_PROJECTION, &p);
 }
 
-HRESULT STDMETHODCALLTYPE Hook_Dev_BeginScene(IDirect3DDevice7* self) {
-    if (g_dumpActive) DumpText("device BeginScene");
-    return g_oBeginScene(self);
-}
-
-HRESULT STDMETHODCALLTYPE Hook_Dev_EndScene(IDirect3DDevice7* self) {
-    HRESULT hr = g_oEndScene(self);
-    if (g_dumpActive) DumpText("device EndScene");
-    MaybeMirrorMapRegion();
-    return hr;
-}
-
-HRESULT STDMETHODCALLTYPE Hook_Dev_SetRenderTarget(IDirect3DDevice7* self, IDirectDrawSurface7* s, DWORD fl) {
-    if (g_dumpActive) DumpText(SFmt("SetRenderTarget surf=0x%08lX flags=0x%lX caller=0x%08lX", (unsigned long)(size_t)s,
-        (unsigned long)fl, (unsigned long)(size_t)_ReturnAddress()));
-    return g_oSetRT(self, s, fl);
-}
-
 HRESULT STDMETHODCALLTYPE Hook_Dev_SetViewport(IDirect3DDevice7* self, D3DVIEWPORT7* vp) {
     if (vp) { g_vp = *vp; g_haveVp = true; }
-    if (g_dumpActive && vp) DumpText(SFmt("SetViewport x=%lu y=%lu w=%lu h=%lu", (unsigned long)vp->dwX, (unsigned long)vp->dwY,
-        (unsigned long)vp->dwWidth, (unsigned long)vp->dwHeight));
     return g_oSetViewport(self, vp);
 }
 
@@ -881,182 +492,11 @@ HRESULT STDMETHODCALLTYPE Hook_Dev_SetTransform(IDirect3DDevice7* self, D3DTRANS
 HRESULT STDMETHODCALLTYPE Hook_Dev_SetRenderState(IDirect3DDevice7* self, D3DRENDERSTATETYPE t, DWORD v) {
     if (t == D3DRENDERSTATE_CULLMODE) {
         g_engCull = v;
-        DWORD out = CullFlipNow() ? InvertCull(v) : v;
-        if (g_cullNoneWorld && g_worldCullFlip) out = D3DCULL_NONE;
         if (g_dumpActive) DumpText(SFmt("SetRenderState CULLMODE engine=%lu -> device=%lu%s caller=0x%08lX", (unsigned long)v,
-            (unsigned long)out, out != v ? " (changed)" : "", (unsigned long)(size_t)_ReturnAddress()));
-        v = out;
+            (unsigned long)(CullFlipNow() ? InvertCull(v) : v), CullFlipNow() ? " (flipped)" : "", (unsigned long)(size_t)_ReturnAddress()));
+        if (CullFlipNow()) v = InvertCull(v);
     }
     return g_oSetRS(self, t, v);
-}
-
-// Зеркалирует x у pre-transformed вершин в КОПИИ массива; возвращает указатель на копию (или NULL).
-LPVOID MirrorTLCopy(DWORD fvf, LPVOID verts, DWORD count) {
-    DWORD stride = FvfStride(fvf);
-    if (stride < 16 || !verts || count == 0 || count > 400000) return NULL;
-    static std::vector<BYTE> buf;
-    size_t bytes = (size_t)stride * count;
-    if (buf.size() < bytes) buf.resize(bytes);
-    memcpy(&buf[0], verts, bytes);
-    float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
-    for (DWORD i = 0; i < count; i++) {
-        float* p = (float*)&buf[(size_t)i * stride];
-        p[0] = cx - p[0];
-    }
-    return &buf[0];
-}
-
-HRESULT STDMETHODCALLTYPE Hook_Dev_DrawPrimitive(IDirect3DDevice7* self, D3DPRIMITIVETYPE pt, DWORD fvf, LPVOID verts, DWORD count, DWORD fl) {
-    bool mir = g_devWorldMirror && g_haveVp && IsTLFvf(fvf);
-    if (g_dumpActive) DumpDraw(1, (DWORD)pt, fvf, count, 0, verts, (DWORD)(size_t)_ReturnAddress(), mir);
-    if (mir) {
-        LPVOID mv = MirrorTLCopy(fvf, verts, count);
-        if (mv) { g_tlMirrored++; return g_oDP(self, pt, fvf, mv, count, fl); }
-    }
-    return g_oDP(self, pt, fvf, verts, count, fl);
-}
-
-HRESULT STDMETHODCALLTYPE Hook_Dev_DrawIndexedPrimitive(IDirect3DDevice7* self, D3DPRIMITIVETYPE pt, DWORD fvf, LPVOID verts, DWORD vcount, LPWORD idx, DWORD icount, DWORD fl) {
-    bool mir = g_devWorldMirror && g_haveVp && IsTLFvf(fvf);
-    if (g_dumpActive) DumpDraw(2, (DWORD)pt, fvf, vcount, icount, verts, (DWORD)(size_t)_ReturnAddress(), mir);
-    if (mir) {
-        LPVOID mv = MirrorTLCopy(fvf, verts, vcount);
-        if (mv) { g_tlMirrored++; return g_oDIP(self, pt, fvf, mv, vcount, idx, icount, fl); }
-    }
-    return g_oDIP(self, pt, fvf, verts, vcount, idx, icount, fl);
-}
-
-DWORD VbFvf(void* vb) {
-    if (!vb) return 0;
-    std::map<void*, DWORD>::iterator it = g_vbFvf.find(vb);
-    if (it != g_vbFvf.end()) return it->second;
-    if (g_vbFvf.size() > 512) g_vbFvf.clear();
-    DWORD f = 0;
-    D3DVERTEXBUFFERDESC d; ZeroMemory(&d, sizeof(d)); d.dwSize = sizeof(d);
-    if (SUCCEEDED(((IDirect3DVertexBuffer7*)vb)->GetVertexBufferDesc(&d))) f = d.dwFVF;
-    g_vbFvf[vb] = f;
-    return f;
-}
-
-// ── TL-зеркалирование через вершинные буферы (PFX/скайбокс/декали/часть UI) ──
-// В этом SDK нет IDirect3DDevice7::CreateVertexBuffer, поэтому временный VB
-// создать нельзя. Работаем in-place: зеркалим X в диапазоне вершин, даём
-// отрисовать, затем откатываем (второй флип возвращает исходные данные).
-// D3D7 Immediate Mode выполняет DrawPrimitiveVB синхронно, поэтому откат
-// сразу после вызова безопасен.
-bool FlipTLVbRange(void* vb, DWORD fvf, DWORD start, DWORD count) {
-    DWORD stride = FvfStride(fvf);
-    if (stride < 16 || !vb || count == 0) return false;
-    IDirect3DVertexBuffer7* ovb = (IDirect3DVertexBuffer7*)vb;
-    LPVOID p = NULL;
-    if (FAILED(ovb->Lock(0, &p, NULL)) || !p) return false;
-    float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
-    BYTE* base = (BYTE*)p + (size_t)start * stride;
-    size_t maxIdx = (size_t)count * stride;
-    for (size_t i = 0; i < maxIdx; i += stride) {
-        float* v = (float*)(base + i);
-        v[0] = cx - v[0];
-    }
-    ovb->Unlock();
-    return true;
-}
-
-HRESULT STDMETHODCALLTYPE Hook_Dev_DrawPrimitiveVB(IDirect3DDevice7* self, D3DPRIMITIVETYPE pt, void* vb, DWORD start, DWORD count, DWORD fl) {
-    DWORD f = VbFvf(vb);
-    bool mir = g_devWorldMirror && IsTLFvf(f) && g_haveVp;
-    if (g_dumpActive) DumpDraw(3, (DWORD)pt, f, count, 0, NULL, (DWORD)(size_t)_ReturnAddress(), mir);
-    if (mir) {
-        if (FlipTLVbRange(vb, f, start, count)) {
-            static bool loggedOk = false;
-            if (!loggedOk) { loggedOk = true; Log("TL-VB mirror: first in-place flip OK (PFX/skybox/UI-TL path active)"); }
-            g_tlVbMirrored++;
-            HRESULT hr = g_oDPVB(self, pt, vb, start, count, fl);
-            FlipTLVbRange(vb, f, start, count);   // откат
-            return hr;
-        }
-        static bool loggedFail = false;
-        if (!loggedFail) { loggedFail = true; Log(SFmt("TL-VB mirror: first failure (Lock) fvf=0x%03lX count=%lu", (unsigned long)f, (unsigned long)count)); }
-        g_tlVbFailed++;
-    }
-    return g_oDPVB(self, pt, vb, start, count, fl);
-}
-
-HRESULT STDMETHODCALLTYPE Hook_Dev_DrawIndexedPrimitiveVB(IDirect3DDevice7* self, D3DPRIMITIVETYPE pt, void* vb, DWORD start, DWORD vcount, LPWORD idx, DWORD icount, DWORD fl) {
-    DWORD f = VbFvf(vb);
-    bool mir = g_devWorldMirror && IsTLFvf(f) && g_haveVp;
-    if (g_dumpActive) DumpDraw(4, (DWORD)pt, f, vcount, icount, NULL, (DWORD)(size_t)_ReturnAddress(), mir);
-    if (mir) {
-        if (FlipTLVbRange(vb, f, start, vcount)) {
-            g_tlVbMirrored++;
-            HRESULT hr = g_oDIPVB(self, pt, vb, start, vcount, idx, icount, fl);
-            FlipTLVbRange(vb, f, start, vcount);   // откат
-            return hr;
-        }
-        g_tlVbFailed++;
-    }
-    return g_oDIPVB(self, pt, vb, start, vcount, idx, icount, fl);
-}
-
-// Strided-методы: только логирование (TL-зеркалирование для них не делаем —
-// данные приходят разреженным массивом; если окажется, что PFX/скайбокс
-// рисуются именно так, добавим отдельный обработчик).
-HRESULT STDMETHODCALLTYPE Hook_Dev_DrawPrimitiveStrided(IDirect3DDevice7* self, D3DPRIMITIVETYPE pt, DWORD fvf, LPD3DDRAWPRIMITIVESTRIDEDDATA data, DWORD count, DWORD fl) {
-    if (g_dumpActive) DumpDraw(5, (DWORD)pt, fvf, count, 0, NULL, (DWORD)(size_t)_ReturnAddress(), false);
-    return g_oDPS(self, pt, fvf, data, count, fl);
-}
-
-HRESULT STDMETHODCALLTYPE Hook_Dev_DrawIndexedPrimitiveStrided(IDirect3DDevice7* self, D3DPRIMITIVETYPE pt, DWORD fvf, LPD3DDRAWPRIMITIVESTRIDEDDATA data, DWORD vcount, LPWORD idx, DWORD icount, DWORD fl) {
-    if (g_dumpActive) DumpDraw(6, (DWORD)pt, fvf, vcount, icount, NULL, (DWORD)(size_t)_ReturnAddress(), false);
-    return g_oDIPS(self, pt, fvf, data, vcount, idx, icount, fl);
-}
-
-// Хуки поверхности (Lock/Unlock/Blt) — детект программного рендера и путей UI/карты
-typedef HRESULT (STDMETHODCALLTYPE *PFN_SurfLock)(IDirectDrawSurface7*, LPRECT, LPDDSURFACEDESC2, DWORD, HANDLE);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_SurfUnlock)(IDirectDrawSurface7*, LPRECT);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_SurfBlt)(IDirectDrawSurface7*, LPRECT, IDirectDrawSurface7*, LPRECT, DWORD, LPDDBLTFX);
-PFN_SurfLock g_oSurfLock = NULL;
-PFN_SurfUnlock g_oSurfUnlock = NULL;
-PFN_SurfBlt g_oSurfBlt = NULL;
-
-bool SurfSize(IDirectDrawSurface7* s, DWORD& w, DWORD& h) {
-    if (!s) return false;
-    DDSURFACEDESC2 d; ZeroMemory(&d, sizeof(d)); d.dwSize = sizeof(d);
-    if (FAILED(s->GetSurfaceDesc(&d))) return false;
-    w = d.dwWidth; h = d.dwHeight;
-    return true;
-}
-
-HRESULT STDMETHODCALLTYPE Hook_Surf_Blt(IDirectDrawSurface7* self, LPRECT dr, IDirectDrawSurface7* src, LPRECT sr, DWORD fl, LPDDBLTFX fx) {
-    if (!g_inOurBlt && src) {
-        bool mapOpen = (g_mapView != NULL);
-        if (g_dumpActive || mapOpen) {
-            g_dumpBltCalls++;
-            if (mapOpen) g_dumpBltCallsMap++;
-            if (g_dumpBltCaller == 0 && g_dumpActive) {
-                g_dumpBltCaller = (DWORD)(size_t)_ReturnAddress();
-                if (dr) { g_dumpBltDst[0] = dr->left; g_dumpBltDst[1] = dr->top; g_dumpBltDst[2] = dr->right - dr->left; g_dumpBltDst[3] = dr->bottom - dr->top; }
-                SurfSize(src, g_dumpBltSrcW, g_dumpBltSrcH);
-                if (g_dumpBltSrcW > 400 && g_dumpBltSrcH > 400)
-                    Log(SFmt("MAPBLT sample: dst=(%d,%d,%d,%d) src=%lux%lu caller=0x%08lX",
-                        g_dumpBltDst[0], g_dumpBltDst[1], g_dumpBltDst[2], g_dumpBltDst[3],
-                        (unsigned long)g_dumpBltSrcW, (unsigned long)g_dumpBltSrcH, (unsigned long)g_dumpBltCaller));
-            }
-        }
-    }
-    return g_oSurfBlt(self, dr, src, sr, fl, fx);
-}
-
-HRESULT STDMETHODCALLTYPE Hook_Surf_Lock(IDirectDrawSurface7* self, LPRECT rc, LPDDSURFACEDESC2 d, DWORD fl, HANDLE h) {
-    if (!g_inOurLock && g_dumpActive && g_surfLockCaller == 0)
-        g_surfLockCaller = (DWORD)(size_t)_ReturnAddress();
-    HRESULT hr = g_oSurfLock(self, rc, d, fl, h);
-    if (!g_inOurLock && g_dumpActive && d)
-        g_surfLockCalls++, g_surfLockBytes += (d->dwHeight * d->lPitch);
-    return hr;
-}
-
-HRESULT STDMETHODCALLTYPE Hook_Surf_Unlock(IDirectDrawSurface7* self, LPRECT rc) {
-    return g_oSurfUnlock(self, rc);
 }
 
 template <class F>
@@ -1084,151 +524,21 @@ bool EnsureDeviceHooks() {
 
     void** vt = *(void***)dev;
     bool ok = true;
-    ok = PatchSlot(vt, 5,  &Hook_Dev_BeginScene,            g_oBeginScene) && ok;
-    ok = PatchSlot(vt, 6,  &Hook_Dev_EndScene,              g_oEndScene) && ok;
-    ok = PatchSlot(vt, 8,  &Hook_Dev_SetRenderTarget,       g_oSetRT) && ok;   // слот 8 = SetRenderTarget (слот 9 = GetRenderTarget!)
     ok = PatchSlot(vt, 11, &Hook_Dev_SetTransform,          g_oSetTransform) && ok;
     ok = PatchSlot(vt, 13, &Hook_Dev_SetViewport,           g_oSetViewport) && ok;
     ok = PatchSlot(vt, 20, &Hook_Dev_SetRenderState,        g_oSetRS) && ok;   // SDK-порядок: SetRenderState = 20 (нестандартный vtable!)
-    ok = PatchSlot(vt, 25, &Hook_Dev_DrawPrimitive,         g_oDP) && ok;
-    ok = PatchSlot(vt, 26, &Hook_Dev_DrawIndexedPrimitive,  g_oDIP) && ok;
-    ok = PatchSlot(vt, 29, &Hook_Dev_DrawPrimitiveStrided,  g_oDPS) && ok;
-    ok = PatchSlot(vt, 30, &Hook_Dev_DrawIndexedPrimitiveStrided, g_oDIPS) && ok;
-    ok = PatchSlot(vt, 31, &Hook_Dev_DrawPrimitiveVB,       g_oDPVB) && ok;
-    ok = PatchSlot(vt, 32, &Hook_Dev_DrawIndexedPrimitiveVB, g_oDIPVB) && ok;
-
-    // Патч Lock/Unlock/Blt на бэкбуфере (для детекта программного рендера и путей UI/карты)
-    {
-        IDirectDrawSurface7* rt = AcquireTarget();
-        if (rt) {
-            void** svt = *(void***)rt;
-            PatchSlot(svt, 3, &Hook_Surf_Lock, g_oSurfLock);
-            PatchSlot(svt, 4, &Hook_Surf_Unlock, g_oSurfUnlock);
-            PatchSlot(svt, 5, &Hook_Surf_Blt, g_oSurfBlt);
-            rt->Release();
-        }
-    }
 
     g_devHooked = ok;
-    Log(ok ? SFmt("device hooks installed (cull=%lu, viewport %lux%lu, slots DP25/DIP26/DPS29/DIPS30/DPVB31/DIPVB32)",
+    Log(ok ? SFmt("device hooks installed (cull=%lu, viewport %lux%lu, slots SetTransform11/SetViewport13/SetRenderState20)",
         (unsigned long)g_engCull, (unsigned long)g_vp.dwWidth, (unsigned long)g_vp.dwHeight)
            : std::string("device hooks: FAILED (see slots)"));
-
-    // Зонд: есть ли второе «устройство» (D3DX-контекст)? Снимаем образцы vtable
-    // ОБОИХ объектов — если PFX/UI рисуются через него, это видно по адресам.
-    static bool loggedVt = false;
-    if (!loggedVt) {
-        loggedVt = true;
-        {
-            std::string s = "MAIN DEV vtable: ";
-            void** vt = *(void***)dev;
-            for (int i = 0; i < 40; i += 4)
-                s += SFmt("[%d]=0x%08lX ", i, (unsigned long)(size_t)vt[i]);
-            Log(s);
-        }
-        IDirect3DDevice7* alt = (IDirect3DDevice7*)(void*)zCRnd_D3D::xd3d_pd3dx;
-        if (alt) {
-            std::string s = SFmt("ALT DEV (xd3d_pd3dx) ptr=0x%08lX vtable: ", (unsigned long)(size_t)alt);
-            void** vt = *(void***)alt;
-            for (int i = 0; i < 40 && vt[i]; i += 4)
-                s += SFmt("[%d]=0x%08lX ", i, (unsigned long)(size_t)vt[i]);
-            Log(s);
-        }
-        else Log("ALT DEV (xd3d_pd3dx) ptr=NULL");
-    }
     return ok;
 }
 
-// ───────────────────────── Карта: зеркалирование области просмотра ─────────────────────────
-// Карта ловится по указателю в oCViewDocumentMap::UpdatePosition (g_mapView):
-// это самый надёжный маркер — не зависит ни от имён классов (ClassOf у view
-// возвращает имя базового класса), ни от адреса vtable. В EndScene проверяем,
-// что объект всё ещё жив и виден в дереве экрана, и переворачиваем его
-// пиксельную область на бэкбуфере (до Present).
-bool FindPtrInTree(zCView* v, zCView* wanted, int depth) {
-    if (!v || depth > 32) return false;
-    if (v == wanted) return true;
-    for (zCView* c = v->childs.root; c; c = c->next) {
-        if (FindPtrInTree(c, wanted, depth + 1)) return true;
-    }
-    return false;
-}
-
-bool MapViewPixelRect(zCView* mv, int& x1, int& y1, int& x2, int& y2) {
-    if (!mv || !screen) return false;
-    static bool loggedRaw = false;
-    if (!loggedRaw) {
-        loggedRaw = true;
-        Log(SFmt("MAP raw: vposx=%d vposy=%d vsizex=%d vsizey=%d isOpen=%d isClosed=%d owner=0x%08lX",
-            mv->vposx, mv->vposy, mv->vsizex, mv->vsizey,
-            mv->isOpen ? 1 : 0, mv->isClosed ? 1 : 0, (unsigned long)(size_t)mv->owner));
-    }
-    // Координаты view лежат по смещению +40 от self (см. MAP RAWHEX: [10..13]).
-    // Чтение через поля zCView* невозможно: первый базовый класс у oCViewDocumentMap —
-    // zCObject (vtable 0x0083BACC), поэтому поля сдвинуты.
-    long vx = *(long*)((char*)mv + 40);
-    long vy = *(long*)((char*)mv + 44);
-    long vw = *(long*)((char*)mv + 48);
-    long vh = *(long*)((char*)mv + 52);
-    // Строгая валидация: только «нормальные» виртуальные координаты (0..8192).
-    if (vx < 0 || vy < 0 || vw <= 0 || vh <= 0 || vw > 8192 || vh > 8192) return false;
-    x1 = screen->nax((int)vx);
-    y1 = screen->nay((int)vy);
-    x2 = screen->nax((int)(vx + vw));
-    y2 = screen->nay((int)(vy + vh));
-    if (x2 < x1) { int t = x1; x1 = x2; x2 = t; }
-    if (y2 < y1) { int t = y1; y1 = y2; y2 = t; }
-    if (x1 < 0) x1 = 0;
-    if (y1 < 0) y1 = 0;
-    return true;
-}
-
-void MirrorRegion32(IDirectDrawSurface7* s, int x1, int y1, int x2, int y2) {
-    DDSURFACEDESC2 d; ZeroMemory(&d, sizeof(d)); d.dwSize = sizeof(d);
-    g_inOurLock = true;
-    HRESULT lr = s->Lock(NULL, &d, DDLOCK_WAIT | DDLOCK_SURFACEMEMORYPTR, NULL);
-    g_inOurLock = false;
-    if (FAILED(lr)) return;
-    if (d.lpSurface && d.ddpfPixelFormat.dwRGBBitCount == 32) {
-        int W = (int)d.dwWidth, H = (int)d.dwHeight;
-        if (x2 > W) x2 = W;
-        if (y2 > H) y2 = H;
-        if (x2 > x1 && y2 > y1) {
-            BYTE* base = (BYTE*)d.lpSurface;
-            for (int y = y1; y < y2; y++) {
-                DWORD* row = (DWORD*)(base + (size_t)y * d.lPitch);
-                FlipRow32(row + x1, x2 - x1);
-            }
-        }
-    }
-    s->Unlock(NULL);
-}
-
-void MaybeMirrorMapRegion() {
-    g_mapDbg[0]++;
-    if (!ZM_MAP_REGION_FLIP) return;
-    if (!MirrorOn()) return;
-    if (g_devWorldMirror) return;
-    if (GetTickCount() > g_mapUntilTick) return;             // таймер активности карты истёк
-    if (ogame && ogame->IsOnPause()) return;                // на паузе не трогаем
-    if (!screen) { g_mapDbg[1]++; return; }
-    if (!g_mapView) { g_mapDbg[2]++; return; }
-    // Проверка isOpen/isClosed УБРАНА: для карты она даёт ложное «закрыто».
-    // Жизненный цикл контролируется деструктором oCViewDocumentMap (g_mapView=NULL).
-    zCView* mv = g_mapView;
-    int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
-    if (!MapViewPixelRect(mv, x1, y1, x2, y2)) { g_mapDbg[4]++; return; }
-    IDirectDrawSurface7* rt = AcquireTarget();
-    if (!rt) { g_mapDbg[5]++; return; }
-    static int lastX1 = -1, lastY1 = -1, lastX2 = -1, lastY2 = -1, lastFrameLog = -1;
-    if ((lastX1 != x1 || lastY1 != y1 || lastX2 != x2 || lastY2 != y2) && lastFrameLog != g_frame) {
-        lastFrameLog = g_frame;
-        Log(SFmt("MAP region flip applied rect=(%d,%d)-(%d,%d) frame=%d mode=%s", x1, y1, x2, y2, g_frame, kModeNames[g_mode]));
-        lastX1 = x1; lastY1 = y1; lastX2 = x2; lastY2 = y2;
-    }
-    MirrorRegion32(rt, x1, y1, x2, y2);
-    rt->Release();
-}
+// ───────────────────────── Карта: только слежение (для будущих решений) ─────────────────────────
+// g_mapView заполняется в oCViewDocumentMap::UpdatePosition и очищается в деструкторе.
+// Никакого активного зеркалирования интерфейса карты пока нет (все перехваты путей
+// отрисовки карты в ванилле дали нулевые результаты — см. MAP_DEBUG_NOTES_for_delegation.md).
 
 // ───────────────────────── Инверсия мыши по X вместе с зеркалом ─────────────────────────
 bool g_mouseFlipApplied = false;
@@ -1425,9 +735,7 @@ int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned sh
 #endif
 
 #if ZM_HOOK_MAP
-int g_mapShowCount = 0;
 int g_mapUpdCount = 0;
-int g_mapUpdLogged = 0;
 
 // ~oCViewDocumentMap — очистка указателя карты при закрытии/удалении
 void __fastcall Hook_MapView_Dtor(zCView* self, void* edx);
@@ -1442,15 +750,10 @@ int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a);
 CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_MapScreen_Show(0x0047F9C0, &Hook_MapScreen_Show);
 int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a) {
     DWORD caller = (DWORD)_ReturnAddress();
-    g_mapShowCount++;
     if (g_teleOn) Log(SFmt("MAP oCMapScreen::Show(arg=%d) BEGIN self=0x%08lX caller=0x%08lX frame=%d modal=%s pause=%d mode=%s",
         a, (unsigned long)(size_t)self, (unsigned long)caller, g_frame, ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, kModeNames[g_mode]));
-    DumpText(SFmt("EVENT oCMapScreen::Show(arg=%d) BEGIN", a));
-    g_mapSessionActive = true;
     int r = Ivk_MapScreen_Show(self, edx, a);
-    g_mapSessionActive = false;
     if (g_teleOn) Log(SFmt("MAP oCMapScreen::Show(arg=%d) END   frame=%d modal=%s pause=%d", a, g_frame, ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0));
-    DumpText(SFmt("EVENT oCMapScreen::Show(arg=%d) END", a));
     return r;
 }
 
@@ -1459,27 +762,11 @@ void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx);
 CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_UpdatePosition(0x0068D7B0, &Hook_MapView_UpdatePosition);
 void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
     g_mapUpdCount++;
-    if (g_teleOn && g_mapUpdLogged < 10) {
-        g_mapUpdLogged++;
+    if (g_teleOn && g_mapUpdCount <= 10)
         Log(SFmt("MAP oCViewDocumentMap::UpdatePosition #%d class=%s self=0x%08lX caller=0x%08lX frame=%d modal=%s",
             g_mapUpdCount, ClassOf((zCObject*)self).c_str(), (unsigned long)(size_t)self, (unsigned long)(size_t)_ReturnAddress(), g_frame, ModalName().c_str()));
-    }
-    DumpText("EVENT oCViewDocumentMap::UpdatePosition");
     Ivk_MapView_UpdatePosition(self, edx);
     g_mapView = self;   // запоминаем объект карты (даже если класс отдаётся как zCViewDialog)
-    g_mapUntilTick = GetTickCount() + 10000;   // активность карты: 10 секунд
-    // Калибровка: одноразовый дамп первых 64 DWORD'ов объекта карты
-    {
-        static bool dumpedRaw = false;
-        if (!dumpedRaw) {
-            dumpedRaw = true;
-            DWORD* p = (DWORD*)self;
-            std::string s = "MAP RAWHEX:";
-            for (int i = 0; i < 64; i++) s += SFmt(" %08lX", (unsigned long)p[i]);
-            Log(s);
-        }
-    }
-    // (авто-арм дампа убран: дампы — только по INSERT)
 }
 #endif
 
@@ -1661,14 +948,6 @@ void Game_Loop() {
         Log(SFmt("=== MARK %d === mode=%s ent=%d polyFlip=%d modal=%s pause=%d frame=%d", g_mark, kModeNames[g_mode], g_entMirror ? 1 : 0,
             g_polyFlip ? 1 : 0, ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, g_frame));
         Msg(SFmt("MARK %d", g_mark));
-    }
-
-    // F9 — переключение cull-режима для GD3D11 (0/1)
-    static bool wasF9 = false;
-    if (KeyEdge(VK_F9, wasF9)) {
-        g_cullNoneWorld = !g_cullNoneWorld;
-        Log(SFmt("cullNoneWorld=%d mode=%s", g_cullNoneWorld, kModeNames[g_mode]));
-        Msg(g_cullNoneWorld ? "CULL=NONE IN WORLD: ON (GD3D11)" : "CULL=NONE IN WORLD: OFF (vanilla auto)");
     }
 
     // Страховка: дамп, который не успел закончиться (например, открыто меню)
