@@ -402,6 +402,9 @@ int g_flushSimpleAlphaDepth = 0;   // глубина вложенности zCRe
 int g_pfxDepth = 0;          // глубина вложенности zCParticleFX::Render
 long g_vbPfxCalls = 0, g_vbPfxVerts = 0;   // DrawVertexBuffer внутри PFX
 long g_psPfxCalls = 0, g_psPfxVerts = 0;   // DrawPolySimple внутри PFX
+int g_qmDepth = 0;           // глубина вложенности zCQuadMark::Render
+long g_vbQmCalls = 0, g_vbQmVerts = 0;     // DrawVertexBuffer внутри QuadMark
+long g_psQmCalls = 0, g_psQmVerts = 0;     // DrawPolySimple внутри QuadMark
 int g_mapDbg[6] = { 0, 0, 0, 0, 0, 0 };  // диагностика карты: 0=попыток,1=нет screen,2=нет g_mapView,3=closed,4=rect fail,5=нет rt
 
 inline char CurPhase() { return g_inMainWorld ? 'W' : (g_worldDepth > 0 ? 'w' : 'U'); }
@@ -486,6 +489,9 @@ void StartDump() {
     g_pfxDepth = 0;
     g_vbPfxCalls = 0; g_vbPfxVerts = 0;
     g_psPfxCalls = 0; g_psPfxVerts = 0;
+    g_qmDepth = 0;
+    g_vbQmCalls = 0; g_vbQmVerts = 0;
+    g_psQmCalls = 0; g_psQmVerts = 0;
     memset(g_mapDbg, 0, sizeof(g_mapDbg));
     memset(g_agg, 0, sizeof(g_agg));
     memset(g_aggV, 0, sizeof(g_aggV));
@@ -526,6 +532,8 @@ void FinishDump() {
         g_mapView ? "tracked" : "none");
     out += SFmt("PFX this frame: DrawVertexBuffer calls=%ld verts=%ld | DrawPolySimple calls=%ld verts=%ld\n",
         g_vbPfxCalls, g_vbPfxVerts, g_psPfxCalls, g_psPfxVerts);
+    out += SFmt("QUADMARK this frame: DrawVertexBuffer calls=%ld verts=%ld | DrawPolySimple calls=%ld verts=%ld\n",
+        g_vbQmCalls, g_vbQmVerts, g_psQmCalls, g_psQmVerts);
     out += SFmt("MAP debug: attempts=%d noscreen=%d nomap=%d closed=%d rectfail=%d nort=%d\n",
         g_mapDbg[0], g_mapDbg[1], g_mapDbg[2], g_mapDbg[3], g_mapDbg[4], g_mapDbg[5]);
     {
@@ -587,6 +595,17 @@ void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, z
         g_dumpPS += count;
         if (g_dumpCallers.size() < 128) g_dumpCallers[(DWORD)(size_t)_ReturnAddress()]++;
     }
+    if (g_qmDepth > 0) {
+        g_psQmCalls++; g_psQmVerts += count;
+        static bool loggedQmPs = false;
+        if (!loggedQmPs && verts && count > 0) {
+            loggedQmPs = true;
+            Log(SFmt("QM-PS: count=%d x0=%.1f y0=%.1f ctx ui=%d wd=%d flush=%d mir=%d",
+                count, verts[0].pos.n[0], verts[0].pos.n[1],
+                g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth,
+                (g_devWorldMirror || g_flushSimpleAlphaDepth > 0) ? 1 : 0));
+        }
+    }
     if (g_pfxDepth > 0) {
         g_psPfxCalls++; g_psPfxVerts += count;
         static bool loggedPfxPs = false;
@@ -636,11 +655,31 @@ int __fastcall Hook_Pfx_Render(zCParticleFX* self, void* edx, zTRenderContext& c
     return r;
 }
 
+// zCQuadMark::Render — инструментовка пути декал-квадов (пламя факелов и т.п.)
+int __fastcall Hook_QuadMark_Render(zCQuadMark* self, void* edx, zTRenderContext& ctx);
+CInvoke<int(__fastcall*)(zCQuadMark*, void*, zTRenderContext&)> Ivk_QuadMark_Render(0x005D0D00, &Hook_QuadMark_Render);
+int __fastcall Hook_QuadMark_Render(zCQuadMark* self, void* edx, zTRenderContext& ctx) {
+    g_qmDepth++;
+    int r = Ivk_QuadMark_Render(self, edx, ctx);
+    g_qmDepth--;
+    return r;
+}
+
 int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl);
 CInvoke<int(__fastcall*)(void*, void*, zCVertexBuffer*, int, int, unsigned short*, unsigned long)> Ivk_Rnd_DrawVertexBuffer(0x006519F0, &Hook_Rnd_DrawVertexBuffer);
 int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl) {
     bool mirrored = false;
     if (g_dumpActive && g_dumpCallers.size() < 128) g_dumpCallers[(DWORD)(size_t)_ReturnAddress()]++;
+    if (g_qmDepth > 0) {
+        g_vbQmCalls++; g_vbQmVerts += count;
+        static bool loggedQmVb = false;
+        if (!loggedQmVb && vb && count > 0) {
+            loggedQmVb = true;
+            Log(SFmt("QM-VB: count=%d numVertex=%lu TLptr=%d XYZptr=%d ctx ui=%d wd=%d flush=%d mir=%d",
+                count, vb->numVertex, vb->array.XYZRHWPtr ? 1 : 0, vb->array.XYZPtr ? 1 : 0,
+                g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth, g_devWorldMirror ? 1 : 0));
+        }
+    }
     if (g_pfxDepth > 0) {
         g_vbPfxCalls++; g_vbPfxVerts += count;
         static bool loggedPfxVb = false;
@@ -992,7 +1031,8 @@ void MaybeMirrorMapRegion() {
     if (g_devWorldMirror) return;
     if (!screen) { g_mapDbg[1]++; return; }
     if (!g_mapView) { g_mapDbg[2]++; return; }
-    if (!g_mapView->isOpen || g_mapView->isClosed) { g_mapDbg[3]++; return; }   // g_mapView очищается в деструкторе карты
+    // Проверка isOpen/isClosed УБРАНА: для карты она даёт ложное «закрыто».
+    // Жизненный цикл контролируется деструктором oCViewDocumentMap (g_mapView=NULL).
     zCView* mv = g_mapView;
     int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
     if (!MapViewPixelRect(mv, x1, y1, x2, y2)) { g_mapDbg[4]++; return; }
