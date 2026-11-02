@@ -149,11 +149,16 @@ struct PerfStat {
 PerfStat g_perf = {};
 int g_tlMirrored = 0;      // сколько TL-вызовов DP/DIP отзеркалено (GPU)
 int g_tlVbMirrored = 0;    // сколько TL-вызовов DPVB/DIPVB отзеркалено (GPU)
-int g_tlVbFailed = 0;      // сколько TL-VB-вызовов НЕ удалось отзеркалить (lock/создание VB)
+int g_tlVbFailed = 0;      // сколько TL-VB-вызовов НЕ удалось отзеркалить (lock)
+int g_psMirrored = 0;      // сколько вершин DrawPolySimple отзеркалено (GPU)
+int g_vbTlMirrored = 0;    // сколько TL-вершин DrawVertexBuffer отзеркалено (GPU)
+int g_dumpPS = 0;          // дамп: всего вершин DrawPolySimple за кадр
+int g_dumpVBTL = 0;        // дамп: всего TL-вершин DrawVertexBuffer за кадр
 
 void PerfReset() {
     memset(&g_perf, 0, sizeof(g_perf));
     g_tlMirrored = 0; g_tlVbMirrored = 0; g_tlVbFailed = 0;
+    g_psMirrored = 0; g_vbTlMirrored = 0;
 }
 
 void PerfFrame() {
@@ -168,11 +173,12 @@ void PerfFrame() {
     if (g_perf.frames >= 300) {
         double avg = g_perf.frameSum / g_perf.frames;
         double am = g_perf.mirrorN ? g_perf.mirrorSum / g_perf.mirrorN : 0.0;
-        Log(SFmt("PERF mode=%s ent=%d frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms tlMirrored=%d tlVbMirrored=%d tlVbFailed=%d",
+        Log(SFmt("PERF mode=%s ent=%d frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms tlMirrored=%d tlVbMirrored=%d tlVbFailed=%d psMirrored=%d vbTlMirrored=%d",
             kModeNames[g_mode], g_entMirror ? 1 : 0, g_perf.frames, avg, 1000.0 / avg, am,
-            g_tlMirrored, g_tlVbMirrored, g_tlVbFailed));
+            g_tlMirrored, g_tlVbMirrored, g_tlVbFailed, g_psMirrored, g_vbTlMirrored));
         g_perf.frameSum = 0; g_perf.frames = 0; g_perf.mirrorSum = 0; g_perf.mirrorN = 0;
         g_tlMirrored = 0; g_tlVbMirrored = 0; g_tlVbFailed = 0;
+        g_psMirrored = 0; g_vbTlMirrored = 0;
     }
 }
 
@@ -376,10 +382,12 @@ bool g_dumpSawPrint = false;
 
 std::map<void*, DWORD> g_vbFvf;
 
+zCView* g_mapView = NULL;   // последний открытый oCViewDocumentMap (ловится в UpdatePosition)
+
 inline char CurPhase() { return g_inMainWorld ? 'W' : (g_worldDepth > 0 ? 'w' : 'U'); }
 
 // Forward-декларации (определены ниже)
-bool FindVisibleMapView(zCView* v, zCView*& out, int depth);
+bool FindPtrInTree(zCView* v, zCView* wanted, int depth);
 void MaybeMirrorMapRegion();
 
 void DumpText(const std::string& s) {
@@ -450,6 +458,7 @@ void StartDump() {
     g_dump.clear();
     g_vbFvf.clear();
     g_dumpDropped = 0; g_dumpSawPrint = false;
+    g_dumpPS = 0; g_dumpVBTL = 0;
     g_dumpRequested = false;
     g_dumpActive = true;
     g_dumpNo++;
@@ -457,8 +466,7 @@ void StartDump() {
     DumpText(SFmt("viewport: x=%lu y=%lu w=%lu h=%lu (known=%d)", (unsigned long)g_vp.dwX, (unsigned long)g_vp.dwY,
         (unsigned long)g_vp.dwWidth, (unsigned long)g_vp.dwHeight, g_haveVp ? 1 : 0));
     DumpText(SFmt("engine cull=%lu, engine proj=%s", (unsigned long)g_engCull, g_haveEngProj ? MatStr(g_engProj).c_str() : "unknown"));
-    zCView* mv = NULL;
-    if (screen && FindVisibleMapView(screen, mv, 0)) DumpText("map view visible: YES");
+    if (screen && g_mapView && FindPtrInTree(screen, g_mapView, 0)) DumpText("map view visible: YES (tracked)");
 }
 
 void FinishDump() {
@@ -487,6 +495,8 @@ void FinishDump() {
         out += SFmt("SUMMARY phase %-20s : TL(XYZRHW) calls=%d verts=%llu | XYZ(3D) calls=%d verts=%llu | other=%d | VB-calls=%d | Strided-calls=%d verts=%llu\n",
             pn[p], sum[p].tl, sum[p].tlV, sum[p].xyz, sum[p].xyzV, sum[p].other, sum[p].vb, sum[p].strid, sum[p].stridV);
     out += "-----\n";
+    out += SFmt("ENGINE this frame: DrawPolySimple verts=%d | DrawVertexBuffer-TL verts=%d | mapView=%s\n",
+        g_dumpPS, g_dumpVBTL, g_mapView ? "tracked" : "none");
 
     for (size_t i = 0; i < g_dump.size(); i++) {
         const DumpEntry& e = g_dump[i];
@@ -502,6 +512,54 @@ void FinishDump() {
     WriteText("zMirror_dump.txt", out, true);
     Log(SFmt("dump #%d written to zMirror_dump.txt (%d entries)", g_dumpNo, (int)g_dump.size()));
     g_dump.clear();
+}
+
+// ───────────────────────── Хуки на уровне движка (zCRnd_D3D) ─────────────────────────
+// Движок рисует геометрию НЕ напрямую через D3D7-устройство (дампы показывают
+// ноль вызовов Draw* на устройстве), а через свои методы. Два ключевых:
+//   DrawPolySimple(zCTexture*, zTRndSimpleVertex*, int)  — экранные квады
+//     (UI, PFX-частицы, скайбокс, декали). Вершины уже в пиксельных
+//     координатах (pos.x/pos.y), z отдельно.
+//   DrawVertexBuffer(zCVertexBuffer*, int, int, unsigned short*, unsigned long)
+//     — основной путь отрисовки; TL-вершины доступны через vb->array.XYZRHWPtr.
+void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
+CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(0x0064AC30, &Hook_Rnd_DrawPolySimple);
+void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
+    if (g_dumpActive && verts && count > 0) g_dumpPS += count;
+    if (g_devWorldMirror && g_haveVp && verts && count > 0 && count <= 200000) {
+        static std::vector<zTRndSimpleVertex> copy;
+        if (copy.size() < (size_t)count) copy.resize(count);
+        memcpy(&copy[0], verts, sizeof(zTRndSimpleVertex) * (size_t)count);
+        float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
+        for (int i = 0; i < count; i++) copy[i].pos.x = cx - copy[i].pos.x;
+        g_psMirrored += count;
+        Ivk_Rnd_DrawPolySimple(self, edx, tex, &copy[0], count);
+        return;
+    }
+    Ivk_Rnd_DrawPolySimple(self, edx, tex, verts, count);
+}
+
+int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl);
+CInvoke<int(__fastcall*)(void*, void*, zCVertexBuffer*, int, int, unsigned short*, unsigned long)> Ivk_Rnd_DrawVertexBuffer(0x006519F0, &Hook_Rnd_DrawVertexBuffer);
+int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl) {
+    bool mirrored = false;
+    if (g_devWorldMirror && g_haveVp && vb && count > 0 && vb->array.XYZRHWPtr) {
+        if (start >= 0 && start + count <= (int)vb->numVertex) {
+            float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
+            zVEC4* p = vb->array.XYZRHWPtr + start;
+            for (int i = 0; i < count; i++) p[i].x = cx - p[i].x;
+            mirrored = true;
+            g_vbTlMirrored += count;
+            if (g_dumpActive) g_dumpVBTL += count;
+        }
+    }
+    int r = Ivk_Rnd_DrawVertexBuffer(self, edx, vb, start, count, idx, fl);
+    if (mirrored) {
+        float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
+        zVEC4* p = vb->array.XYZRHWPtr + start;
+        for (int i = 0; i < count; i++) p[i].x = cx - p[i].x;   // откат
+    }
+    return r;
 }
 
 // ───────────────────────── Хуки D3D7-устройства ─────────────────────────
@@ -735,22 +793,16 @@ bool EnsureDeviceHooks() {
 }
 
 // ───────────────────────── Карта: зеркалирование области просмотра ─────────────────────────
-// Ищем в дереве экрана видимый oCViewDocumentMap и переворачиваем его
-// пиксельную область на бэкбуфере сразу после EndScene (до Present).
-// Детект карты по адресу vtable oCViewDocumentMap (G2A 2.6): надёжнее, чем
-// имя класса через zCObject-каст (для view-объектов он возвращает имя базового
-// класса — см. лог 1.4.1: "class=zCViewDialog").
-inline bool IsMapView(zCView* v) {
-    return v && *(void**)v == (void*)0x0083BA9C;
-}
-
-bool FindVisibleMapView(zCView* v, zCView*& out, int depth) {
+// Карта ловится по указателю в oCViewDocumentMap::UpdatePosition (g_mapView):
+// это самый надёжный маркер — не зависит ни от имён классов (ClassOf у view
+// возвращает имя базового класса), ни от адреса vtable. В EndScene проверяем,
+// что объект всё ещё жив и виден в дереве экрана, и переворачиваем его
+// пиксельную область на бэкбуфере (до Present).
+bool FindPtrInTree(zCView* v, zCView* wanted, int depth) {
     if (!v || depth > 32) return false;
-    if (IsMapView(v)) {
-        if (v->isOpen && !v->isClosed) { out = v; return true; }
-    }
+    if (v == wanted) return true;
     for (zCView* c = v->childs.root; c; c = c->next) {
-        if (FindVisibleMapView(c, out, depth + 1)) return true;
+        if (FindPtrInTree(c, wanted, depth + 1)) return true;
     }
     return false;
 }
@@ -795,9 +847,10 @@ void MaybeMirrorMapRegion() {
     if (!ZM_MAP_REGION_FLIP) return;
     if (!MirrorOn()) return;
     if (g_devWorldMirror) return;
-    if (!screen) return;
-    zCView* mv = NULL;
-    if (!FindVisibleMapView(screen, mv, 0)) return;
+    if (!screen || !g_mapView) return;
+    if (!FindPtrInTree(screen, g_mapView, 0)) return;       // карта закрыта/удалена
+    if (!g_mapView->isOpen || g_mapView->isClosed) return;
+    zCView* mv = g_mapView;
     int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
     if (!MapViewPixelRect(mv, x1, y1, x2, y2)) return;
     IDirectDrawSurface7* rt = AcquireTarget();
@@ -1038,6 +1091,7 @@ void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
     }
     DumpText("EVENT oCViewDocumentMap::UpdatePosition");
     Ivk_MapView_UpdatePosition(self, edx);
+    g_mapView = self;   // запоминаем объект карты (даже если класс отдаётся как zCViewDialog)
     // Авто-арм дампа при открытии карты — чтобы поймать кадр с отрисовкой карты.
     if (g_teleOn && !g_dumpActive && !g_dumpRequested) g_dumpRequested = true;
 }
