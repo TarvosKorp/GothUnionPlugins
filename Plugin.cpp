@@ -153,6 +153,8 @@ bool g_worldRenderedThisFrame = false;
 int MapSignals();
 bool MapOnScreenNow();
 void MirrorFrame(bool inScene);
+void SyncMouseFlip();
+std::string ModalName();
 
 // ───────────────────────── Карта: ранние глобалы детекта ─────────────────────────
 #ifndef ZM_HOOK_MAP
@@ -868,10 +870,9 @@ bool DocDlgOnScreen() {
     oCDocumentManager& dm = oCDocumentManager::GetDocumentManager();
     zCViewDialog* dlg = dm.DlgDocumentMain;
     if (!dlg) return false;
-    zCView* target = dlg;
     int guard = 0;
     for (zCView* v = screen->childs.root; v && guard < 512; v = v->next, guard++)
-        if (v == target) return true;
+        if ((void*)v == (void*)dlg) return true;
     return false;
 }
 
