@@ -701,6 +701,50 @@ int __fastcall Hook_QuadMark_Render(zCQuadMark* self, void* edx, zTRenderContext
     return r;
 }
 
+// zCViewDraw::BlitTexture — текстурированные квады UI (страницы документов и карты).
+// Во время сессии карты зеркалим UV по горизонтали (u -> 1-u): дёшево, не трогает
+// другие интерфейсы и не требует переворота кадра.
+void __fastcall Hook_ViewDraw_BlitTexture(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewDraw_BlitTexture(0x00690490, &Hook_ViewDraw_BlitTexture);
+void __fastcall Hook_ViewDraw_BlitTexture(void* self, void* edx) {
+    if (g_mapSessionActive && !g_devWorldMirror) {
+        // zCViewDraw: TexturePosition[2] (zVEC2) по смещению 0x6C
+        zVEC2* tp = (zVEC2*)((char*)self + 0x6C);
+        tp[0].n[0] = 1.0f - tp[0].n[0];
+        tp[1].n[0] = 1.0f - tp[1].n[0];
+        static bool loggedBlit = false;
+        if (!loggedBlit) {
+            loggedBlit = true;
+            Log(SFmt("BlitTexture mirrored: self=0x%08lX u0=%.3f u1=%.3f ctx ui=%d wd=%d",
+                (unsigned long)(size_t)self, tp[0].n[0], tp[1].n[0],
+                g_uiPhase ? 1 : 0, g_worldDepth));
+        }
+    }
+    Ivk_ViewDraw_BlitTexture(self, edx);
+}
+
+// zCViewDraw::BlitTexture — текстурированные квады UI (страницы документов и карты).
+// Во время сессии карты зеркалим UV по горизонтали (u -> 1-u): дёшево, не трогает
+// другие интерфейсы и не требует переворота кадра.
+void __fastcall Hook_ViewDraw_BlitTexture(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewDraw_BlitTexture(0x00690490, &Hook_ViewDraw_BlitTexture);
+void __fastcall Hook_ViewDraw_BlitTexture(void* self, void* edx) {
+    if (g_mapSessionActive && !g_devWorldMirror) {
+        // zCViewDraw: TexturePosition[2] (zVEC2) по смещению 0x6C
+        zVEC2* tp = (zVEC2*)((char*)self + 0x6C);
+        tp[0].n[0] = 1.0f - tp[0].n[0];
+        tp[1].n[0] = 1.0f - tp[1].n[0];
+        static bool loggedBlit = false;
+        if (!loggedBlit) {
+            loggedBlit = true;
+            Log(SFmt("BlitTexture mirrored: self=0x%08lX u0=%.3f u1=%.3f ctx ui=%d wd=%d",
+                (unsigned long)(size_t)self, tp[0].n[0], tp[1].n[0],
+                g_uiPhase ? 1 : 0, g_worldDepth));
+        }
+    }
+    Ivk_ViewDraw_BlitTexture(self, edx);
+}
+
 // RenderAlphaSortList — граница альфа-сортировки (здесь часто рисуются прозрачные элементы)
 int __fastcall Hook_Rnd_RenderAlphaSortList(void* self, void* edx);
 CInvoke<int(__fastcall*)(void*, void*)> Ivk_Rnd_RenderAlphaSortList(0x00650A60, &Hook_Rnd_RenderAlphaSortList);
@@ -1423,7 +1467,9 @@ int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a) {
     if (g_teleOn) Log(SFmt("MAP oCMapScreen::Show(arg=%d) BEGIN self=0x%08lX caller=0x%08lX frame=%d modal=%s pause=%d mode=%s",
         a, (unsigned long)(size_t)self, (unsigned long)caller, g_frame, ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, kModeNames[g_mode]));
     DumpText(SFmt("EVENT oCMapScreen::Show(arg=%d) BEGIN", a));
+    g_mapSessionActive = true;
     int r = Ivk_MapScreen_Show(self, edx, a);
+    g_mapSessionActive = false;
     if (g_teleOn) Log(SFmt("MAP oCMapScreen::Show(arg=%d) END   frame=%d modal=%s pause=%d", a, g_frame, ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0));
     DumpText(SFmt("EVENT oCMapScreen::Show(arg=%d) END", a));
     return r;
