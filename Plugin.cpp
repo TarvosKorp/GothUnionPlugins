@@ -1,14 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════
-// zMirrorTest V1.5.0
+// zMirrorTest V1.5.1
 // Плагин зеркального режима для Gothic 2 NotR (Union SDK, G2A).
 //
 // УПРАВЛЕНИЕ:
-//   HOME     — цикл режимов: OFF → CPU → GPU → OFF.
+//   HOME     — режим зеркала: OFF ↔ GPU (GPU-бэкенд подбирается автоматически:
+//              ванилла = FLIP, внешний ddraw-враппер (GD3D11/dgVoodoo) = PROJ).
 //   END      — телеметрия ON/OFF (лог zMirror_log.txt + дамп zMirror_dump.txt).
 //   ]        — зеркалирование сущностей (все NPC) ON/OFF (любой режим).
-//   [        — принудительная инверсия полигонов/culling ON/OFF (для GD3D11).
-//   DELETE   — бэкенд GPU-режима: AUTO → FLIP → PROJ → AUTO.
-//              AUTO: ванилла = FLIP, внешний ddraw-враппер (GD3D11/dgVoodoo) = PROJ.
 //   PAGEDOWN — режим детекта карты: AUTO(строгий) → LENIENT → DOCONLY → FORCE_ON → FORCE_OFF.
 //   INSERT   — (телеметрия включена) дамп ОДНОГО кадра.
 //   PAGEUP   — метка сценария в логе.
@@ -44,6 +42,9 @@
 //   V1.4.x — GPU device-level (проекция+cull+TL), телеметрия, чистка.
 //   V1.5.0 — GPU-FLIP (переворот кадра на GPU), зеркалирование карты в конце кадра,
 //            детект бэкенда, расширенная телеметрия (GPUFLIP/MAPSIG).
+//   V1.5.1 — фикс вылета карты (сигнатура oCDocumentManager::Show: id берётся из edx);
+//            чистка: CPU-режим убран из цикла HOME, DELETE и «[» удалены
+//            (бэкенд авто, FLIP не требует инверсии полигонов).
 // ═══════════════════════════════════════════════════════════════════
 
 #include "resource.h"
@@ -311,9 +312,8 @@ bool g_haveVp = false;
 bool g_devWorldMirror = false;        // GPU-PROJ: идёт рендер главного мира в зеркале
 bool g_worldCullFlip = false;         // паритет отражений на уровне мира
 bool g_entCullFlip = false;           // паритет отражения сущности (матрица NPC)
-bool g_polyFlip = false;              // «[»: принудительная инверсия culling (для GD3D11)
 
-inline bool CullFlipNow() { return (g_worldCullFlip != g_entCullFlip) != g_polyFlip; }
+inline bool CullFlipNow() { return g_worldCullFlip != g_entCullFlip; }
 
 inline DWORD InvertCull(DWORD v) {
     if (v == D3DCULL_CW) return D3DCULL_CCW;
@@ -929,14 +929,17 @@ int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a) {
     return r;
 }
 
-// oCDocumentManager::Show(int) — открытие документа (в т.ч. карты-предмета)
-void __fastcall Hook_DocMan_Show(void* self, void* edx, int id);
-CInvoke<void(__fastcall*)(void*, void*, int)> Ivk_DocMan_Show(0x0065F300, &Hook_DocMan_Show);
-void __fastcall Hook_DocMan_Show(void* self, void* edx, int id) {
+// oCDocumentManager::Show(int) — открытие документа (в т.ч. карты-предмета).
+// ВАЖНО: метод объявлен как __fastcall (это в API), поэтому id передаётся в EDX,
+// а не через стек. Сигнатура хука — (void*, void*), id читаем из edx.
+void __fastcall Hook_DocMan_Show(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_DocMan_Show(0x0065F300, &Hook_DocMan_Show);
+void __fastcall Hook_DocMan_Show(void* self, void* edx) {
+    int id = (int)(INT_PTR)edx;
     bool outer = (g_docShowDepth == 0);
     if (outer) g_mapUpdInShow = false;
     g_docShowDepth++;
-    Ivk_DocMan_Show(self, edx, id);
+    Ivk_DocMan_Show(self, edx);
     g_docShowDepth--;
     if (!outer) return;   // вложенный вызов из oCMapScreen::Show — решает внешний хук
     bool isMap = g_mapUpdInShow || (g_frame - g_mapUpdFrame <= 2);
@@ -1285,8 +1288,8 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
 // ───────────────────────── События Union ─────────────────────────
 void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.5.0 loaded\n", false);
-    WriteText("zMirror_dump.txt", "zMirrorTest V1.5.0 dump file\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.5.1 loaded\n", false);
+    WriteText("zMirror_dump.txt", "zMirrorTest V1.5.1 dump file\n", false);
 }
 
 void Game_Init() { }
@@ -1309,25 +1312,16 @@ void Msg(const std::string& s) {
 void Game_Loop() {
     DumpText("event Game_Loop");
 
-    // HOME — цикл режимов: OFF -> CPU -> GPU -> OFF
+    // HOME — переключение зеркала: OFF <-> GPU (бэкенд GPU подбирается автоматически)
     static bool wasHome = false;
     if (KeyEdge(VK_HOME, wasHome)) {
-        g_mode = (g_mode + 1) % MODE_COUNT;
+        g_mode = (g_mode == MODE_GPU) ? MODE_OFF : MODE_GPU;
         g_failStreak = 0;
         PerfReset();
         SyncMouseFlip();
         Log(std::string("mirror mode: ") + kModeNames[g_mode]);
         if (g_mode == MODE_GPU) Msg(SFmt("MIRROR MODE: GPU [%s]", GpuUsesFlip() ? "FLIP" : "PROJ"));
-        else Msg(SFmt("MIRROR MODE: %s", kModeNames[g_mode]));
-    }
-
-    // DELETE — бэкенд GPU-режима: AUTO -> FLIP -> PROJ
-    static bool wasDel = false;
-    if (KeyEdge(VK_DELETE, wasDel)) {
-        g_backendPref = (g_backendPref + 1) % BK_COUNT;
-        GfReset();
-        Log(SFmt("GPU backend pref: %s (effective: %s, wrapper=%d)", kBackendNames[g_backendPref], GpuUsesFlip() ? "FLIP" : "PROJ", g_wrapperDetected ? 1 : 0));
-        Msg(SFmt("GPU BACKEND: %s -> %s", kBackendNames[g_backendPref], GpuUsesFlip() ? "FLIP" : "PROJ"));
+        else Msg("MIRROR MODE: OFF");
     }
 
     // PAGEDOWN — режим детекта карты
@@ -1355,14 +1349,6 @@ void Game_Loop() {
         Msg(g_entMirror ? "ENT-MIRROR: ALL NPCs" : "ENT-MIRROR: OFF");
     }
 
-    // [ — принудительная инверсия полигонов/culling (для GD3D11 и экспериментов)
-    static bool wasPolyFlip = false;
-    if (KeyEdge(VK_OEM_4, wasPolyFlip)) {
-        g_polyFlip = !g_polyFlip;
-        Log(std::string("polyFlip=") + (g_polyFlip ? "ON" : "OFF"));
-        Msg(g_polyFlip ? "POLY-FLIP: ON" : "POLY-FLIP: OFF");
-    }
-
     // INSERT — дамп одного кадра (только при включённой телеметрии)
     static bool wasIns = false;
     if (KeyEdge(VK_INSERT, wasIns)) {
@@ -1375,8 +1361,8 @@ void Game_Loop() {
     static bool wasPgUp = false;
     if (KeyEdge(VK_PRIOR, wasPgUp)) {
         g_mark++;
-        Log(SFmt("=== MARK %d === mode=%s ent=%d polyFlip=%d modal=%s pause=%d frame=%d", g_mark, kModeNames[g_mode], g_entMirror ? 1 : 0,
-            g_polyFlip ? 1 : 0, ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, g_frame));
+        Log(SFmt("=== MARK %d === mode=%s ent=%d modal=%s pause=%d frame=%d", g_mark, kModeNames[g_mode], g_entMirror ? 1 : 0,
+            ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, g_frame));
         Msg(SFmt("MARK %d", g_mark));
     }
 
