@@ -399,6 +399,9 @@ std::map<void*, DWORD> g_vbFvf;
 
 zCView* g_mapView = NULL;   // последний открытый oCViewDocumentMap (ловится в UpdatePosition)
 int g_flushSimpleAlphaDepth = 0;   // глубина вложенности zCRenderManager::FlushSimpleAlphaPolys
+int g_pfxDepth = 0;          // глубина вложенности zCParticleFX::Render
+long g_vbPfxCalls = 0, g_vbPfxVerts = 0;   // DrawVertexBuffer внутри PFX
+long g_psPfxCalls = 0, g_psPfxVerts = 0;   // DrawPolySimple внутри PFX
 
 inline char CurPhase() { return g_inMainWorld ? 'W' : (g_worldDepth > 0 ? 'w' : 'U'); }
 
@@ -479,6 +482,9 @@ void StartDump() {
     g_dumpPS = 0; g_dumpVBTL = 0;
     g_psMinX = 1e30f; g_psMaxX = -1e30f;
     g_vbTlMinX = 1e30f; g_vbTlMaxX = -1e30f;
+    g_pfxDepth = 0;
+    g_vbPfxCalls = 0; g_vbPfxVerts = 0;
+    g_psPfxCalls = 0; g_psPfxVerts = 0;
     memset(g_agg, 0, sizeof(g_agg));
     memset(g_aggV, 0, sizeof(g_aggV));
     memset(g_aggI, 0, sizeof(g_aggI));
@@ -494,7 +500,7 @@ void StartDump() {
     DumpText(SFmt("viewport: x=%lu y=%lu w=%lu h=%lu (known=%d)", (unsigned long)g_vp.dwX, (unsigned long)g_vp.dwY,
         (unsigned long)g_vp.dwWidth, (unsigned long)g_vp.dwHeight, g_haveVp ? 1 : 0));
     DumpText(SFmt("engine cull=%lu, engine proj=%s", (unsigned long)g_engCull, g_haveEngProj ? MatStr(g_engProj).c_str() : "unknown"));
-    if (screen && g_mapView && FindPtrInTree(screen, g_mapView, 0)) DumpText("map view visible: YES (tracked)");
+    if (screen && g_mapView) DumpText("map view visible: YES (tracked)");
 }
 
 void FinishDump() {
@@ -516,6 +522,8 @@ void FinishDump() {
     out += SFmt("ENGINE this frame: DrawPolySimple verts=%d x=[%.0f..%.0f] | DrawVertexBuffer-TL verts=%d x=[%.0f..%.0f] | mapView=%s\n",
         g_dumpPS, g_psMinX, g_psMaxX, g_dumpVBTL, g_vbTlMinX, g_vbTlMaxX,
         g_mapView ? "tracked" : "none");
+    out += SFmt("PFX this frame: DrawVertexBuffer calls=%ld verts=%ld | DrawPolySimple calls=%ld verts=%ld\n",
+        g_vbPfxCalls, g_vbPfxVerts, g_psPfxCalls, g_psPfxVerts);
     {
         long wE = 0, pE = 0, oE = 0;
         for (int p = 0; p < 3; p++) { wE += g_aggWorldExtra[p]; pE += g_aggProjOtherExtra[p][0]; oE += g_aggProjOtherExtra[p][1]; }
@@ -575,6 +583,17 @@ void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, z
         g_dumpPS += count;
         if (g_dumpCallers.size() < 128) g_dumpCallers[(DWORD)(size_t)_ReturnAddress()]++;
     }
+    if (g_pfxDepth > 0) {
+        g_psPfxCalls++; g_psPfxVerts += count;
+        static bool loggedPfxPs = false;
+        if (!loggedPfxPs && verts && count > 0) {
+            loggedPfxPs = true;
+            Log(SFmt("PFX-PS: count=%d x0=%.1f y0=%.1f ctx ui=%d wd=%d flush=%d mir=%d",
+                count, verts[0].pos.n[0], verts[0].pos.n[1],
+                g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth,
+                (g_devWorldMirror || g_flushSimpleAlphaDepth > 0) ? 1 : 0));
+        }
+    }
     bool mirrorBranch = (g_devWorldMirror || g_flushSimpleAlphaDepth > 0) && g_haveVp && verts && count > 0 && count <= 200000;
     {
         static bool loggedPS = false;
@@ -603,11 +622,31 @@ void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, z
     Ivk_Rnd_DrawPolySimple(self, edx, tex, verts, count);
 }
 
+// zCParticleFX::Render — инструментовка пути частиц
+int __fastcall Hook_Pfx_Render(zCParticleFX* self, void* edx, zTRenderContext& ctx);
+CInvoke<int(__fastcall*)(zCParticleFX*, void*, zTRenderContext&)> Ivk_Pfx_Render(0x005B0310, &Hook_Pfx_Render);
+int __fastcall Hook_Pfx_Render(zCParticleFX* self, void* edx, zTRenderContext& ctx) {
+    g_pfxDepth++;
+    int r = Ivk_Pfx_Render(self, edx, ctx);
+    g_pfxDepth--;
+    return r;
+}
+
 int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl);
 CInvoke<int(__fastcall*)(void*, void*, zCVertexBuffer*, int, int, unsigned short*, unsigned long)> Ivk_Rnd_DrawVertexBuffer(0x006519F0, &Hook_Rnd_DrawVertexBuffer);
 int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl) {
     bool mirrored = false;
     if (g_dumpActive && g_dumpCallers.size() < 128) g_dumpCallers[(DWORD)(size_t)_ReturnAddress()]++;
+    if (g_pfxDepth > 0) {
+        g_vbPfxCalls++; g_vbPfxVerts += count;
+        static bool loggedPfxVb = false;
+        if (!loggedPfxVb && vb && count > 0) {
+            loggedPfxVb = true;
+            Log(SFmt("PFX-VB: count=%d numVertex=%lu TLptr=%d XYZptr=%d ctx ui=%d wd=%d flush=%d mir=%d",
+                count, vb->numVertex, vb->array.XYZRHWPtr ? 1 : 0, vb->array.XYZPtr ? 1 : 0,
+                g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth, g_devWorldMirror ? 1 : 0));
+        }
+    }
     if (g_devWorldMirror && g_haveVp && vb && count > 0 && vb->array.XYZRHWPtr) {
         if (start >= 0 && start + count <= (int)vb->numVertex) {
             float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
@@ -924,8 +963,7 @@ void MaybeMirrorMapRegion() {
     if (!MirrorOn()) return;
     if (g_devWorldMirror) return;
     if (!screen || !g_mapView) return;
-    if (!FindPtrInTree(screen, g_mapView, 0)) return;       // карта закрыта/удалена
-    if (!g_mapView->isOpen || g_mapView->isClosed) return;
+    if (!g_mapView->isOpen || g_mapView->isClosed) return;   // g_mapView очищается в деструкторе карты
     zCView* mv = g_mapView;
     int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
     if (!MapViewPixelRect(mv, x1, y1, x2, y2)) return;
@@ -1139,6 +1177,14 @@ int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned sh
 int g_mapShowCount = 0;
 int g_mapUpdCount = 0;
 int g_mapUpdLogged = 0;
+
+// ~oCViewDocumentMap — очистка указателя карты при закрытии/удалении
+void __fastcall Hook_MapView_Dtor(zCView* self, void* edx);
+CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_Dtor(0x0068D470, &Hook_MapView_Dtor);
+void __fastcall Hook_MapView_Dtor(zCView* self, void* edx) {
+    if (g_mapView == self) g_mapView = NULL;
+    Ivk_MapView_Dtor(self, edx);
+}
 
 // oCMapScreen::Show(int)
 int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a);
