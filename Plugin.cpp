@@ -398,6 +398,7 @@ std::map<DWORD, int> g_dumpCallers;  // адрес вызывающего -> с�
 std::map<void*, DWORD> g_vbFvf;
 
 zCView* g_mapView = NULL;   // последний открытый oCViewDocumentMap (ловится в UpdatePosition)
+unsigned long g_mapUntilTick = 0;   // флип карты активен до этого тика (анти-«залипание»)
 int g_flushSimpleAlphaDepth = 0;   // глубина вложенности zCRenderManager::FlushSimpleAlphaPolys
 int g_pfxDepth = 0;          // глубина вложенности zCParticleFX::Render
 long g_vbPfxCalls = 0, g_vbPfxVerts = 0;   // DrawVertexBuffer внутри PFX
@@ -998,17 +999,12 @@ bool MapViewPixelRect(zCView* mv, int& x1, int& y1, int& x2, int& y2) {
             mv->isOpen ? 1 : 0, mv->isClosed ? 1 : 0, (unsigned long)(size_t)mv->owner));
     }
     long vx = mv->vposx, vy = mv->vposy, vw = mv->vsizex, vh = mv->vsizey;
+    // Строгая валидация: только «нормальные» виртуальные координаты (0..8192).
+    // Если поля содержат мусор (как в MAX raw) — НЕ флипаем и НЕ логируем покадрово.
+    if (vx < 0 || vy < 0 || vw <= 0 || vh <= 0 || vw > 8192 || vh > 8192) return false;
     zCView* p = mv->owner;
     int guard = 0;
     while (p && p != screen && guard++ < 32) { vx += p->vposx; vy += p->vposy; p = p->owner; }
-    int W = (int)g_vp.dwWidth, H = (int)g_vp.dwHeight;
-    if (!W || !H) { W = 1920; H = 1080; }
-    if (vw <= 0 || vh <= 0) {
-        // Вырожденный регион — fallback на весь экран (промежуточный результат)
-        x1 = 0; y1 = 0; x2 = W; y2 = H;
-        Log(SFmt("MAP region fallback FULLSCREEN (vw=%ld vh=%ld)", vw, vh));
-        return true;
-    }
     x1 = screen->nax((int)vx);
     y1 = screen->nay((int)vy);
     x2 = screen->nax((int)(vx + vw));
@@ -1043,6 +1039,8 @@ void MaybeMirrorMapRegion() {
     if (!ZM_MAP_REGION_FLIP) return;
     if (!MirrorOn()) return;
     if (g_devWorldMirror) return;
+    if (GetTickCount() > g_mapUntilTick) return;             // таймер активности карты истёк
+    if (ogame && ogame->IsOnPause()) return;                // на паузе не трогаем
     if (!screen) { g_mapDbg[1]++; return; }
     if (!g_mapView) { g_mapDbg[2]++; return; }
     // Проверка isOpen/isClosed УБРАНА: для карты она даёт ложное «закрыто».
@@ -1297,6 +1295,7 @@ void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
     DumpText("EVENT oCViewDocumentMap::UpdatePosition");
     Ivk_MapView_UpdatePosition(self, edx);
     g_mapView = self;   // запоминаем объект карты (даже если класс отдаётся как zCViewDialog)
+    g_mapUntilTick = GetTickCount() + 10000;   // активность карты: 10 секунд
     // (авто-арм дампа убран: дампы — только по INSERT)
 }
 #endif
