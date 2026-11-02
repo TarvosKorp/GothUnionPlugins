@@ -73,10 +73,10 @@
 #include <thread>
 
 // ── Переключатели экспериментальных возможностей ──
-// Переворот области карты на бэкбуфере (первичное зеркалирование карты).
-// 0 = отключить (если даёт артефакты на твоей машине).
+// Переворот области карты на бэкбуфере — ОТКЛЮЧЁН (0): даёт инверсию всего экрана
+// и дорогой CPU-переворот. Вместо него — перехват Surface.Blt (см. ниже).
 #ifndef ZM_MAP_REGION_FLIP
-#define ZM_MAP_REGION_FLIP 1
+#define ZM_MAP_REGION_FLIP 0
 #endif
 
 namespace GOTHIC_ENGINE {
@@ -417,6 +417,12 @@ bool g_inOurLock = false;   // защита от учёта собственны
 long g_surfLockCalls = 0;   // вызовы Lock бэкбуфера за кадр (программный рендер?)
 long g_surfLockBytes = 0;
 DWORD g_surfLockCaller = 0; // первый вызывающий Lock
+bool g_inOurBlt = false;    // защита от рекурсии в нашем Blt-хуке
+long g_dumpBltCalls = 0;    // всего Blt за кадр (телеметрия)
+long g_dumpBltCallsMap = 0; // Blt при активной карте
+int  g_dumpBltDst[4];       // первый прямоугольник назначения (x,y,w,h)
+DWORD g_dumpBltSrcW = 0, g_dumpBltSrcH = 0;  // размер источника первого Blt
+DWORD g_dumpBltCaller = 0;
 int g_mapDbg[6] = { 0, 0, 0, 0, 0, 0 };  // диагностика карты: 0=попыток,1=нет screen,2=нет g_mapView,3=closed,4=rect fail,5=нет rt
 
 inline char CurPhase() { return g_inMainWorld ? 'W' : (g_worldDepth > 0 ? 'w' : 'U'); }
@@ -509,6 +515,11 @@ void StartDump() {
     g_vbTlXFlat = 0;
     g_inOurLock = false;
     g_surfLockCalls = 0; g_surfLockBytes = 0; g_surfLockCaller = 0;
+    g_inOurBlt = false;
+    g_dumpBltCalls = 0; g_dumpBltCallsMap = 0;
+    g_dumpBltDst[0] = g_dumpBltDst[1] = g_dumpBltDst[2] = g_dumpBltDst[3] = 0;
+    g_dumpBltSrcW = g_dumpBltSrcH = 0;
+    g_dumpBltCaller = 0;
     memset(g_mapDbg, 0, sizeof(g_mapDbg));
     memset(g_agg, 0, sizeof(g_agg));
     memset(g_aggV, 0, sizeof(g_aggV));
@@ -555,6 +566,10 @@ void FinishDump() {
         g_vbXFlatCalls, g_vbXFlatVerts, g_vbTlXFlat, g_alphaSortDepth);
     out += SFmt("BACKBUF Lock: calls=%ld bytes=%ld firstCaller=0x%08lX\n",
         g_surfLockCalls, g_surfLockBytes, (unsigned long)g_surfLockCaller);
+    out += SFmt("BACKBUF Blt: calls=%ld mapCalls=%ld firstDst=(%d,%d,%d,%d) src=%lux%lu caller=0x%08lX\n",
+        g_dumpBltCalls, g_dumpBltCallsMap,
+        g_dumpBltDst[0], g_dumpBltDst[1], g_dumpBltDst[2], g_dumpBltDst[3],
+        (unsigned long)g_dumpBltSrcW, (unsigned long)g_dumpBltSrcH, (unsigned long)g_dumpBltCaller);
     out += SFmt("MAP debug: attempts=%d noscreen=%d nomap=%d closed=%d rectfail=%d nort=%d\n",
         g_mapDbg[0], g_mapDbg[1], g_mapDbg[2], g_mapDbg[3], g_mapDbg[4], g_mapDbg[5]);
     {
@@ -972,11 +987,41 @@ HRESULT STDMETHODCALLTYPE Hook_Dev_DrawIndexedPrimitiveStrided(IDirect3DDevice7*
     return g_oDIPS(self, pt, fvf, data, vcount, idx, icount, fl);
 }
 
-// Хуки поверхности (Lock/Unlock) — детект программного рендера в обход D3D
+// Хуки поверхности (Lock/Unlock/Blt) — детект программного рендера и путей UI/карты
 typedef HRESULT (STDMETHODCALLTYPE *PFN_SurfLock)(IDirectDrawSurface7*, LPRECT, LPDDSURFACEDESC2, DWORD, HANDLE);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_SurfUnlock)(IDirectDrawSurface7*, LPRECT);
+typedef HRESULT (STDMETHODCALLTYPE *PFN_SurfBlt)(IDirectDrawSurface7*, LPRECT, IDirectDrawSurface7*, LPRECT, DWORD, LPDDBLTFX);
 PFN_SurfLock g_oSurfLock = NULL;
 PFN_SurfUnlock g_oSurfUnlock = NULL;
+PFN_SurfBlt g_oSurfBlt = NULL;
+
+bool SurfSize(IDirectDrawSurface7* s, DWORD& w, DWORD& h) {
+    if (!s) return false;
+    DDSURFACEDESC2 d; ZeroMemory(&d, sizeof(d)); d.dwSize = sizeof(d);
+    if (FAILED(s->GetSurfaceDesc(&d))) return false;
+    w = d.dwWidth; h = d.dwHeight;
+    return true;
+}
+
+HRESULT STDMETHODCALLTYPE Hook_Surf_Blt(IDirectDrawSurface7* self, LPRECT dr, IDirectDrawSurface7* src, LPRECT sr, DWORD fl, LPDDBLTFX fx) {
+    if (!g_inOurBlt && src) {
+        bool mapOpen = (g_mapView != NULL);
+        if (g_dumpActive || mapOpen) {
+            g_dumpBltCalls++;
+            if (mapOpen) g_dumpBltCallsMap++;
+            if (g_dumpBltCaller == 0 && g_dumpActive) {
+                g_dumpBltCaller = (DWORD)(size_t)_ReturnAddress();
+                if (dr) { g_dumpBltDst[0] = dr->left; g_dumpBltDst[1] = dr->top; g_dumpBltDst[2] = dr->right - dr->left; g_dumpBltDst[3] = dr->bottom - dr->top; }
+                SurfSize(src, g_dumpBltSrcW, g_dumpBltSrcH);
+                if (g_dumpBltSrcW > 400 && g_dumpBltSrcH > 400)
+                    Log(SFmt("MAPBLT sample: dst=(%d,%d,%d,%d) src=%lux%lu caller=0x%08lX",
+                        g_dumpBltDst[0], g_dumpBltDst[1], g_dumpBltDst[2], g_dumpBltDst[3],
+                        (unsigned long)g_dumpBltSrcW, (unsigned long)g_dumpBltSrcH, (unsigned long)g_dumpBltCaller));
+            }
+        }
+    }
+    return g_oSurfBlt(self, dr, src, sr, fl, fx);
+}
 
 HRESULT STDMETHODCALLTYPE Hook_Surf_Lock(IDirectDrawSurface7* self, LPRECT rc, LPDDSURFACEDESC2 d, DWORD fl, HANDLE h) {
     if (!g_inOurLock && g_dumpActive && g_surfLockCaller == 0)
@@ -1029,13 +1074,14 @@ bool EnsureDeviceHooks() {
     ok = PatchSlot(vt, 31, &Hook_Dev_DrawPrimitiveVB,       g_oDPVB) && ok;
     ok = PatchSlot(vt, 32, &Hook_Dev_DrawIndexedPrimitiveVB, g_oDIPVB) && ok;
 
-    // Патч Lock/Unlock на бэкбуфере (для детекта программного рендера)
+    // Патч Lock/Unlock/Blt на бэкбуфере (для детекта программного рендера и путей UI/карты)
     {
         IDirectDrawSurface7* rt = AcquireTarget();
         if (rt) {
             void** svt = *(void***)rt;
             PatchSlot(svt, 3, &Hook_Surf_Lock, g_oSurfLock);
             PatchSlot(svt, 4, &Hook_Surf_Unlock, g_oSurfUnlock);
+            PatchSlot(svt, 5, &Hook_Surf_Blt, g_oSurfBlt);
             rt->Release();
         }
     }
