@@ -990,11 +990,25 @@ bool FindPtrInTree(zCView* v, zCView* wanted, int depth) {
 
 bool MapViewPixelRect(zCView* mv, int& x1, int& y1, int& x2, int& y2) {
     if (!mv || !screen) return false;
+    static bool loggedRaw = false;
+    if (!loggedRaw) {
+        loggedRaw = true;
+        Log(SFmt("MAP raw: vposx=%d vposy=%d vsizex=%d vsizey=%d isOpen=%d isClosed=%d owner=0x%08lX",
+            mv->vposx, mv->vposy, mv->vsizex, mv->vsizey,
+            mv->isOpen ? 1 : 0, mv->isClosed ? 1 : 0, (unsigned long)(size_t)mv->owner));
+    }
     long vx = mv->vposx, vy = mv->vposy, vw = mv->vsizex, vh = mv->vsizey;
     zCView* p = mv->owner;
     int guard = 0;
     while (p && p != screen && guard++ < 32) { vx += p->vposx; vy += p->vposy; p = p->owner; }
-    if (vw <= 0 || vh <= 0) return false;
+    int W = (int)g_vp.dwWidth, H = (int)g_vp.dwHeight;
+    if (!W || !H) { W = 1920; H = 1080; }
+    if (vw <= 0 || vh <= 0) {
+        // Вырожденный регион — fallback на весь экран (промежуточный результат)
+        x1 = 0; y1 = 0; x2 = W; y2 = H;
+        Log(SFmt("MAP region fallback FULLSCREEN (vw=%ld vh=%ld)", vw, vh));
+        return true;
+    }
     x1 = screen->nax((int)vx);
     y1 = screen->nay((int)vy);
     x2 = screen->nax((int)(vx + vw));
