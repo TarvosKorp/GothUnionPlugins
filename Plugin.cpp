@@ -1,12 +1,18 @@
 // ═══════════════════════════════════════════════════════════════════
-// zMirrorTest V1.5.2
+// zMirrorTest V1.5.3
 // Плагин зеркального режима для Gothic 2 NotR (Union SDK, G2A).
 //
 // УПРАВЛЕНИЕ:
 //   HOME     — режим зеркала: OFF ↔ GPU (GPU-бэкенд подбирается автоматически:
 //              ванилла = FLIP, внешний ddraw-враппер (GD3D11/dgVoodoo) = PROJ).
 //   END      — телеметрия ON/OFF (лог zMirror_log.txt + дамп zMirror_dump.txt).
-//   ]        — зеркалирование сущностей (все NPC) ON/OFF (любой режим).
+//   ]        — цикл «уровней внедрения» отзеркаливания сущностей (NPC):
+//              OFF → MATRIX_RIGHT → MATRIX_FULL → SKELETON_LOCAL → OFF.
+//              MATRIX_RIGHT   — отрицание right-вектора мировой матрицы VOB (как раньше).
+//              MATRIX_FULL    — то же + отрицание позиции по X (создаёт «фантома»
+//                                в зеркальной точке локации; чисто тестовый уровень).
+//              SKELETON_LOCAL — отрицание локальных матриц костей скелета (trafo)
+//                                у всех узлов zCModel (проверка идеи «надстройки над Bip01»).
 //   INSERT   — (телеметрия включена) дамп ОДНОГО кадра.
 //   PAGEUP   — метка сценария в логе.
 //
@@ -51,6 +57,8 @@
 //            (бэкенд авто, FLIP не требует инверсии полигонов).
 //   V1.5.2 — удалён PgDn и все альтернативные режимы детекта карты; детект
 //            зафиксирован на LENIENT (единственный стабильный).
+//   V1.5.3 — `]`-цикл уровней внедрения отзеркаливания сущностей:
+//            MATRIX_RIGHT / MATRIX_FULL (фантом) / SKELETON_LOCAL.
 // ═══════════════════════════════════════════════════════════════════
 
 #include "resource.h"
@@ -113,8 +121,12 @@ enum { MODE_OFF = 0, MODE_CPU = 1, MODE_GPU = 2, MODE_COUNT = 3 };
 const char* const kModeNames[MODE_COUNT] = { "OFF", "CPU", "GPU" };
 
 int  g_mode = MODE_OFF;
-bool g_entMirror = false;      // зеркалирование сущностей (все NPC)
 bool g_teleOn = false;         // телеметрия
+
+// ───────────────────────── Уровни внедрения отзеркаливания сущностей ─────────────────────────
+enum { ENTM_OFF = 0, ENTM_MATRIX_RIGHT = 1, ENTM_MATRIX_FULL = 2, ENTM_SKELETON_LOCAL = 3, ENTM_COUNT = 4 };
+const char* const kEntModeNames[ENTM_COUNT] = { "OFF", "MATRIX_RIGHT", "MATRIX_FULL", "SKELETON_LOCAL" };
+int g_entMirror = ENTM_OFF;    // текущий уровень
 int  g_failStreak = 0;
 int  g_frame = 0;
 bool g_inMainWorld = false;
@@ -245,7 +257,7 @@ void PerfFrame() {
         double avg = g_perf.frameSum / g_perf.frames;
         double am = g_perf.mirrorN ? g_perf.mirrorSum / g_perf.mirrorN : 0.0;
         Log(SFmt("PERF mode=%s backend=%s ent=%d frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms psMirrored=%d vbTlMirrored=%d gf(state=%d ok=%ld)",
-            kModeNames[g_mode], g_mode == MODE_GPU ? (GpuUsesFlip() ? "FLIP" : "PROJ") : "-", g_entMirror ? 1 : 0, g_perf.frames, avg, 1000.0 / avg, am,
+            kModeNames[g_mode], g_mode == MODE_GPU ? (GpuUsesFlip() ? "FLIP" : "PROJ") : "-", g_entMirror, g_perf.frames, avg, 1000.0 / avg, am,
             g_psMirrored, g_vbTlMirrored, g_gf.state, g_gf.framesOk));
         g_perf.frameSum = 0; g_perf.frames = 0; g_perf.mirrorSum = 0; g_perf.mirrorN = 0;
         g_psMirrored = 0; g_vbTlMirrored = 0;
@@ -413,7 +425,7 @@ void FinishDump() {
 
     std::string out;
     out += SFmt("\n===== DUMP #%d  mode=%s ent=%d frame=%d entries=%d dropped=%d =====\n",
-        g_dumpNo, kModeNames[g_mode], g_entMirror ? 1 : 0, g_frame, (int)g_dump.size(), g_dumpDropped);
+        g_dumpNo, kModeNames[g_mode], g_entMirror, g_frame, (int)g_dump.size(), g_dumpDropped);
     out += "-----\n";
     out += SFmt("ENGINE this frame: DrawPolySimple verts=%d x=[%.0f..%.0f] | DrawVertexBuffer-TL verts=%d x=[%.0f..%.0f]\n",
         g_dumpPS, g_psMinX, g_psMaxX, g_dumpVBTL, g_vbTlMinX, g_vbTlMaxX);
@@ -1200,29 +1212,65 @@ bool IsNpcVob(zCVob* v) {
     return r;
 }
 
+// ───────────────────────── Уровни внедрения: скелетный (SKELETON_LOCAL) ─────────────────────────
+// Отрицаем первый столбец (X-компоненты) локальных матриц trafo всех узлов zCModel.
+// zCModelNodeInst::trafo — offset 0x0C; zCModel::nodeList — zCArray<zCModelNodeInst*> offset 0x70.
+void MirrorSkeletonLocal(zCModel* model) {
+    if (!model) return;
+    zCArray<zCModelNodeInst*>* arr = (zCArray<zCModelNodeInst*>*)((char*)model + 0x70);
+    if (!arr) return;
+    int n = arr->GetNumInList();
+    if (n <= 0 || n > 512) return;
+    zCModelNodeInst** nodes = arr->GetArray();
+    if (!nodes) return;
+    for (int i = 0; i < n; i++) {
+        zCModelNodeInst* ni = nodes[i];
+        if (!ni) continue;
+        zMAT4* t = (zMAT4*)((char*)ni + 0x0C);
+        t->v[0][0] = -t->v[0][0];
+        t->v[1][0] = -t->v[1][0];
+        t->v[2][0] = -t->v[2][0];
+        t->v[3][0] = -t->v[3][0];
+    }
+}
+
 // zCVob::Render(zTRenderContext&)
 int __fastcall Hook_Vob_Render(zCVob* self, zTRenderContext& ctx);
 CInvoke<int(__fastcall*)(zCVob*, zTRenderContext&)> Ivk_Vob_Render(0x006015D0, &Hook_Vob_Render);
 int __fastcall Hook_Vob_Render(zCVob* self, zTRenderContext& ctx) {
-    bool entApply = g_entMirror && IsNpcVob(self);
-    if (!entApply) return Ivk_Vob_Render(self, ctx);
-
-    float orig[16];
-    memcpy(orig, &self->trafoObjToWorld, sizeof(orig));
-    float m[16];
-    memcpy(m, orig, sizeof(m));
-    m[0] = -m[0];
-    m[4] = -m[4];
-    m[8] = -m[8];
-    memcpy(&self->trafoObjToWorld, m, sizeof(m));
+    int level = g_entMirror;
+    if (!level || !IsNpcVob(self)) return Ivk_Vob_Render(self, ctx);
 
     bool flip = g_devHooked || EnsureDeviceHooks();
+    bool mirrored = false;
+
+    if (level == ENTM_MATRIX_RIGHT || level == ENTM_MATRIX_FULL) {
+        float orig[16];
+        memcpy(orig, &self->trafoObjToWorld, sizeof(orig));
+        float m[16];
+        memcpy(m, orig, sizeof(m));
+        m[0] = -m[0];
+        m[4] = -m[4];
+        m[8] = -m[8];
+        if (level == ENTM_MATRIX_FULL) m[12] = -m[12];   // фантом: отрицаем и позицию по X
+        memcpy(&self->trafoObjToWorld, m, sizeof(m));
+        if (flip) { g_entCullFlip = true; SyncCull(); }
+        int r = Ivk_Vob_Render(self, ctx);
+        if (flip) { g_entCullFlip = false; SyncCull(); }
+        memcpy(&self->trafoObjToWorld, orig, sizeof(orig));
+        return r;
+    }
+
+    // ENTM_SKELETON_LOCAL
+    zCModel* model = ((oCNpc*)self)->GetModel();
+    if (model) {
+        MirrorSkeletonLocal(model);
+        mirrored = true;
+    }
     if (flip) { g_entCullFlip = true; SyncCull(); }
-
     int r = Ivk_Vob_Render(self, ctx);
-
     if (flip) { g_entCullFlip = false; SyncCull(); }
-    memcpy(&self->trafoObjToWorld, orig, sizeof(orig));
+    if (mirrored) MirrorSkeletonLocal(model);
     return r;
 }
 
@@ -1289,8 +1337,8 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
 // ───────────────────────── События Union ─────────────────────────
 void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.5.2 loaded\n", false);
-    WriteText("zMirror_dump.txt", "zMirrorTest V1.5.2 dump file\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.5.3 loaded\n", false);
+    WriteText("zMirror_dump.txt", "zMirrorTest V1.5.3 dump file\n", false);
 }
 
 void Game_Init() { }
@@ -1333,13 +1381,13 @@ void Game_Loop() {
         Msg(g_teleOn ? "TELEMETRY: ON" : "TELEMETRY: OFF");
     }
 
-    // ] — зеркалирование сущностей (все NPC), в любом режиме
+    // ] — цикл уровней внедрения отзеркаливания сущностей (NPC)
     static bool wasRB = false;
     if (KeyEdge(VK_OEM_6, wasRB)) {
-        g_entMirror = !g_entMirror;
-        if (g_entMirror) EnsureDeviceHooks();
-        Log(std::string("entMirror=") + (g_entMirror ? "ON (ALL NPCs)" : "OFF"));
-        Msg(g_entMirror ? "ENT-MIRROR: ALL NPCs" : "ENT-MIRROR: OFF");
+        g_entMirror = (g_entMirror + 1) % ENTM_COUNT;
+        if (g_entMirror != ENTM_OFF) EnsureDeviceHooks();
+        Log(std::string("entMirrorLevel=") + kEntModeNames[g_entMirror]);
+        Msg(SFmt("ENT-MIRROR: %s", kEntModeNames[g_entMirror]));
     }
 
     // INSERT — дамп одного кадра (только при включённой телеметрии)
@@ -1354,7 +1402,7 @@ void Game_Loop() {
     static bool wasPgUp = false;
     if (KeyEdge(VK_PRIOR, wasPgUp)) {
         g_mark++;
-        Log(SFmt("=== MARK %d === mode=%s ent=%d modal=%s pause=%d frame=%d", g_mark, kModeNames[g_mode], g_entMirror ? 1 : 0,
+        Log(SFmt("=== MARK %d === mode=%s entmode=%d modal=%s pause=%d frame=%d", g_mark, kModeNames[g_mode], g_entMirror,
             ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, g_frame));
         Msg(SFmt("MARK %d", g_mark));
     }
