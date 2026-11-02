@@ -7,6 +7,8 @@
 //   END    — телеметрия ON/OFF (лог zMirror_log.txt + дамп zMirror_dump.txt).
 //   ]      — зеркалирование сущностей (все NPC) ON/OFF. Работает в ЛЮБОМ режиме,
 //            в том числе при выключенном зеркале (OFF).
+//   [      — принудительная инверсия полигонов/culling ON/OFF (для GD3D11:
+//            там все сетки вывернуты, тумблер возвращает намотку).
 //   INSERT — (при включённой телеметрии) дамп ОДНОГО кадра вызовов D3D7.
 //   PAGEUP — метка сценария: пишет MARK в лог.
 //
@@ -287,11 +289,13 @@ bool g_haveEngProj = false;
 D3DVIEWPORT7 g_vp;                    // последний вьюпорт
 bool g_haveVp = false;
 
+int  g_cullNoneWorld = 0;            // F9: 0=авто-инверсия cull (ванилла), 1=CULL=NONE в мире (для GD3D11)
 bool g_devWorldMirror = false;        // GPU: идёт рендер главного мира в зеркале
 bool g_worldCullFlip = false;         // паритет отражений на уровне мира
 bool g_entCullFlip = false;           // паритет отражения сущности (матрица NPC)
+bool g_polyFlip = false;              // «[»: принудительная инверсия culling (для GD3D11)
 
-inline bool CullFlipNow() { return g_worldCullFlip != g_entCullFlip; }
+inline bool CullFlipNow() { return (g_worldCullFlip != g_entCullFlip) != g_polyFlip; }
 
 inline DWORD InvertCull(DWORD v) {
     if (v == D3DCULL_CW) return D3DCULL_CCW;
@@ -409,6 +413,10 @@ long g_psQmCalls = 0, g_psQmVerts = 0;     // DrawPolySimple внутри QuadMa
 int g_alphaSortDepth = 0;    // глубина вложенности RenderAlphaSortList
 long g_vbXFlatCalls = 0, g_vbXFlatVerts = 0;   // XD3D_DrawVertexBufferFlat
 long g_vbTlXFlat = 0;                            // TL-вершины внутри XD3D_DrawVertexBufferFlat
+bool g_inOurLock = false;   // защита от учёта собственных Lock (MirrorRegion32)
+long g_surfLockCalls = 0;   // вызовы Lock бэкбуфера за кадр (программный рендер?)
+long g_surfLockBytes = 0;
+DWORD g_surfLockCaller = 0; // первый вызывающий Lock
 int g_mapDbg[6] = { 0, 0, 0, 0, 0, 0 };  // диагностика карты: 0=попыток,1=нет screen,2=нет g_mapView,3=closed,4=rect fail,5=нет rt
 
 inline char CurPhase() { return g_inMainWorld ? 'W' : (g_worldDepth > 0 ? 'w' : 'U'); }
@@ -499,6 +507,8 @@ void StartDump() {
     g_alphaSortDepth = 0;
     g_vbXFlatCalls = 0; g_vbXFlatVerts = 0;
     g_vbTlXFlat = 0;
+    g_inOurLock = false;
+    g_surfLockCalls = 0; g_surfLockBytes = 0; g_surfLockCaller = 0;
     memset(g_mapDbg, 0, sizeof(g_mapDbg));
     memset(g_agg, 0, sizeof(g_agg));
     memset(g_aggV, 0, sizeof(g_aggV));
@@ -543,6 +553,8 @@ void FinishDump() {
         g_vbQmCalls, g_vbQmVerts, g_psQmCalls, g_psQmVerts);
     out += SFmt("XFLAT this frame: calls=%ld verts=%ld tlVerts=%ld | alphaSortDepth=%d\n",
         g_vbXFlatCalls, g_vbXFlatVerts, g_vbTlXFlat, g_alphaSortDepth);
+    out += SFmt("BACKBUF Lock: calls=%ld bytes=%ld firstCaller=0x%08lX\n",
+        g_surfLockCalls, g_surfLockBytes, (unsigned long)g_surfLockCaller);
     out += SFmt("MAP debug: attempts=%d noscreen=%d nomap=%d closed=%d rectfail=%d nort=%d\n",
         g_mapDbg[0], g_mapDbg[1], g_mapDbg[2], g_mapDbg[3], g_mapDbg[4], g_mapDbg[5]);
     {
@@ -775,7 +787,9 @@ int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* 
 void SyncCull() {
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
     if (!dev || !g_oSetRS) return;
-    g_oSetRS(dev, D3DRENDERSTATE_CULLMODE, CullFlipNow() ? InvertCull(g_engCull) : g_engCull);
+    DWORD v = CullFlipNow() ? InvertCull(g_engCull) : g_engCull;
+    if (g_cullNoneWorld && g_worldCullFlip) v = D3DCULL_NONE;
+    g_oSetRS(dev, D3DRENDERSTATE_CULLMODE, v);
 }
 
 void SyncProj() {
@@ -829,9 +843,11 @@ HRESULT STDMETHODCALLTYPE Hook_Dev_SetTransform(IDirect3DDevice7* self, D3DTRANS
 HRESULT STDMETHODCALLTYPE Hook_Dev_SetRenderState(IDirect3DDevice7* self, D3DRENDERSTATETYPE t, DWORD v) {
     if (t == D3DRENDERSTATE_CULLMODE) {
         g_engCull = v;
+        DWORD out = CullFlipNow() ? InvertCull(v) : v;
+        if (g_cullNoneWorld && g_worldCullFlip) out = D3DCULL_NONE;
         if (g_dumpActive) DumpText(SFmt("SetRenderState CULLMODE engine=%lu -> device=%lu%s caller=0x%08lX", (unsigned long)v,
-            (unsigned long)(CullFlipNow() ? InvertCull(v) : v), CullFlipNow() ? " (flipped)" : "", (unsigned long)(size_t)_ReturnAddress()));
-        if (CullFlipNow()) v = InvertCull(v);
+            (unsigned long)out, out != v ? " (changed)" : "", (unsigned long)(size_t)_ReturnAddress()));
+        v = out;
     }
     return g_oSetRS(self, t, v);
 }
@@ -956,6 +972,25 @@ HRESULT STDMETHODCALLTYPE Hook_Dev_DrawIndexedPrimitiveStrided(IDirect3DDevice7*
     return g_oDIPS(self, pt, fvf, data, vcount, idx, icount, fl);
 }
 
+// Хуки поверхности (Lock/Unlock) — детект программного рендера в обход D3D
+typedef HRESULT (STDMETHODCALLTYPE *PFN_SurfLock)(IDirectDrawSurface7*, LPRECT, LPDDSURFACEDESC2, DWORD, HANDLE);
+typedef HRESULT (STDMETHODCALLTYPE *PFN_SurfUnlock)(IDirectDrawSurface7*, LPRECT);
+PFN_SurfLock g_oSurfLock = NULL;
+PFN_SurfUnlock g_oSurfUnlock = NULL;
+
+HRESULT STDMETHODCALLTYPE Hook_Surf_Lock(IDirectDrawSurface7* self, LPRECT rc, LPDDSURFACEDESC2 d, DWORD fl, HANDLE h) {
+    if (!g_inOurLock && g_dumpActive && g_surfLockCaller == 0)
+        g_surfLockCaller = (DWORD)(size_t)_ReturnAddress();
+    HRESULT hr = g_oSurfLock(self, rc, d, fl, h);
+    if (!g_inOurLock && g_dumpActive && d)
+        g_surfLockCalls++, g_surfLockBytes += (d->dwHeight * d->lPitch);
+    return hr;
+}
+
+HRESULT STDMETHODCALLTYPE Hook_Surf_Unlock(IDirectDrawSurface7* self, LPRECT rc) {
+    return g_oSurfUnlock(self, rc);
+}
+
 template <class F>
 bool PatchSlot(void** vt, int idx, F hook, F& orig) {
     DWORD oldp = 0;
@@ -993,6 +1028,17 @@ bool EnsureDeviceHooks() {
     ok = PatchSlot(vt, 30, &Hook_Dev_DrawIndexedPrimitiveStrided, g_oDIPS) && ok;
     ok = PatchSlot(vt, 31, &Hook_Dev_DrawPrimitiveVB,       g_oDPVB) && ok;
     ok = PatchSlot(vt, 32, &Hook_Dev_DrawIndexedPrimitiveVB, g_oDIPVB) && ok;
+
+    // Патч Lock/Unlock на бэкбуфере (для детекта программного рендера)
+    {
+        IDirectDrawSurface7* rt = AcquireTarget();
+        if (rt) {
+            void** svt = *(void***)rt;
+            PatchSlot(svt, 3, &Hook_Surf_Lock, g_oSurfLock);
+            PatchSlot(svt, 4, &Hook_Surf_Unlock, g_oSurfUnlock);
+            rt->Release();
+        }
+    }
 
     g_devHooked = ok;
     Log(ok ? SFmt("device hooks installed (cull=%lu, viewport %lux%lu, slots DP25/DIP26/DPS29/DIPS30/DPVB31/DIPVB32)",
@@ -1068,7 +1114,10 @@ bool MapViewPixelRect(zCView* mv, int& x1, int& y1, int& x2, int& y2) {
 
 void MirrorRegion32(IDirectDrawSurface7* s, int x1, int y1, int x2, int y2) {
     DDSURFACEDESC2 d; ZeroMemory(&d, sizeof(d)); d.dwSize = sizeof(d);
-    if (FAILED(s->Lock(NULL, &d, DDLOCK_WAIT | DDLOCK_SURFACEMEMORYPTR, NULL))) return;
+    g_inOurLock = true;
+    HRESULT lr = s->Lock(NULL, &d, DDLOCK_WAIT | DDLOCK_SURFACEMEMORYPTR, NULL);
+    g_inOurLock = false;
+    if (FAILED(lr)) return;
     if (d.lpSurface && d.ddpfPixelFormat.dwRGBBitCount == 32) {
         int W = (int)d.dwWidth, H = (int)d.dwHeight;
         if (x2 > W) x2 = W;
@@ -1505,6 +1554,14 @@ void Game_Loop() {
         Msg(g_entMirror ? "ENT-MIRROR: ALL NPCs" : "ENT-MIRROR: OFF");
     }
 
+    // [ — принудительная инверсия полигонов/culling (для GD3D11 и экспериментов)
+    static bool wasPolyFlip = false;
+    if (KeyEdge(VK_OEM_4, wasPolyFlip)) {
+        g_polyFlip = !g_polyFlip;
+        Log(std::string("polyFlip=") + (g_polyFlip ? "ON" : "OFF"));
+        Msg(g_polyFlip ? "POLY-FLIP: ON" : "POLY-FLIP: OFF");
+    }
+
     // INSERT — дамп одного кадра D3D7 (только при включённой телеметрии)
     static bool wasIns = false;
     if (KeyEdge(VK_INSERT, wasIns)) {
@@ -1517,9 +1574,17 @@ void Game_Loop() {
     static bool wasPgUp = false;
     if (KeyEdge(VK_PRIOR, wasPgUp)) {
         g_mark++;
-        Log(SFmt("=== MARK %d === mode=%s ent=%d modal=%s pause=%d frame=%d", g_mark, kModeNames[g_mode], g_entMirror ? 1 : 0,
-            ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, g_frame));
+        Log(SFmt("=== MARK %d === mode=%s ent=%d polyFlip=%d modal=%s pause=%d frame=%d", g_mark, kModeNames[g_mode], g_entMirror ? 1 : 0,
+            g_polyFlip ? 1 : 0, ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, g_frame));
         Msg(SFmt("MARK %d", g_mark));
+    }
+
+    // F9 — переключение cull-режима для GD3D11 (0/1)
+    static bool wasF9 = false;
+    if (KeyEdge(VK_F9, wasF9)) {
+        g_cullNoneWorld = !g_cullNoneWorld;
+        Log(SFmt("cullNoneWorld=%d mode=%s", g_cullNoneWorld, kModeNames[g_mode]));
+        Msg(g_cullNoneWorld ? "CULL=NONE IN WORLD: ON (GD3D11)" : "CULL=NONE IN WORLD: OFF (vanilla auto)");
     }
 
     // Страховка: дамп, который не успел закончиться (например, открыто меню)
