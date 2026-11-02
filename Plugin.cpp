@@ -398,6 +398,7 @@ std::map<DWORD, int> g_dumpCallers;  // адрес вызывающего -> с�
 std::map<void*, DWORD> g_vbFvf;
 
 zCView* g_mapView = NULL;   // последний открытый oCViewDocumentMap (ловится в UpdatePosition)
+int g_flushSimpleAlphaDepth = 0;   // глубина вложенности zCRenderManager::FlushSimpleAlphaPolys
 
 inline char CurPhase() { return g_inMainWorld ? 'W' : (g_worldDepth > 0 ? 'w' : 'U'); }
 
@@ -557,6 +558,16 @@ void FinishDump() {
 //     координатах (pos.x/pos.y), z отдельно.
 //   DrawVertexBuffer(zCVertexBuffer*, int, int, unsigned short*, unsigned long)
 //     — основной путь отрисовки; TL-вершины доступны через vb->array.XYZRHWPtr.
+void __fastcall Hook_Rnd_FlushSimpleAlphaPolys(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_Rnd_FlushSimpleAlphaPolys(0x005D7900, &Hook_Rnd_FlushSimpleAlphaPolys);
+void __fastcall Hook_Rnd_FlushSimpleAlphaPolys(void* self, void* edx) {
+    g_flushSimpleAlphaDepth++;
+    if (g_dumpActive) DumpText("FlushSimpleAlphaPolys BEGIN");
+    Ivk_Rnd_FlushSimpleAlphaPolys(self, edx);
+    g_flushSimpleAlphaDepth--;
+    if (g_dumpActive) DumpText("FlushSimpleAlphaPolys END");
+}
+
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
 CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(0x0064AC30, &Hook_Rnd_DrawPolySimple);
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
@@ -564,16 +575,21 @@ void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, z
         g_dumpPS += count;
         if (g_dumpCallers.size() < 128) g_dumpCallers[(DWORD)(size_t)_ReturnAddress()]++;
     }
-    if (g_devWorldMirror && g_haveVp && verts && count > 0 && count <= 200000) {
-        static bool loggedSample = false;
+    bool mirrorBranch = (g_devWorldMirror || g_flushSimpleAlphaDepth > 0) && g_haveVp && verts && count > 0 && count <= 200000;
+    {
+        static bool loggedPS = false;
+        if (!loggedPS && verts && count > 0) {
+            loggedPS = true;
+            Log(SFmt("PS sample: x0=%.1f y0=%.1f z=%.1f uv=(%.2f,%.2f) count=%d ctx ui=%d wd=%d flush=%d mir=%d",
+                verts[0].pos.n[0], verts[0].pos.n[1], verts[0].z,
+                verts[0].uv.n[0], verts[0].uv.n[1], count,
+                g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth, mirrorBranch ? 1 : 0));
+        }
+    }
+    if (mirrorBranch) {
         for (int i = 0; i < count && i < 64; i++) {
             if (verts[i].pos.n[0] < g_psMinX) g_psMinX = verts[i].pos.n[0];
             if (verts[i].pos.n[0] > g_psMaxX) g_psMaxX = verts[i].pos.n[0];
-        }
-        if (!loggedSample) {
-            loggedSample = true;
-            Log(SFmt("PS sample: x0=%.1f y0=%.1f z=%.1f uv=(%.2f,%.2f) count=%d (mirror branch)", verts[0].pos.n[0],
-                verts[0].pos.n[1], verts[0].z, verts[0].uv.n[0], verts[0].uv.n[1], count));
         }
         static std::vector<zTRndSimpleVertex> copy;
         if (copy.size() < (size_t)count) copy.resize(count);
@@ -603,7 +619,9 @@ int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* 
             static bool loggedSample = false;
             if (!loggedSample && count > 0) {
                 loggedSample = true;
-                Log(SFmt("VB-TL sample: x0=%.1f y0=%.1f z=%.1f w=%.1f count=%d", p[0].n[0], p[0].n[1], p[0].n[2], p[0].n[3], count));
+                Log(SFmt("VB-TL sample: x0=%.1f y0=%.1f z=%.1f w=%.1f count=%d ctx ui=%d wd=%d flush=%d",
+                    p[0].n[0], p[0].n[1], p[0].n[2], p[0].n[3], count,
+                    g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth));
             }
             for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];
             mirrored = true;
