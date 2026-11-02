@@ -403,6 +403,7 @@ std::map<void*, DWORD> g_vbFvf;
 
 zCView* g_mapView = NULL;   // последний открытый oCViewDocumentMap (ловится в UpdatePosition)
 unsigned long g_mapUntilTick = 0;   // флип карты активен до этого тика (анти-«залипание»)
+bool g_mapSessionActive = false;   // сессия карты (между Show BEGIN и END)
 int g_flushSimpleAlphaDepth = 0;   // глубина вложенности zCRenderManager::FlushSimpleAlphaPolys
 int g_pfxDepth = 0;          // глубина вложенности zCParticleFX::Render
 long g_vbPfxCalls = 0, g_vbPfxVerts = 0;   // DrawVertexBuffer внутри PFX
@@ -699,28 +700,6 @@ int __fastcall Hook_QuadMark_Render(zCQuadMark* self, void* edx, zTRenderContext
     int r = Ivk_QuadMark_Render(self, edx, ctx);
     g_qmDepth--;
     return r;
-}
-
-// zCViewDraw::BlitTexture — текстурированные квады UI (страницы документов и карты).
-// Во время сессии карты зеркалим UV по горизонтали (u -> 1-u): дёшево, не трогает
-// другие интерфейсы и не требует переворота кадра.
-void __fastcall Hook_ViewDraw_BlitTexture(void* self, void* edx);
-CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewDraw_BlitTexture(0x00690490, &Hook_ViewDraw_BlitTexture);
-void __fastcall Hook_ViewDraw_BlitTexture(void* self, void* edx) {
-    if (g_mapSessionActive && !g_devWorldMirror) {
-        // zCViewDraw: TexturePosition[2] (zVEC2) по смещению 0x6C
-        zVEC2* tp = (zVEC2*)((char*)self + 0x6C);
-        tp[0].n[0] = 1.0f - tp[0].n[0];
-        tp[1].n[0] = 1.0f - tp[1].n[0];
-        static bool loggedBlit = false;
-        if (!loggedBlit) {
-            loggedBlit = true;
-            Log(SFmt("BlitTexture mirrored: self=0x%08lX u0=%.3f u1=%.3f ctx ui=%d wd=%d",
-                (unsigned long)(size_t)self, tp[0].n[0], tp[1].n[0],
-                g_uiPhase ? 1 : 0, g_worldDepth));
-        }
-    }
-    Ivk_ViewDraw_BlitTexture(self, edx);
 }
 
 // zCViewDraw::BlitTexture — текстурированные квады UI (страницы документов и карты).
