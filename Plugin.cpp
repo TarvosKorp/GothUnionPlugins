@@ -1395,6 +1395,17 @@ void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
     Ivk_MapView_UpdatePosition(self, edx);
     g_mapView = self;   // запоминаем объект карты (даже если класс отдаётся как zCViewDialog)
     g_mapUntilTick = GetTickCount() + 10000;   // активность карты: 10 секунд
+    // Калибровка: одноразовый дамп первых 64 DWORD'ов объекта карты
+    {
+        static bool dumpedRaw = false;
+        if (!dumpedRaw) {
+            dumpedRaw = true;
+            DWORD* p = (DWORD*)self;
+            std::string s = "MAP RAWHEX:";
+            for (int i = 0; i < 64; i++) s += SFmt(" %08lX", (unsigned long)p[i]);
+            Log(s);
+        }
+    }
     // (авто-арм дампа убран: дампы — только по INSERT)
 }
 #endif
