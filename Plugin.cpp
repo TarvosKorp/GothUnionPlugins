@@ -406,6 +406,9 @@ long g_psPfxCalls = 0, g_psPfxVerts = 0;   // DrawPolySimple внутри PFX
 int g_qmDepth = 0;           // глубина вложенности zCQuadMark::Render
 long g_vbQmCalls = 0, g_vbQmVerts = 0;     // DrawVertexBuffer внутри QuadMark
 long g_psQmCalls = 0, g_psQmVerts = 0;     // DrawPolySimple внутри QuadMark
+int g_alphaSortDepth = 0;    // глубина вложенности RenderAlphaSortList
+long g_vbXFlatCalls = 0, g_vbXFlatVerts = 0;   // XD3D_DrawVertexBufferFlat
+long g_vbTlXFlat = 0;                            // TL-вершины внутри XD3D_DrawVertexBufferFlat
 int g_mapDbg[6] = { 0, 0, 0, 0, 0, 0 };  // диагностика карты: 0=попыток,1=нет screen,2=нет g_mapView,3=closed,4=rect fail,5=нет rt
 
 inline char CurPhase() { return g_inMainWorld ? 'W' : (g_worldDepth > 0 ? 'w' : 'U'); }
@@ -493,6 +496,9 @@ void StartDump() {
     g_qmDepth = 0;
     g_vbQmCalls = 0; g_vbQmVerts = 0;
     g_psQmCalls = 0; g_psQmVerts = 0;
+    g_alphaSortDepth = 0;
+    g_vbXFlatCalls = 0; g_vbXFlatVerts = 0;
+    g_vbTlXFlat = 0;
     memset(g_mapDbg, 0, sizeof(g_mapDbg));
     memset(g_agg, 0, sizeof(g_agg));
     memset(g_aggV, 0, sizeof(g_aggV));
@@ -535,6 +541,8 @@ void FinishDump() {
         g_vbPfxCalls, g_vbPfxVerts, g_psPfxCalls, g_psPfxVerts);
     out += SFmt("QUADMARK this frame: DrawVertexBuffer calls=%ld verts=%ld | DrawPolySimple calls=%ld verts=%ld\n",
         g_vbQmCalls, g_vbQmVerts, g_psQmCalls, g_psQmVerts);
+    out += SFmt("XFLAT this frame: calls=%ld verts=%ld tlVerts=%ld | alphaSortDepth=%d\n",
+        g_vbXFlatCalls, g_vbXFlatVerts, g_vbTlXFlat, g_alphaSortDepth);
     out += SFmt("MAP debug: attempts=%d noscreen=%d nomap=%d closed=%d rectfail=%d nort=%d\n",
         g_mapDbg[0], g_mapDbg[1], g_mapDbg[2], g_mapDbg[3], g_mapDbg[4], g_mapDbg[5]);
     {
@@ -618,7 +626,7 @@ void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, z
                 (g_devWorldMirror || g_flushSimpleAlphaDepth > 0) ? 1 : 0));
         }
     }
-    bool mirrorBranch = (g_devWorldMirror || g_flushSimpleAlphaDepth > 0) && g_haveVp && verts && count > 0 && count <= 200000;
+    bool mirrorBranch = (g_devWorldMirror || g_flushSimpleAlphaDepth > 0 || g_alphaSortDepth > 0) && g_haveVp && verts && count > 0 && count <= 200000;
     {
         static bool loggedPS = false;
         if (!loggedPS && verts && count > 0) {
@@ -663,6 +671,48 @@ int __fastcall Hook_QuadMark_Render(zCQuadMark* self, void* edx, zTRenderContext
     g_qmDepth++;
     int r = Ivk_QuadMark_Render(self, edx, ctx);
     g_qmDepth--;
+    return r;
+}
+
+// RenderAlphaSortList — граница альфа-сортировки (здесь часто рисуются прозрачные элементы)
+int __fastcall Hook_Rnd_RenderAlphaSortList(void* self, void* edx);
+CInvoke<int(__fastcall*)(void*, void*)> Ivk_Rnd_RenderAlphaSortList(0x00650A60, &Hook_Rnd_RenderAlphaSortList);
+int __fastcall Hook_Rnd_RenderAlphaSortList(void* self, void* edx) {
+    g_alphaSortDepth++;
+    int r = Ivk_Rnd_RenderAlphaSortList(self, edx);
+    g_alphaSortDepth--;
+    return r;
+}
+
+// XD3D_DrawVertexBufferFlat/Wire — внутренние помощники zCRnd_D3D (непосредственно
+// перед отправкой в D3D). Если TL-вершины уходят здесь — зеркалим in-place.
+int __fastcall Hook_Rnd_XDrawVertexBufferFlat(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl);
+CInvoke<int(__fastcall*)(void*, void*, zCVertexBuffer*, int, int, unsigned short*, unsigned long)> Ivk_Rnd_XDrawVertexBufferFlat(0x006518D0, &Hook_Rnd_XDrawVertexBufferFlat);
+int __fastcall Hook_Rnd_XDrawVertexBufferFlat(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl) {
+    bool mirrored = false;
+    g_vbXFlatCalls++; g_vbXFlatVerts += count;
+    if (g_devWorldMirror && g_haveVp && vb && count > 0 && vb->array.XYZRHWPtr) {
+        if (start >= 0 && start + count <= (int)vb->numVertex) {
+            float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
+            zVEC4* p = vb->array.XYZRHWPtr + start;
+            static bool loggedFlat = false;
+            if (!loggedFlat) {
+                loggedFlat = true;
+                Log(SFmt("XFLAT-TL: count=%d x0=%.1f y0=%.1f z=%.1f w=%.1f ctx ui=%d wd=%d flush=%d as=%d",
+                    count, p[0].n[0], p[0].n[1], p[0].n[2], p[0].n[3],
+                    g_uiPhase ? 1 : 0, g_worldDepth, g_flushSimpleAlphaDepth, g_alphaSortDepth));
+            }
+            for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];
+            mirrored = true;
+            g_vbTlXFlat += count;
+        }
+    }
+    int r = Ivk_Rnd_XDrawVertexBufferFlat(self, edx, vb, start, count, idx, fl);
+    if (mirrored) {
+        float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
+        zVEC4* p = vb->array.XYZRHWPtr + start;
+        for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];   // откат
+    }
     return r;
 }
 
