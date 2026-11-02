@@ -1,85 +1,30 @@
 // ═══════════════════════════════════════════════════════════════════
-// zMirrorTest V1.5.5
+// zMirrorTest V1.5.6
 // Плагин зеркального режима для Gothic 2 NotR (Union SDK, G2A).
 //
 // УПРАВЛЕНИЕ:
-//   HOME     — режим зеркала: OFF ↔ GPU (GPU-бэкенд подбирается автоматически:
-//              ванилла = FLIP, внешний ddraw-враппер (GD3D11/dgVoodoo) = PROJ).
-//   END      — телеметрия ON/OFF (лог zMirror_log.txt + дамп zMirror_dump.txt).
-//   ]        — эталонное зеркалирование скелета ГГ (player) ON/OFF:
-//              отрицание right-вектора мировой матрицы VOB (как раньше), но ТОЛЬКО
-//              для игрока — чистый тест без влияния на остальных NPC.
-//   [        — цикл тестовых «уровней зеркалирования перемещений» ГГ:
-//              OFF → SKEL_TRAFO → ROOT_ONLY → OFF.
-//              SKEL_TRAFO — отрицание X-компоненты трансляции у ВСЕХ костей скелета
-//                            (вращения не трогаем; намотка не меняется).
-//              ROOT_ONLY  — то же, но только для корневого узла (Bip01).
-//   INSERT   — (телеметрия включена) дамп ОДНОГО кадра.
-//   PAGEUP   — метка сценария в логе.
+//   HOME — переключение зеркала: OFF ↔ GPU.
+//          GPU-бэкенд подбирается автоматически:
+//            ванилла → FLIP (переворот готового кадра на видеокарте),
+//            внешний ddraw-враппер (GD3D11/dgVoodoo) → PROJ (проекция+cull+TL).
+//   END  — телеметрия ON/OFF (лог zMirror_log.txt: PERF-замеры FPS).
+//   PAGEUP — метка сценария (MARK) в логе.
 //
-// ТЕЛЕМЕТРИЯ ДВИЖЕНИЙ: при включённой телеметрии раз в ~200 мс пишется строка MOV:
-//   позиция ГГ (player, мировые координаты VOB) и позиция корня скелета (Bip01),
-//   обе с дельтами от предыдущей записи — для сравнения «глобального» и
-//   «скелетного» перемещения. Повороты не логируются.
-//
-// КАРТА: детект фиксированный (LENIENT): карта считается открытой, если известен
-// объект oCViewDocumentMap, последний показанный документ — карта, и менеджер
-// документов принимает ввод. Книги/обычные документы НЕ триггерят зеркалирование.
-// PgDn и альтернативные режимы детекта удалены.
-//
-// РЕЖИМЫ ЗЕРКАЛА:
-//   CPU  — переворот строк бэкбуфера (Lock + SSE2).
-//   GPU  — два бэкенда:
-//     FLIP (новое в 1.5.0, по умолчанию в ванилле) — переворот ГОТОВОГО кадра на
-//        видеокарте: копия RT в текстуру (DirectDraw Blt) + полноэкранный TL-квад с
-//        зеркальными UV. Результат пиксель-в-пиксель как у CPU (мир, скайбокс, ВСЕ PFX,
-//        тени, облака), но без Lock и без потерь FPS. Геометрию/намотку полигонов
-//        не трогает → ничего не вывернуто. Есть самокалибровка (проверка по пикселям)
-//        и автоматический откат на CPU, если GPU-путь не работает.
-//     PROJ (наследие v1.4.x) — отражение столбца 0 проекции + инверсия CULLMODE +
-//        зеркалирование TL-вершин. Нужен для GD3D11/dgVoodoo (там работает штатно).
-//
-// КАРТА (новое в 1.5.0):
-//   Пока открыта карта (M-карта или карта-предмет), кадр зеркалится ЦЕЛИКОМ в конце
-//   кадра (хук zCRnd_D3D::Vid_Blit) вместо зеркалирования сразу после мира:
-//   мир (не отзеркаленный в этом кадре) + картинка карты + маячок отражаются вместе,
-//   положение маячка на карте остаётся верным. Работает в CPU и GPU-FLIP.
-//
-// ОБЩИЕ ПРАВИЛА (для всех режимов):
-//   - Своп LR-клавиш и инверсия мыши по X активны только в зеркале.
-//   - В модальных окнах (zCView::modal) и в режиме взлома замков своп отключается.
-//   - Надписи фокуса (NPC/предметы/Mobsi) зеркалятся по X в виртуальных координатах.
-//
-// ИСТОРИЯ ВЕРСИЙ:
-//   V1.0 — только горизонтальная инверсия мыши.
-//   V1.1 — CPU-отзеркаливание мира и управления в обход интерфейсов.
-//   V1.2 — фокусные имена, отзеркаливание сущностей, тесты GPU.
-//   V1.3 — взлом сундуков, режимы на HOME, чистка карт/телеметрии.
-//   V1.4.x — GPU device-level (проекция+cull+TL), телеметрия, чистка.
-//   V1.5.0 — GPU-FLIP (переворот кадра на GPU), зеркалирование карты в конце кадра,
-//            детект бэкенда, расширенная телеметрия (GPUFLIP/MAPSIG).
-//   V1.5.1 — фикс вылета карты (сигнатура oCDocumentManager::Show: id берётся из edx);
-//            чистка: CPU-режим убран из цикла HOME, DELETE и «[» удалены
-//            (бэкенд авто, FLIP не требует инверсии полигонов).
-//   V1.5.2 — удалён PgDn и все альтернативные режимы детекта карты; детект
-//            зафиксирован на LENIENT (единственный стабильный).
-//   V1.5.3 — `]`-цикл уровней внедрения отзеркаливания сущностей:
-//            MATRIX_RIGHT / MATRIX_FULL (фантом) / SKELETON_LOCAL.
-//   V1.5.4 — `]` = эталон (MATRIX_RIGHT) только для ГГ; `[` = тестовые уровни
-//            зеркалирования перемещений (SKEL_TRAFO / ROOT_ONLY); телеметрия MOV.
-//   V1.5.5 — фикс телеметрии MOV: позиция VOB читается из последнего СТОЛБЦА
-//            (v[0][3], v[1][3], v[2][3]), а не строки; добавлена разность
-//            local = bip − pos (локальная часть смещения корня).
-//            ФИКС `[`-уровней: отрицание трансляции теперь по v[0][3] (pos.x),
-//            а не по v[3][0] (который всегда 0 — поэтому ранее эффекта не было).
+// ЧТО РАБОТАЕТ:
+//   - GPU-FLIP (ванилла): полное зеркалирование кадра на GPU (мир, скайбокс,
+//     PFX, NPC, тени) без потерь FPS; калибровка по пикселям и авто-откат на CPU.
+//   - GPU-PROJ (GD3D11/dgVoodoo): зеркалирование мира проекцией + cull + TL.
+//   - Своп LR-клавиш и инверсия мыши X в зеркале; в модальных окнах и при
+//     взломе замков своп отключается.
+//   - Надписи фокуса (NPC/предметы/Mobsi) зеркалятся по X.
+//   - Карта: первичная тест-заглушка — пока открыта карта, кадр зеркалится
+//     целиком в конце кадра (Hook_Rnd_VidBlit). Книги/документы не триггерят.
+//     Известные ограничения: инверсия HUD-баров и просадка FPS.
 // ═══════════════════════════════════════════════════════════════════
 
 #include "resource.h"
 #include <string>
 #include <vector>
-#include <map>
-#include <utility>
-#include <functional>
 #include <fstream>
 #include <algorithm>
 #include <cmath>
@@ -130,19 +75,11 @@ std::string Hex(unsigned long v) {
 }
 
 // ───────────────────────── Состояние ─────────────────────────
-enum { MODE_OFF = 0, MODE_CPU = 1, MODE_GPU = 2, MODE_COUNT = 3 };
-const char* const kModeNames[MODE_COUNT] = { "OFF", "CPU", "GPU" };
+enum { MODE_OFF = 0, MODE_GPU = 1, MODE_COUNT = 2 };
+const char* const kModeNames[MODE_COUNT] = { "OFF", "GPU" };
 
 int  g_mode = MODE_OFF;
-bool g_teleOn = false;         // телеметрия
-
-// ───────────────────────── Зеркалирование сущностей (эталон, ГГ) ─────────────────────────
-bool g_entMirror = false;      // эталонное зеркалирование скелета ГГ (MATRIX_RIGHT)
-
-// ───────────────────────── Уровни зеркалирования перемещений (тест, ГГ) ─────────────────────────
-enum { MOVE_OFF = 0, MOVE_SKEL_TRAFO = 1, MOVE_ROOT_ONLY = 2, MOVE_COUNT = 3 };
-const char* const kMoveModeNames[MOVE_COUNT] = { "OFF", "SKEL_TRAFO", "ROOT_ONLY" };
-int g_moveMirror = MOVE_OFF;   // текущий тест-уровень перемещений
+bool g_teleOn = false;         // телеметрия (PERF)
 int  g_failStreak = 0;
 int  g_frame = 0;
 bool g_inMainWorld = false;
@@ -168,28 +105,23 @@ void DetectWrapper() {
     GetWindowsDirectoryA(win, MAX_PATH);
     bool fromWin = path[0] && win[0] && _strnicmp(path, win, strlen(win)) == 0;
     g_wrapperDetected = (path[0] != 0) && !fromWin;
-    bool gdDir = GetFileAttributesA(ExeDirPath("GD3D11").c_str()) != INVALID_FILE_ATTRIBUTES;
-    Log(SFmt("DETECT ddraw.dll path='%s' windowsDir='%s' wrapper=%d GD3D11dir=%d", path, win, g_wrapperDetected ? 1 : 0, gdDir ? 1 : 0));
+    Log(SFmt("DETECT ddraw.dll path='%s' windowsDir='%s' wrapper=%d", path, win, g_wrapperDetected ? 1 : 0));
 }
 
-// true: GPU-режим работает как FLIP (переворот кадра), false: как PROJ (проекция+cull+TL)
+// true: GPU работает как FLIP (переворот кадра), false: как PROJ
 inline bool GpuUsesFlip() {
     DetectWrapper();
     return g_backendPref == BK_FLIP || (g_backendPref == BK_AUTO && !g_wrapperDetected);
 }
-// true: активный режим переворачивает готовый кадр (CPU или GPU-FLIP)
-inline bool FlipModeActive() { return g_mode == MODE_CPU || (g_mode == MODE_GPU && GpuUsesFlip()); }
+// true: активный режим переворачивает готовый кадр (GPU-FLIP)
+inline bool FlipModeActive() { return g_mode == MODE_GPU && GpuUsesFlip(); }
 
-// Состояние «финального» переворота кадра (карта открыта)
-bool g_frameFinalFlip = false;        // решение, принятое при рендере мира в этом кадре
+// Состояние финального переворота кадра (карта открыта)
+bool g_frameFinalFlip = false;
 bool g_worldRenderedThisFrame = false;
 
-// Forward-декларации (определены ниже)
-int MapSignals();
-bool MapOnScreenNow();
-void MirrorFrame(bool inScene);
-void SyncMouseFlip();
-std::string ModalName();
+int g_mark = 0;            // счётчик меток сценария (PAGEUP)
+void SyncMouseFlip();      // forward (определена ниже)
 
 // ───────────────────────── Карта: ранние глобалы детекта ─────────────────────────
 #ifndef ZM_HOOK_MAP
@@ -197,10 +129,6 @@ std::string ModalName();
 #endif
 
 zCView* g_mapView = NULL;   // последний открытый oCViewDocumentMap
-int g_mapUpdCount = 0;
-int g_finalFlips = 0;        // сколько раз сделан финальный переворот (для лога)
-
-// Детект открытой карты — фиксированный LENIENT:
 bool g_mapDocIsMap = false;     // последний показанный документ — карта
 bool g_mapUpdInShow = false;    // UpdatePosition вызван внутри Show()
 int  g_docShowDepth = 0;
@@ -250,10 +178,6 @@ struct PerfStat {
 PerfStat g_perf = {};
 int g_psMirrored = 0;      // сколько вершин DrawPolySimple отзеркалено (GPU-PROJ)
 int g_vbTlMirrored = 0;    // сколько TL-вершин DrawVertexBuffer отзеркалено (GPU-PROJ)
-int g_dumpPS = 0;          // дамп: всего вершин DrawPolySimple за кадр
-int g_dumpVBTL = 0;        // дамп: всего TL-вершин DrawVertexBuffer за кадр
-float g_psMinX = 1e30f, g_psMaxX = -1e30f;      // диапазон X у DrawPolySimple (мир)
-float g_vbTlMinX = 1e30f, g_vbTlMaxX = -1e30f;  // диапазон X у TL-DrawVertexBuffer (мир)
 
 void PerfReset() {
     memset(&g_perf, 0, sizeof(g_perf));
@@ -272,15 +196,15 @@ void PerfFrame() {
     if (g_perf.frames >= 300) {
         double avg = g_perf.frameSum / g_perf.frames;
         double am = g_perf.mirrorN ? g_perf.mirrorSum / g_perf.mirrorN : 0.0;
-        Log(SFmt("PERF mode=%s backend=%s ent=%d frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms psMirrored=%d vbTlMirrored=%d gf(state=%d ok=%ld)",
-            kModeNames[g_mode], g_mode == MODE_GPU ? (GpuUsesFlip() ? "FLIP" : "PROJ") : "-", g_entMirror, g_perf.frames, avg, 1000.0 / avg, am,
+        Log(SFmt("PERF mode=%s backend=%s frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms psMirrored=%d vbTlMirrored=%d gf(state=%d ok=%ld)",
+            kModeNames[g_mode], g_mode == MODE_GPU ? (GpuUsesFlip() ? "FLIP" : "PROJ") : "-", g_perf.frames, avg, 1000.0 / avg, am,
             g_psMirrored, g_vbTlMirrored, g_gf.state, g_gf.framesOk));
         g_perf.frameSum = 0; g_perf.frames = 0; g_perf.mirrorSum = 0; g_perf.mirrorN = 0;
         g_psMirrored = 0; g_vbTlMirrored = 0;
     }
 }
 
-// ───────────────────────── Быстрый переворот строк (SSE2) — CPU-метод ─────────────────────────
+// ───────────────────────── Быстрый переворот строк (SSE2) — CPU-фолбэк ─────────────────────────
 inline void FlipRow32(DWORD* row, int w) {
     DWORD* l = row;
     DWORD* r = row + w - 4;
@@ -324,7 +248,7 @@ bool MirrorByLock(IDirectDrawSurface7* s) {
     return ok;
 }
 
-// ───────────────────────── D3D7-устройство: типы функций и состояние ─────────────────────────
+// ───────────────────────── D3D7-устройство: хуки ядра PROJ ─────────────────────────
 typedef HRESULT (STDMETHODCALLTYPE *PFN_SetTransform)(IDirect3DDevice7*, D3DTRANSFORMSTATETYPE, LPD3DMATRIX);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_SetViewport)(IDirect3DDevice7*, D3DVIEWPORT7*);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_SetRenderState)(IDirect3DDevice7*, D3DRENDERSTATETYPE, DWORD);
@@ -334,17 +258,14 @@ PFN_SetViewport           g_oSetViewport = NULL;
 PFN_SetRenderState        g_oSetRS = NULL;
 
 bool g_devHooked = false;
-DWORD g_engCull = D3DCULL_CCW;        // последнее значение CULLMODE, которое запросил ДВИЖОК
-D3DMATRIX g_engProj;                  // последняя проекция, которую выставил ДВИЖОК
+DWORD g_engCull = D3DCULL_CCW;        // последнее значение CULLMODE от движка
+D3DMATRIX g_engProj;                  // последняя проекция от движка
 bool g_haveEngProj = false;
 D3DVIEWPORT7 g_vp;                    // последний вьюпорт
 bool g_haveVp = false;
 
 bool g_devWorldMirror = false;        // GPU-PROJ: идёт рендер главного мира в зеркале
 bool g_worldCullFlip = false;         // паритет отражений на уровне мира
-bool g_entCullFlip = false;           // паритет отражения сущности (матрица NPC)
-
-inline bool CullFlipNow() { return g_worldCullFlip != g_entCullFlip; }
 
 inline DWORD InvertCull(DWORD v) {
     if (v == D3DCULL_CW) return D3DCULL_CCW;
@@ -356,186 +277,10 @@ inline void MirrorProjCol0(D3DMATRIX& p) {   // D3D: v' = v * M, столбец 
     p._11 = -p._11; p._21 = -p._21; p._31 = -p._31; p._41 = -p._41;
 }
 
-std::string MatStr(const D3DMATRIX& m) {
-    return SFmt("[%.3f %.3f %.3f %.3f | %.3f %.3f %.3f %.3f | %.3f %.3f %.3f %.3f | %.3f %.3f %.3f %.3f]",
-        m._11, m._12, m._13, m._14, m._21, m._22, m._23, m._24,
-        m._31, m._32, m._33, m._34, m._41, m._42, m._43, m._44);
-}
-
-// ───────────────────────── Дамп одного кадра (телеметрия, INSERT) ─────────────────────────
-struct DumpEntry {
-    int kind;                 // 0=текст, 12=SetTransform(WORLD), 13=SetTransform(PROJ/OTHER)
-    std::string text;
-    char phase;               // W = главный мир, w = другой мир, U = UI/после мира
-    int calls;
-    DumpEntry() : kind(0), phase('?'), calls(0) {}
-};
-
-const size_t kDumpCap = 256;   // лимит ДЕТАЛЬНЫХ записей; дальше — только агрегаты
-std::vector<DumpEntry> g_dump;
-bool g_dumpRequested = false;
-bool g_dumpActive = false;
-int  g_dumpNo = 0;
-DWORD g_dumpStartTick = 0;
-int  g_dumpDropped = 0;
-bool g_dumpSawPrint = false;
-
-long g_aggWorldExtra[3];          // SetTransform WORLD сверх деталей
-long g_aggProjOtherExtra[3][2];   // [фаза][0=PROJ, 1=OTHER] сверх деталей
-long g_worldDetailN = 0;          // сколько детальных WORLD-матриц уже записано
-long g_projOtherDetailN[3][2];
-std::map<DWORD, int> g_dumpCallers;  // адрес вызывающего -> сколько вызовов
-
-inline char CurPhase() { return g_inMainWorld ? 'W' : (g_worldDepth > 0 ? 'w' : 'U'); }
-
-void DumpText(const std::string& s) {
-    if (!g_dumpActive) return;
-    if (g_dump.size() >= kDumpCap) { g_dumpDropped++; return; }
-    DumpEntry e; e.kind = 0; e.text = s; e.phase = CurPhase();
-    g_dump.push_back(e);
-}
-
-void DumpTransform(DWORD type, const D3DMATRIX* m) {
-    if (!g_dumpActive || !m) return;
-    int pi = (g_inMainWorld ? 0 : (g_worldDepth > 0 ? 1 : 2));
-    const char* n = (type == 1) ? "WORLD" : (type == 2) ? "VIEW" : (type == 3) ? "PROJ" : "OTHER";
-    if (type == 1) {
-        if (g_dump.size() >= kDumpCap || g_worldDetailN >= 12) { g_aggWorldExtra[pi]++; return; }
-        g_worldDetailN++;
-        DumpEntry e; e.kind = 12; e.phase = CurPhase(); e.calls = 1;
-        e.text = std::string("SetTransform WORLD first=") + MatStr(*m);
-        g_dump.push_back(e);
-        return;
-    }
-    int tj = (type == 3) ? 0 : 1;
-    if (g_dump.size() >= kDumpCap || g_projOtherDetailN[pi][tj] >= 6) { g_aggProjOtherExtra[pi][tj]++; return; }
-    g_projOtherDetailN[pi][tj]++;
-    std::string t = std::string("SetTransform ") + n + (g_devWorldMirror ? " (device-mirrored: col0 negated)" : "") + " " + MatStr(*m);
-    DumpEntry e; e.kind = 13; e.phase = CurPhase(); e.calls = 1; e.text = t;
-    g_dump.push_back(e);
-}
-
-void StartDump() {
-    g_dump.clear();
-    g_dumpDropped = 0; g_dumpSawPrint = false;
-    g_dumpPS = 0; g_dumpVBTL = 0;
-    g_psMinX = 1e30f; g_psMaxX = -1e30f;
-    g_vbTlMinX = 1e30f; g_vbTlMaxX = -1e30f;
-    memset(g_aggWorldExtra, 0, sizeof(g_aggWorldExtra));
-    memset(g_aggProjOtherExtra, 0, sizeof(g_aggProjOtherExtra));
-    g_worldDetailN = 0;
-    memset(g_projOtherDetailN, 0, sizeof(g_projOtherDetailN));
-    g_dumpCallers.clear();
-    g_dumpRequested = false;
-    g_dumpActive = true;
-    g_dumpNo++;
-    g_dumpStartTick = GetTickCount();
-    DumpText(SFmt("viewport: x=%lu y=%lu w=%lu h=%lu (known=%d)", (unsigned long)g_vp.dwX, (unsigned long)g_vp.dwY,
-        (unsigned long)g_vp.dwWidth, (unsigned long)g_vp.dwHeight, g_haveVp ? 1 : 0));
-    DumpText(SFmt("engine cull=%lu, engine proj=%s", (unsigned long)g_engCull, g_haveEngProj ? MatStr(g_engProj).c_str() : "unknown"));
-}
-
-void FinishDump() {
-    if (!g_dumpActive) return;
-    g_dumpActive = false;
-
-    std::string out;
-    out += SFmt("\n===== DUMP #%d  mode=%s ent=%d frame=%d entries=%d dropped=%d =====\n",
-        g_dumpNo, kModeNames[g_mode], g_entMirror, g_frame, (int)g_dump.size(), g_dumpDropped);
-    out += "-----\n";
-    out += SFmt("ENGINE this frame: DrawPolySimple verts=%d x=[%.0f..%.0f] | DrawVertexBuffer-TL verts=%d x=[%.0f..%.0f]\n",
-        g_dumpPS, g_psMinX, g_psMaxX, g_dumpVBTL, g_vbTlMinX, g_vbTlMaxX);
-    out += SFmt("BACKEND mode=%s pref=%s usesFlip=%d wrapper=%d | GPUFLIP state=%d adj=(%d,%d) tex=%lux%lu framesOk=%ld | MAP sig=0x%X finalFlip=%d finalFlipsTotal=%d\n",
-        kModeNames[g_mode], kBackendNames[g_backendPref], GpuUsesFlip() ? 1 : 0, g_wrapperDetected ? 1 : 0,
-        g_gf.state, g_gf.adjX, g_gf.adjY, (unsigned long)g_gf.texW, (unsigned long)g_gf.texH, g_gf.framesOk,
-        MapSignals(), g_frameFinalFlip ? 1 : 0, g_finalFlips);
-    {
-        long wE = 0, pE = 0, oE = 0;
-        for (int p = 0; p < 3; p++) { wE += g_aggWorldExtra[p]; pE += g_aggProjOtherExtra[p][0]; oE += g_aggProjOtherExtra[p][1]; }
-        out += SFmt("SetTransform (not detailed): WORLD=%ld PROJ=%ld OTHER=%ld\n", wE, pE, oE);
-    }
-    if (g_dumpDropped > 0) out += SFmt("TRUNCATED details (budget %u entries) — aggregates above are full\n", (unsigned)kDumpCap);
-    if (!g_dumpCallers.empty()) {
-        out += "TOP CALLERS (draw/engine, by calls):\n";
-        std::vector<std::pair<int, DWORD> > v;
-        for (std::map<DWORD, int>::iterator it = g_dumpCallers.begin(); it != g_dumpCallers.end(); ++it)
-            v.push_back(std::make_pair(it->second, it->first));
-        std::sort(v.begin(), v.end(), std::greater<std::pair<int, DWORD> >());
-        int n = (int)v.size(); if (n > 20) n = 20;
-        for (int i = 0; i < n; i++)
-            out += SFmt("  0x%08lX x%d\n", (unsigned long)v[i].second, v[i].first);
-    }
-    out += "-----\n";
-
-    for (size_t i = 0; i < g_dump.size(); i++) {
-        const DumpEntry& e = g_dump[i];
-        if (e.kind == 0) { out += SFmt("[%c]       %s\n", e.phase, e.text.c_str()); continue; }
-        out += SFmt("[%c]       %s  (x%d calls)\n", e.phase, e.text.c_str(), e.calls);
-    }
-    WriteText("zMirror_dump.txt", out, true);
-    Log(SFmt("dump #%d written to zMirror_dump.txt (%d entries)", g_dumpNo, (int)g_dump.size()));
-    g_dump.clear();
-}
-
-// ───────────────────────── Хуки на уровне движка (zCRnd_D3D) ─────────────────────────
-void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
-CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(0x0064AC30, &Hook_Rnd_DrawPolySimple);
-void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
-    if (g_dumpActive && verts && count > 0) {
-        g_dumpPS += count;
-        if (g_dumpCallers.size() < 128) g_dumpCallers[(DWORD)(size_t)_ReturnAddress()]++;
-    }
-    bool mirrorBranch = g_devWorldMirror && g_haveVp && verts && count > 0 && count <= 200000;
-    if (mirrorBranch) {
-        for (int i = 0; i < count && i < 64; i++) {
-            if (verts[i].pos.n[0] < g_psMinX) g_psMinX = verts[i].pos.n[0];
-            if (verts[i].pos.n[0] > g_psMaxX) g_psMaxX = verts[i].pos.n[0];
-        }
-        static std::vector<zTRndSimpleVertex> copy;
-        if (copy.size() < (size_t)count) copy.resize(count);
-        memcpy(&copy[0], verts, sizeof(zTRndSimpleVertex) * (size_t)count);
-        float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
-        for (int i = 0; i < count; i++) copy[i].pos.n[0] = cx - copy[i].pos.n[0];
-        g_psMirrored += count;
-        Ivk_Rnd_DrawPolySimple(self, edx, tex, &copy[0], count);
-        return;
-    }
-    Ivk_Rnd_DrawPolySimple(self, edx, tex, verts, count);
-}
-
-int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl);
-CInvoke<int(__fastcall*)(void*, void*, zCVertexBuffer*, int, int, unsigned short*, unsigned long)> Ivk_Rnd_DrawVertexBuffer(0x006519F0, &Hook_Rnd_DrawVertexBuffer);
-int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl) {
-    bool mirrored = false;
-    if (g_dumpActive && g_dumpCallers.size() < 128) g_dumpCallers[(DWORD)(size_t)_ReturnAddress()]++;
-    if (g_devWorldMirror && g_haveVp && vb && count > 0 && vb->array.XYZRHWPtr) {
-        if (start >= 0 && start + count <= (int)vb->numVertex) {
-            float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
-            zVEC4* p = vb->array.XYZRHWPtr + start;
-            for (int i = 0; i < count && i < 64; i++) {
-                if (p[i].n[0] < g_vbTlMinX) g_vbTlMinX = p[i].n[0];
-                if (p[i].n[0] > g_vbTlMaxX) g_vbTlMaxX = p[i].n[0];
-            }
-            for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];
-            mirrored = true;
-            g_vbTlMirrored += count;
-            if (g_dumpActive) g_dumpVBTL += count;
-        }
-    }
-    int r = Ivk_Rnd_DrawVertexBuffer(self, edx, vb, start, count, idx, fl);
-    if (mirrored) {
-        float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
-        zVEC4* p = vb->array.XYZRHWPtr + start;
-        for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];   // откат
-    }
-    return r;
-}
-
-// ───────────────────────── Хуки D3D7-устройства ─────────────────────────
 void SyncCull() {
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
     if (!dev || !g_oSetRS) return;
-    g_oSetRS(dev, D3DRENDERSTATE_CULLMODE, CullFlipNow() ? InvertCull(g_engCull) : g_engCull);
+    g_oSetRS(dev, D3DRENDERSTATE_CULLMODE, g_worldCullFlip ? InvertCull(g_engCull) : g_engCull);
 }
 
 void SyncProj() {
@@ -554,7 +299,6 @@ HRESULT STDMETHODCALLTYPE Hook_Dev_SetViewport(IDirect3DDevice7* self, D3DVIEWPO
 HRESULT STDMETHODCALLTYPE Hook_Dev_SetTransform(IDirect3DDevice7* self, D3DTRANSFORMSTATETYPE type, LPD3DMATRIX m) {
     if (m && (DWORD)type == 3) {   // D3DTRANSFORMSTATE_PROJECTION
         g_engProj = *m; g_haveEngProj = true;
-        DumpTransform((DWORD)type, m);
         if (g_devWorldMirror) {
             D3DMATRIX p = *m;
             MirrorProjCol0(p);
@@ -562,16 +306,13 @@ HRESULT STDMETHODCALLTYPE Hook_Dev_SetTransform(IDirect3DDevice7* self, D3DTRANS
         }
         return g_oSetTransform(self, type, m);
     }
-    if (g_dumpActive) DumpTransform((DWORD)type, m);
     return g_oSetTransform(self, type, m);
 }
 
 HRESULT STDMETHODCALLTYPE Hook_Dev_SetRenderState(IDirect3DDevice7* self, D3DRENDERSTATETYPE t, DWORD v) {
     if (t == D3DRENDERSTATE_CULLMODE) {
         g_engCull = v;
-        if (g_dumpActive) DumpText(SFmt("SetRenderState CULLMODE engine=%lu -> device=%lu%s caller=0x%08lX", (unsigned long)v,
-            (unsigned long)(CullFlipNow() ? InvertCull(v) : v), CullFlipNow() ? " (flipped)" : "", (unsigned long)(size_t)_ReturnAddress()));
-        if (CullFlipNow()) v = InvertCull(v);
+        if (g_worldCullFlip) v = InvertCull(v);
     }
     return g_oSetRS(self, t, v);
 }
@@ -603,7 +344,7 @@ bool EnsureDeviceHooks() {
     bool ok = true;
     ok = PatchSlot(vt, 11, &Hook_Dev_SetTransform,          g_oSetTransform) && ok;
     ok = PatchSlot(vt, 13, &Hook_Dev_SetViewport,           g_oSetViewport) && ok;
-    ok = PatchSlot(vt, 20, &Hook_Dev_SetRenderState,        g_oSetRS) && ok;   // SDK-порядок: SetRenderState = 20 (нестандартный vtable!)
+    ok = PatchSlot(vt, 20, &Hook_Dev_SetRenderState,        g_oSetRS) && ok;   // SDK-порядок: SetRenderState = 20
 
     g_devHooked = ok;
     Log(ok ? SFmt("device hooks installed (cull=%lu, viewport %lux%lu, slots SetTransform11/SetViewport13/SetRenderState20)",
@@ -613,11 +354,6 @@ bool EnsureDeviceHooks() {
 }
 
 // ───────────────────────── GPU-FLIP: переворот готового кадра на видеокарте ─────────────────────────
-// Идея: после рендера мира (мир + скайбокс + PFX уже в RT) копируем RT в текстуру
-// (DirectDraw Blt, GPU→GPU), затем рисуем на весь экран TL-квад с зеркальными UV.
-// Не зависит от того, КАКИМ путём ванилла рисовала PFX/скайбокс — зеркалится результат.
-// Самопроверка: при первых кадрах сравниваем пиксели до/после (калибровка сдвига ±1 px).
-// Если что-то не работает — автоматический откат на CPU-переворот (g_gf.state = -1).
 inline void RsRaw(IDirect3DDevice7* dev, D3DRENDERSTATETYPE t, DWORD v) {
     if (g_oSetRS) g_oSetRS(dev, t, v); else dev->SetRenderState(t, v);
 }
@@ -807,7 +543,6 @@ bool GfDrawQuad(IDirect3DDevice7* dev) {
 }
 
 // Результат: 1 = кадр перевёрнут, 0 = не удалось ДО отрисовки (кадр не тронут), 2 = нарисовано, но калибровка провалена.
-// inScene: true — вызывается внутри сцены (после рендера мира); false — вне сцены (Vid_Blit).
 int GfFlip(zCRnd_D3D* rnd, IDirectDrawSurface7* rt, bool inScene) {
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
     if (!dev || !rnd) return 0;
@@ -856,8 +591,7 @@ int GfFlip(zCRnd_D3D* rnd, IDirectDrawSurface7* rt, bool inScene) {
     return result;
 }
 
-// ───────────────────────── Переворот кадра (CPU / GPU-FLIP) ─────────────────────────
-// inScene: true — сразу после рендера мира (внутри сцены), false — на конце кадра (Vid_Blit).
+// ───────────────────────── Переворот кадра (GPU-FLIP / CPU-фолбэк) ─────────────────────────
 void MirrorFrame(bool inScene) {
     zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
     if (!rnd) return;
@@ -888,13 +622,50 @@ void MirrorFrame(bool inScene) {
     else if (++g_failStreak >= 30) { g_mode = MODE_OFF; SyncMouseFlip(); Log("mirror auto-disabled: 30 failures in a row"); }
 }
 
+// ───────────────────────── Хуки на уровне движка (zCRnd_D3D) — TL-зеркалирование PROJ ─────────────────────────
+void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
+CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(0x0064AC30, &Hook_Rnd_DrawPolySimple);
+void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
+    if (g_devWorldMirror && g_haveVp && verts && count > 0 && count <= 200000) {
+        static std::vector<zTRndSimpleVertex> copy;
+        if (copy.size() < (size_t)count) copy.resize(count);
+        memcpy(&copy[0], verts, sizeof(zTRndSimpleVertex) * (size_t)count);
+        float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
+        for (int i = 0; i < count; i++) copy[i].pos.n[0] = cx - copy[i].pos.n[0];
+        g_psMirrored += count;
+        Ivk_Rnd_DrawPolySimple(self, edx, tex, &copy[0], count);
+        return;
+    }
+    Ivk_Rnd_DrawPolySimple(self, edx, tex, verts, count);
+}
+
+int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl);
+CInvoke<int(__fastcall*)(void*, void*, zCVertexBuffer*, int, int, unsigned short*, unsigned long)> Ivk_Rnd_DrawVertexBuffer(0x006519F0, &Hook_Rnd_DrawVertexBuffer);
+int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl) {
+    bool mirrored = false;
+    if (g_devWorldMirror && g_haveVp && vb && count > 0 && vb->array.XYZRHWPtr) {
+        if (start >= 0 && start + count <= (int)vb->numVertex) {
+            float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
+            zVEC4* p = vb->array.XYZRHWPtr + start;
+            for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];
+            mirrored = true;
+            g_vbTlMirrored += count;
+        }
+    }
+    int r = Ivk_Rnd_DrawVertexBuffer(self, edx, vb, start, count, idx, fl);
+    if (mirrored) {
+        float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
+        zVEC4* p = vb->array.XYZRHWPtr + start;
+        for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];   // откат
+    }
+    return r;
+}
+
 // ───────────────────────── Карта: детект + переворот в конце кадра ─────────────────────────
-// Пока карта открыта, кадр зеркалится ЦЕЛИКОМ в Hook_Rnd_VidBlit (после отрисовки интерфейса);
+// Пока карта открыта, кадр зеркалится ЦЕЛИКОМ в Hook_Rnd_VidBlit (после интерфейса);
 // сразу после мира переворот в этом кадре пропускается (иначе мир перевернулся бы дважды).
-// Признаки «карта на экране» (MapSignals):
-//   бит0 — известен объект oCViewDocumentMap (UpdatePosition), бит1 — последний показанный
-//   документ — карта (Show/UpdatePosition), бит2 — окно документов в screen->childs,
-//   бит3 — oCDocumentManager принимает ввод (HandleEvent включён).
+// Признаки MapSignals: бит0 — известен oCViewDocumentMap; бит1 — последний документ карта;
+// бит2 — окно документов в screen->childs; бит3 — oCDocumentManager принимает ввод.
 #if ZM_HOOK_MAP
 bool DocDlgOnScreen() {
     if (!screen) return false;
@@ -924,12 +695,11 @@ int MapSignals() {
 }
 
 bool MapOnScreenNow() {
-    // Фиксированный LENIENT: карта открыта = mapView есть + последний документ карта
-    // + менеджер документов принимает ввод. Книги/документы не триггерят.
+    // Фиксированный LENIENT: карта = mapView + последний документ карта + mgrEnabled.
     if (!ogame || !screen) return false;
     int s = MapSignals();
     if (!(s & 1) || !(s & 2)) return false;
-    return (s & 8) != 0;   // mgrEnabled (без требования dlgOnScreen — он не всегда виден)
+    return (s & 8) != 0;
 }
 
 // ~oCViewDocumentMap — очистка указателя карты при закрытии/удалении
@@ -940,27 +710,20 @@ void __fastcall Hook_MapView_Dtor(zCView* self, void* edx) {
     Ivk_MapView_Dtor(self, edx);
 }
 
-// oCMapScreen::Show(int)
+// oCMapScreen::Show(int) — M-карта
 int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a);
 CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_MapScreen_Show(0x0047F9C0, &Hook_MapScreen_Show);
 int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a) {
-    DWORD caller = (DWORD)_ReturnAddress();
     bool outer = (g_docShowDepth == 0);
     if (outer) g_mapUpdInShow = false;
-    if (g_teleOn) Log(SFmt("MAP oCMapScreen::Show(arg=%d) BEGIN self=0x%08lX caller=0x%08lX frame=%d modal=%s pause=%d mode=%s sig=0x%X",
-        a, (unsigned long)(size_t)self, (unsigned long)caller, g_frame, ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, kModeNames[g_mode], (ogame && screen) ? MapSignals() : 0));
     g_docShowDepth++;
     int r = Ivk_MapScreen_Show(self, edx, a);
     g_docShowDepth--;
     if (outer && (g_mapUpdInShow || g_frame - g_mapUpdFrame <= 2)) g_mapDocIsMap = true;
-    if (g_teleOn) Log(SFmt("MAP oCMapScreen::Show(arg=%d) END   frame=%d modal=%s pause=%d docIsMap=%d sig=0x%X", a, g_frame, ModalName().c_str(),
-        (ogame && ogame->IsOnPause()) ? 1 : 0, g_mapDocIsMap ? 1 : 0, (ogame && screen) ? MapSignals() : 0));
     return r;
 }
 
-// oCDocumentManager::Show(int) — открытие документа (в т.ч. карты-предмета).
-// ВАЖНО: метод объявлен как __fastcall (это в API), поэтому id передаётся в EDX,
-// а не через стек. Сигнатура хука — (void*, void*), id читаем из edx.
+// oCDocumentManager::Show(int) — документы (в т.ч. карта-предмет). id в EDX (__fastcall).
 void __fastcall Hook_DocMan_Show(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_DocMan_Show(0x0065F300, &Hook_DocMan_Show);
 void __fastcall Hook_DocMan_Show(void* self, void* edx) {
@@ -975,25 +738,19 @@ void __fastcall Hook_DocMan_Show(void* self, void* edx) {
     oCViewDocument* d = ((oCDocumentManager*)self)->GetDocumentView(id);
     if (!isMap && d && g_mapView && (void*)d == (void*)g_mapView) isMap = true;
     g_mapDocIsMap = isMap;
-    if (g_teleOn) Log(SFmt("MAP oCDocumentManager::Show(id=%d) docView=0x%08lX mapView=0x%08lX isMap=%d frame=%d sig=0x%X", id,
-        (unsigned long)(size_t)d, (unsigned long)(size_t)g_mapView, isMap ? 1 : 0, g_frame, (ogame && screen) ? MapSignals() : 0));
 }
 
 // oCViewDocumentMap::UpdatePosition()
 void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx);
 CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_UpdatePosition(0x0068D7B0, &Hook_MapView_UpdatePosition);
 void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
-    g_mapUpdCount++;
-    if (g_teleOn && g_mapUpdCount <= 10)
-        Log(SFmt("MAP oCViewDocumentMap::UpdatePosition #%d self=0x%08lX caller=0x%08lX frame=%d modal=%s inShow=%d",
-            g_mapUpdCount, (unsigned long)(size_t)self, (unsigned long)(size_t)_ReturnAddress(), g_frame, ModalName().c_str(), g_docShowDepth));
     Ivk_MapView_UpdatePosition(self, edx);
     g_mapView = self;
     g_mapUpdFrame = g_frame;
     if (g_docShowDepth > 0) g_mapUpdInShow = true;
 }
 
-// zCRnd_D3D::Vid_Blit(int, tagRECT*, tagRECT*) — конец кадра (после интерфейса)
+// zCRnd_D3D::Vid_Blit — конец кадра (после интерфейса)
 void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagRECT* r2);
 CInvoke<void(__fastcall*)(void*, void*, int, tagRECT*, tagRECT*)> Ivk_Rnd_VidBlit(0x00657670, &Hook_Rnd_VidBlit);
 void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagRECT* r2) {
@@ -1007,10 +764,6 @@ void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagR
     if (doFlip) {
         zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
         bool inScene = rnd && rnd->xd3d_inScene != 0;
-        if (g_finalFlips < 3 || (g_teleOn && g_finalFlips < 50))
-            Log(SFmt("MAP final-frame flip #%d (inScene=%d mode=%s backend=%s sig=0x%X frame=%d)", g_finalFlips + 1, inScene ? 1 : 0,
-                kModeNames[g_mode], g_mode == MODE_GPU ? (GpuUsesFlip() ? "FLIP" : "PROJ") : "-", MapSignals(), g_frame));
-        g_finalFlips++;
         MirrorFrame(inScene);
     }
     Ivk_Rnd_VidBlit(self, edx, a, r1, r2);
@@ -1039,26 +792,7 @@ void SyncMouseFlip() {
     }
 }
 
-// ───────────────────────── Телеметрия: общие помощники ─────────────────────────
-int g_mark = 0;
-
-std::string ClassOf(zCObject* obj);
-std::string ModalName() {
-    return zCView::modal ? ClassOf((zCObject*)zCView::modal) : std::string("none");
-}
-
-// ───────────────────────── Класс объекта (для детекта UI-режимов) ─────────────────────────
-std::string ClassOf(zCObject* obj) {
-    if (!obj) return "null";
-    zCClassDef* d = obj->_GetClassDef();
-    while (d) {
-        const char* cn = d->className.ToChar();
-        if (cn && cn[0]) return std::string(cn);
-        d = d->baseClassDef;
-    }
-    return "unknown";
-}
-
+// ───────────────────────── Класс объекта фокуса (для антисвопа/надписей) ─────────────────────────
 bool ClassChainHas(zCVob* v, const char* wanted) {
     if (!v) return false;
     zCClassDef* d = v->_GetClassDef();
@@ -1164,7 +898,6 @@ void MaybeMirrorLabel(zCView* self, int& x, const zSTRING& s) {
 void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s);
 CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_Print(0x007A9A40, &Hook_View_Print);
 void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s) {
-    if (g_dumpActive && g_uiPhase && !g_dumpSawPrint) { g_dumpSawPrint = true; DumpText("first zCView::Print in UI phase"); }
     MaybeMirrorLabel(self, x, s);
     Ivk_View_Print(self, edx, x, y, s);
 }
@@ -1209,85 +942,6 @@ int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned sh
     return Ivk_Input_GetToggled(self, edx, SwapLR(key, (DWORD)_ReturnAddress()));
 }
 
-// ───────────────────────── Зеркалирование сущностей (все NPC) ─────────────────────────
-bool IsNpcVob(zCVob* v) {
-    if (!v) return false;
-    zCClassDef* cd = v->_GetClassDef();
-    if (!cd) return false;
-    static std::map<zCClassDef*, bool> cache;
-    std::map<zCClassDef*, bool>::iterator it = cache.find(cd);
-    if (it != cache.end()) return it->second;
-    bool r = false;
-    zCClassDef* d = cd;
-    while (d) {
-        const char* cn = d->className.ToChar();
-        if (cn && strcmp(cn, "oCNpc") == 0) { r = true; break; }
-        d = d->baseClassDef;
-    }
-    cache[cd] = r;
-    return r;
-}
-
-// ───────────────────────── Зеркалирование перемещений (тест) ─────────────────────────
-// В zMAT4 translation лежит в последнем СТОЛБЦЕ: pos = (v[0][3], v[1][3], v[2][3]).
-// Отрицаем X-компоненту translation (v[0][3]) у локальных матриц костей,
-// не трогая вращение (намотка полигонов не меняется → cull-паритет не нужен).
-// zCModelNodeInst::trafo — offset 0x0C; zCModel::nodeList — offset 0x70.
-void MirrorSkeletonTranslations(zCModel* model, bool rootOnly) {
-    if (!model) return;
-    zCArray<zCModelNodeInst*>* arr = (zCArray<zCModelNodeInst*>*)((char*)model + 0x70);
-    if (!arr) return;
-    int n = arr->GetNumInList();
-    if (n <= 0 || n > 512) return;
-    zCModelNodeInst** nodes = arr->GetArray();
-    if (!nodes) return;
-    for (int i = 0; i < n; i++) {
-        zCModelNodeInst* ni = nodes[i];
-        if (!ni) continue;
-        if (rootOnly && ni->parentNode) continue;   // только корень (Bip01)
-        zMAT4* t = (zMAT4*)((char*)ni + 0x0C);
-        t->v[0][3] = -t->v[0][3];
-    }
-}
-
-// zCVob::Render(zTRenderContext&) — применяется ТОЛЬКО к ГГ (player)
-int __fastcall Hook_Vob_Render(zCVob* self, zTRenderContext& ctx);
-CInvoke<int(__fastcall*)(zCVob*, zTRenderContext&)> Ivk_Vob_Render(0x006015D0, &Hook_Vob_Render);
-int __fastcall Hook_Vob_Render(zCVob* self, zTRenderContext& ctx) {
-    bool isPlayer = (player && self == (zCVob*)player);
-    if (!isPlayer) return Ivk_Vob_Render(self, ctx);
-
-    // Эталон: зеркалирование скелета ГГ (MATRIX_RIGHT)
-    if (g_entMirror) {
-        float orig[16];
-        memcpy(orig, &self->trafoObjToWorld, sizeof(orig));
-        float m[16];
-        memcpy(m, orig, sizeof(m));
-        m[0] = -m[0];
-        m[4] = -m[4];
-        m[8] = -m[8];
-        memcpy(&self->trafoObjToWorld, m, sizeof(m));
-        bool flip = g_devHooked || EnsureDeviceHooks();
-        if (flip) { g_entCullFlip = true; SyncCull(); }
-        int r = Ivk_Vob_Render(self, ctx);
-        if (flip) { g_entCullFlip = false; SyncCull(); }
-        memcpy(&self->trafoObjToWorld, orig, sizeof(orig));
-        return r;
-    }
-
-    // Тест: зеркалирование перемещений
-    if (g_moveMirror != MOVE_OFF) {
-        zCModel* model = ((oCNpc*)self)->GetModel();
-        if (model) {
-            MirrorSkeletonTranslations(model, g_moveMirror == MOVE_ROOT_ONLY);
-            int r = Ivk_Vob_Render(self, ctx);
-            MirrorSkeletonTranslations(model, g_moveMirror == MOVE_ROOT_ONLY);
-            return r;
-        }
-    }
-    return Ivk_Vob_Render(self, ctx);
-}
-
 // ───────────────────────── Хук zCWorld::Render ─────────────────────────
 inline bool IsMainWorld(zCWorld* w) {
     return ogame && w == (zCWorld*)ogame->GetGameWorld();
@@ -1300,21 +954,17 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
     bool prevUi = g_uiPhase;
     bool prevInMain = g_inMainWorld;
     bool devMirrorStarted = false;
-    bool useFlip = FlipModeActive();                        // CPU или GPU-FLIP: переворот готового кадра
+    bool useFlip = FlipModeActive();                        // GPU-FLIP: переворот готового кадра
     bool useProj = (g_mode == MODE_GPU) && !GpuUsesFlip();  // GPU-PROJ: проекция + cull + TL
 
     g_uiPhase = false;
     g_worldDepth++;
     if (main) {
-        if (g_dumpActive) FinishDump();        // предыдущий кадр (мир + его UI) завершён
         g_frame++;
         g_inMainWorld = true;
-        if (g_dumpRequested) StartDump();
         if (g_teleOn) PerfFrame();
         g_worldRenderedThisFrame = true;
         g_frameFinalFlip = useFlip && MapOnScreenNow();
-        DumpText(SFmt("main World_Render BEGIN (frame %d, mode %s, backend %s, finalFlip=%d)", g_frame, kModeNames[g_mode],
-            g_mode == MODE_GPU ? (useProj ? "PROJ" : "FLIP") : "-", g_frameFinalFlip ? 1 : 0));
 
         if (useProj) {
             if (EnsureDeviceHooks()) {
@@ -1342,7 +992,6 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
             SyncCull();
             SyncProj();
         }
-        DumpText("main World_Render END");
         if (useFlip && !g_frameFinalFlip) MirrorFrame(true);   // карта открыта → переворот будет в конце кадра
         g_uiPhase = true;
     }
@@ -1351,15 +1000,14 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
 // ───────────────────────── События Union ─────────────────────────
 void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.5.5 loaded\n", false);
-    WriteText("zMirror_dump.txt", "zMirrorTest V1.5.5 dump file\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.5.6 loaded\n", false);
 }
 
 void Game_Init() { }
 
 void Game_Exit() { GfRelease(); }
 
-void Game_PreLoop() { DumpText("event Game_PreLoop"); }
+void Game_PreLoop() { }
 
 inline bool KeyEdge(int vk, bool& was) {
     bool down = (GetAsyncKeyState(vk) & 0x8000) != 0;
@@ -1373,9 +1021,7 @@ void Msg(const std::string& s) {
 }
 
 void Game_Loop() {
-    DumpText("event Game_Loop");
-
-    // HOME — переключение зеркала: OFF <-> GPU (бэкенд GPU подбирается автоматически)
+    // HOME — переключение зеркала: OFF <-> GPU (бэкенд автоматически)
     static bool wasHome = false;
     if (KeyEdge(VK_HOME, wasHome)) {
         g_mode = (g_mode == MODE_GPU) ? MODE_OFF : MODE_GPU;
@@ -1387,7 +1033,7 @@ void Game_Loop() {
         else Msg("MIRROR MODE: OFF");
     }
 
-    // END — телеметрия
+    // END — телеметрия (PERF)
     static bool wasEnd = false;
     if (KeyEdge(VK_END, wasEnd)) {
         g_teleOn = !g_teleOn;
@@ -1395,132 +1041,16 @@ void Game_Loop() {
         Msg(g_teleOn ? "TELEMETRY: ON" : "TELEMETRY: OFF");
     }
 
-    // ] — эталонное зеркалирование скелета ГГ (ON/OFF)
-    static bool wasRB = false;
-    if (KeyEdge(VK_OEM_6, wasRB)) {
-        g_entMirror = !g_entMirror;
-        if (g_entMirror) EnsureDeviceHooks();
-        Log(std::string("entMirror=") + (g_entMirror ? "ON (player only)" : "OFF"));
-        Msg(g_entMirror ? "ENT-MIRROR (player): ON" : "ENT-MIRROR (player): OFF");
-    }
-
-    // [ — цикл тестовых уровней зеркалирования перемещений ГГ
-    static bool wasLB = false;
-    if (KeyEdge(VK_OEM_4, wasLB)) {
-        g_moveMirror = (g_moveMirror + 1) % MOVE_COUNT;
-        Log(std::string("moveMirrorLevel=") + kMoveModeNames[g_moveMirror]);
-        Msg(SFmt("MOVE-MIRROR: %s", kMoveModeNames[g_moveMirror]));
-    }
-
-    // INSERT — дамп одного кадра (только при включённой телеметрии)
-    static bool wasIns = false;
-    if (KeyEdge(VK_INSERT, wasIns)) {
-        if (!g_teleOn) Msg("ENABLE TELEMETRY FIRST (END)");
-        else if (!EnsureDeviceHooks()) Msg("DUMP: device hooks failed");
-        else { g_dumpRequested = true; Msg("DUMP: armed (1 frame)"); }
-    }
-
     // PAGEUP — метка сценария
     static bool wasPgUp = false;
     if (KeyEdge(VK_PRIOR, wasPgUp)) {
         g_mark++;
-        Log(SFmt("=== MARK %d === mode=%s entmode=%d modal=%s pause=%d frame=%d", g_mark, kModeNames[g_mode], g_entMirror,
-            ModalName().c_str(), (ogame && ogame->IsOnPause()) ? 1 : 0, g_frame));
+        Log(SFmt("=== MARK %d === frame=%d mode=%s", g_mark, g_frame, kModeNames[g_mode]));
         Msg(SFmt("MARK %d", g_mark));
-    }
-
-    // Страховка: дамп, который не успел закончиться (например, открыто меню)
-    if (g_dumpActive && GetTickCount() - g_dumpStartTick > 3000) FinishDump();
-
-    // Детектинг изменения UI-состояния (только при телеметрии)
-    static zCView* lastModal = NULL;
-    static int lastPause = -1;
-    zCView* curModal = zCView::modal;
-    int curPause = (ogame && ogame->IsOnPause()) ? 1 : 0;
-    if (curModal != lastModal) {
-        if (g_teleOn) {
-            if (curModal) Log(SFmt("UI modal opened: %s ptr=0x%08lX mark=%d frame=%d", ClassOf((zCObject*)curModal).c_str(), (unsigned long)(size_t)curModal, g_mark, g_frame));
-            else Log(SFmt("UI modal closed mark=%d frame=%d", g_mark, g_frame));
-        }
-        lastModal = curModal;
-    }
-    if (curPause != lastPause) {
-        if (g_teleOn && lastPause != -1) Log(SFmt("UI pause=%d mark=%d frame=%d modal=%s", curPause, g_mark, g_frame, ModalName().c_str()));
-        lastPause = curPause;
-    }
-
-    // Сигналы карты: пишем только изменения (телеметрия включена)
-    static int lastSig = -1;
-    if (g_teleOn) {
-        int sig = (ogame && screen) ? MapSignals() : 0;
-        if (sig != lastSig) {
-            Log(SFmt("MAPSIG bits=0x%X (mapView=%d docIsMap=%d dlgOnScreen=%d mgrEnabled=%d) onScreenNow=%d modal=%s mark=%d frame=%d", sig,
-                sig & 1, (sig >> 1) & 1, (sig >> 2) & 1, (sig >> 3) & 1, MapOnScreenNow() ? 1 : 0,
-                ModalName().c_str(), g_mark, g_frame));
-            lastSig = sig;
-        }
-    }
-
-    // ── Телеметрия движений ГГ (раз в ~200 мс) ──
-    if (g_teleOn && player) {
-        static DWORD lastMovTick = 0;
-        DWORD now = GetTickCount();
-        if (now - lastMovTick >= 200) {
-            lastMovTick = now;
-
-            // Позиция ГГ (мировая, из VOB): в zMAT4 translation лежит в последнем СТОЛБЦЕ
-            float px = player->trafoObjToWorld.v[0][3];
-            float py = player->trafoObjToWorld.v[1][3];
-            float pz = player->trafoObjToWorld.v[2][3];
-
-            // Позиция корня скелета (Bip01): ищем узел без родителя
-            float bx = 0.0f, by = 0.0f, bz = 0.0f;
-            bool haveBip = false;
-            zCModel* mdl = player->GetModel();
-            if (mdl) {
-                zCArray<zCModelNodeInst*>* arr = (zCArray<zCModelNodeInst*>*)((char*)mdl + 0x70);
-                if (arr) {
-                    int n = arr->GetNumInList();
-                    zCModelNodeInst** nodes = arr->GetArray();
-                    for (int i = 0; i < n && i < 512; i++) {
-                        zCModelNodeInst* ni = nodes[i];
-                        if (ni && !ni->parentNode) {
-                            zVEC3 w = mdl->GetNodePositionWorld(ni);
-                            bx = w.n[0]; by = w.n[1]; bz = w.n[2];
-                            haveBip = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Локальная часть смещения корня = bip − pos (что именно «внутри» скелета)
-            float lx = bx - px, ly = by - py, lz = bz - pz;
-
-            static float pPrev[3] = {0,0,0}, bPrev[3] = {0,0,0}, lPrev[3] = {0,0,0};
-            static bool havePrev = false;
-            if (havePrev) {
-                Log(SFmt("MOV pos=(%.1f, %.1f, %.1f) dPos=(%.2f, %.2f, %.2f) | bip=(%.1f, %.1f, %.1f) dBip=(%.2f, %.2f, %.2f) | local=(%.1f, %.1f, %.1f) dLocal=(%.2f, %.2f, %.2f) ent=%d move=%d frame=%d",
-                    px, py, pz,
-                    px - pPrev[0], py - pPrev[1], pz - pPrev[2],
-                    bx, by, bz,
-                    bx - bPrev[0], by - bPrev[1], bz - bPrev[2],
-                    lx, ly, lz,
-                    lx - lPrev[0], ly - lPrev[1], lz - lPrev[2],
-                    g_entMirror ? 1 : 0, g_moveMirror, g_frame));
-            } else {
-                Log(SFmt("MOV pos=(%.1f, %.1f, %.1f) | bip=(%.1f, %.1f, %.1f) | local=(%.1f, %.1f, %.1f) haveBip=%d ent=%d move=%d frame=%d",
-                    px, py, pz, bx, by, bz, lx, ly, lz, haveBip ? 1 : 0, g_entMirror ? 1 : 0, g_moveMirror, g_frame));
-            }
-            pPrev[0] = px; pPrev[1] = py; pPrev[2] = pz;
-            bPrev[0] = bx; bPrev[1] = by; bPrev[2] = bz;
-            lPrev[0] = lx; lPrev[1] = ly; lPrev[2] = lz;
-            havePrev = true;
-        }
     }
 }
 
-void Game_PostLoop() { DumpText("event Game_PostLoop"); }
+void Game_PostLoop() { }
 
 void Game_MenuLoop() { }
 
