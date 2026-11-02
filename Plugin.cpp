@@ -21,11 +21,16 @@
 //
 // ЧТО НОВОГО ОТНОСИТЕЛЬНО V1.4.1:
 //   - УБРАНЫ режимы BLT, GPUv8, GPUv10 и тест "[" (present-mirror).
-//   - Исправлены слоты vtable для DrawPrimitiveVB/DrawIndexedPrimitiveVB
-//     (были 31/32, стало 32/33 — см. ZM_VB_SLOT_OFFSET, если на конкретной
-//     машине слоты отличаются).
+//   - Хуки на ВСЕ методы отрисовки устройства: DrawPrimitive(25),
+//     DrawIndexedPrimitive(26), DrawPrimitiveStrided(29),
+//     DrawIndexedPrimitiveStrided(30), DrawPrimitiveVB(31),
+//     DrawIndexedPrimitiveVB(32) — порядок слотов по SDK-заголовку
+//     Union (DirectX7), он нестандартный (там есть MultiplyTransform,
+//     SetClipStatus, Strided и т.д.).
 //   - Зеркалирование TL-вершин теперь работает и для вершинных буферов
 //     (раньше только для "сырых" DrawPrimitive, которые движок не использует).
+//     Метод: in-place флип X + откат (в этом SDK нет CreateVertexBuffer,
+//     поэтому временный VB создать нельзя).
 //   - Карта: первичное зеркалирование — переворот области просмотра карты
 //     на бэкбуфере в конце кадра (EndScene). Управляется ZM_MAP_REGION_FLIP.
 //   - Телеметрия переработана: убрано логирование чтения клавиш, добавлены
@@ -64,12 +69,6 @@
 #include <thread>
 
 // ── Переключатели экспериментальных возможностей ──
-// Если на твоей машине VB-слоты vtable D3D7 сдвинуты (проверяется по дампу:
-// в SUMMARY не видно DP/DIPVB), поставь 1 → хуки встанут на 33/34.
-#ifndef ZM_VB_SLOT_OFFSET
-#define ZM_VB_SLOT_OFFSET 0
-#endif
-
 // Переворот области карты на бэкбуфере (первичное зеркалирование карты).
 // 0 = отключить (если даёт артефакты на твоей машине).
 #ifndef ZM_MAP_REGION_FLIP
@@ -255,6 +254,8 @@ typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawPrimitive)(IDirect3DDevice7*, D3DPRI
 typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawIndexedPrimitive)(IDirect3DDevice7*, D3DPRIMITIVETYPE, DWORD, LPVOID, DWORD, LPWORD, DWORD, DWORD);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawPrimitiveVB)(IDirect3DDevice7*, D3DPRIMITIVETYPE, void*, DWORD, DWORD, DWORD);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawIndexedPrimitiveVB)(IDirect3DDevice7*, D3DPRIMITIVETYPE, void*, DWORD, DWORD, LPWORD, DWORD, DWORD);
+typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawPrimitiveStrided)(IDirect3DDevice7*, D3DPRIMITIVETYPE, DWORD, LPD3DDRAWPRIMITIVESTRIDEDDATA, DWORD, DWORD);
+typedef HRESULT (STDMETHODCALLTYPE *PFN_DrawIndexedPrimitiveStrided)(IDirect3DDevice7*, D3DPRIMITIVETYPE, DWORD, LPD3DDRAWPRIMITIVESTRIDEDDATA, DWORD, LPWORD, DWORD, DWORD);
 
 PFN_BeginScene            g_oBeginScene = NULL;
 PFN_EndScene              g_oEndScene = NULL;
@@ -266,6 +267,8 @@ PFN_DrawPrimitive         g_oDP = NULL;
 PFN_DrawIndexedPrimitive  g_oDIP = NULL;
 PFN_DrawPrimitiveVB       g_oDPVB = NULL;
 PFN_DrawIndexedPrimitiveVB g_oDIPVB = NULL;
+PFN_DrawPrimitiveStrided  g_oDPS = NULL;
+PFN_DrawIndexedPrimitiveStrided g_oDIPS = NULL;
 
 bool g_devHooked = false;
 DWORD g_engCull = D3DCULL_CCW;        // последнее значение CULLMODE, которое запросил ДВИЖОК
@@ -349,7 +352,7 @@ std::string MatStr(const D3DMATRIX& m) {
 
 // ───────────────────────── Дамп одного кадра вызовов D3D7 (телеметрия, INSERT) ─────────────────────────
 struct DumpEntry {
-    int kind;                 // 0=текст, 1=DP, 2=DIP, 3=DPVB, 4=DIPVB, 12=агрегат SetTransform(WORLD), 13=агрегат PROJ/OTHER
+    int kind;                 // 0=текст, 1=DP, 2=DIP, 3=DPVB, 4=DIPVB, 5=DPS, 6=DIPS, 12=агрегат SetTransform(WORLD), 13=агрегат PROJ/OTHER
     std::string text;
     DWORD prim, fvf, cull, caller;
     char phase;               // W = главный мир, w = другой мир, U = UI/после мира
@@ -462,26 +465,27 @@ void FinishDump() {
     if (!g_dumpActive) return;
     g_dumpActive = false;
 
-    struct Sum { int tl, xyz, other, vb; unsigned long long tlV, xyzV; } sum[3];
+    struct Sum { int tl, xyz, other, vb, strid; unsigned long long tlV, xyzV, stridV; } sum[3];
     memset(sum, 0, sizeof(sum));
     for (size_t i = 0; i < g_dump.size(); i++) {
         const DumpEntry& e = g_dump[i];
-        if (e.kind < 1 || e.kind > 4) continue;
+        if (e.kind < 1 || e.kind > 6) continue;
         int pi = (e.phase == 'W') ? 0 : (e.phase == 'w') ? 1 : 2;
-        if (e.kind >= 3) sum[pi].vb += e.calls;
+        if (e.kind == 3 || e.kind == 4) sum[pi].vb += e.calls;
+        else if (e.kind == 5 || e.kind == 6) { sum[pi].strid += e.calls; sum[pi].stridV += e.verts; }
         if (IsTLFvf(e.fvf)) { sum[pi].tl += e.calls; sum[pi].tlV += e.verts; }
         else if ((e.fvf & 0x00E) != 0) { sum[pi].xyz += e.calls; sum[pi].xyzV += e.verts; }
         else sum[pi].other += e.calls;
     }
 
-    static const char* kn[5] = { "", "DP", "DIP", "DPVB", "DIPVB" };
+    static const char* kn[7] = { "", "DP", "DIP", "DPVB", "DIPVB", "DPS", "DIPS" };
     std::string out;
     out += SFmt("\n===== DUMP #%d  mode=%s ent=%d frame=%d entries=%d dropped=%d =====\n",
         g_dumpNo, kModeNames[g_mode], g_entMirror ? 1 : 0, g_frame, (int)g_dump.size(), g_dumpDropped);
     static const char* pn[3] = { "W (main world)", "w (other worlds)", "U (after world / UI)" };
     for (int p = 0; p < 3; p++)
-        out += SFmt("SUMMARY phase %-20s : TL(XYZRHW) calls=%d verts=%llu | XYZ(3D) calls=%d verts=%llu | other=%d | of which VB-calls=%d\n",
-            pn[p], sum[p].tl, sum[p].tlV, sum[p].xyz, sum[p].xyzV, sum[p].other, sum[p].vb);
+        out += SFmt("SUMMARY phase %-20s : TL(XYZRHW) calls=%d verts=%llu | XYZ(3D) calls=%d verts=%llu | other=%d | VB-calls=%d | Strided-calls=%d verts=%llu\n",
+            pn[p], sum[p].tl, sum[p].tlV, sum[p].xyz, sum[p].xyzV, sum[p].other, sum[p].vb, sum[p].strid, sum[p].stridV);
     out += "-----\n";
 
     for (size_t i = 0; i < g_dump.size(); i++) {
@@ -614,50 +618,26 @@ DWORD VbFvf(void* vb) {
 }
 
 // ── TL-зеркалирование через вершинные буферы (PFX/скайбокс/декали/часть UI) ──
-// Исходный VB не трогаем: читаем его через Lock, пишем зеркальную копию в
-// кэшированный временный VB (SYSTEMMEM) и рисуем из него с start=0.
-struct TlVbCache { IDirect3DVertexBuffer7* vb; DWORD fvf; DWORD cap; };
-static TlVbCache g_tlVbCache = { NULL, 0, 0 };
-
-IDirect3DVertexBuffer7* MirrorTLVb(void* vb, DWORD fvf, DWORD start, DWORD count) {
-    if (!vb || count == 0) return NULL;
+// В этом SDK нет IDirect3DDevice7::CreateVertexBuffer, поэтому временный VB
+// создать нельзя. Работаем in-place: зеркалим X в диапазоне вершин, даём
+// отрисовать, затем откатываем (второй флип возвращает исходные данные).
+// D3D7 Immediate Mode выполняет DrawPrimitiveVB синхронно, поэтому откат
+// сразу после вызова безопасен.
+bool FlipTLVbRange(void* vb, DWORD fvf, DWORD start, DWORD count) {
     DWORD stride = FvfStride(fvf);
-    if (stride < 16) { g_tlVbFailed++; return NULL; }
+    if (stride < 16 || !vb || count == 0) return false;
     IDirect3DVertexBuffer7* ovb = (IDirect3DVertexBuffer7*)vb;
-    BYTE* src = NULL;
-    if (FAILED(ovb->Lock(D3DLOCK_READONLY, (BYTE**)&src, NULL)) || !src) {
-        // некоторые драйверы запрещают read-lock на WRITEONLY-буферах — пробуем без флагов
-        if (FAILED(ovb->Lock(0, (BYTE**)&src, NULL)) || !src) {
-            g_tlVbFailed++;
-            return NULL;
-        }
-    }
-    IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
-    if (!dev) { ovb->Unlock(); g_tlVbFailed++; return NULL; }
-    if (!g_tlVbCache.vb || g_tlVbCache.fvf != fvf || g_tlVbCache.cap < count) {
-        if (g_tlVbCache.vb) { g_tlVbCache.vb->Release(); g_tlVbCache.vb = NULL; }
-        DWORD want = (count + 1023) & ~1023u;
-        if (FAILED(dev->CreateVertexBuffer(want * stride, D3DUSAGE_WRITEONLY, fvf, D3DPOOL_SYSTEMMEM, &g_tlVbCache.vb, NULL))) {
-            g_tlVbCache.vb = NULL; g_tlVbCache.fvf = 0; g_tlVbCache.cap = 0;
-            ovb->Unlock(); g_tlVbFailed++; return NULL;
-        }
-        g_tlVbCache.fvf = fvf;
-        g_tlVbCache.cap = want;
-    }
-    BYTE* dst = NULL;
-    if (FAILED(g_tlVbCache.vb->Lock(D3DLOCK_DISCARD, (BYTE**)&dst, NULL)) || !dst) {
-        ovb->Unlock(); g_tlVbFailed++; return NULL;
-    }
+    LPVOID p = NULL;
+    if (FAILED(ovb->Lock(0, &p, NULL)) || !p) return false;
     float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
+    BYTE* base = (BYTE*)p + (size_t)start * stride;
     size_t maxIdx = (size_t)count * stride;
     for (size_t i = 0; i < maxIdx; i += stride) {
-        memcpy(dst + i, src + (size_t)start * stride + i, stride);
-        float* p = (float*)(dst + i);
-        p[0] = cx - p[0];
+        float* v = (float*)(base + i);
+        v[0] = cx - v[0];
     }
-    g_tlVbCache.vb->Unlock();
     ovb->Unlock();
-    return g_tlVbCache.vb;
+    return true;
 }
 
 HRESULT STDMETHODCALLTYPE Hook_Dev_DrawPrimitiveVB(IDirect3DDevice7* self, D3DPRIMITIVETYPE pt, void* vb, DWORD start, DWORD count, DWORD fl) {
@@ -665,14 +645,17 @@ HRESULT STDMETHODCALLTYPE Hook_Dev_DrawPrimitiveVB(IDirect3DDevice7* self, D3DPR
     bool mir = g_devWorldMirror && IsTLFvf(f) && g_haveVp;
     if (g_dumpActive) DumpDraw(3, (DWORD)pt, f, count, 0, NULL, (DWORD)(size_t)_ReturnAddress(), mir);
     if (mir) {
-        IDirect3DVertexBuffer7* tbv = MirrorTLVb(vb, f, start, count);
-        if (tbv) {
+        if (FlipTLVbRange(vb, f, start, count)) {
             static bool loggedOk = false;
-            if (!loggedOk) { loggedOk = true; Log("TL-VB mirror: first success (PFX/skybox/UI-TL path active)"); }
-            g_tlVbMirrored++; return g_oDPVB(self, pt, tbv, 0, count, fl);
+            if (!loggedOk) { loggedOk = true; Log("TL-VB mirror: first in-place flip OK (PFX/skybox/UI-TL path active)"); }
+            g_tlVbMirrored++;
+            HRESULT hr = g_oDPVB(self, pt, vb, start, count, fl);
+            FlipTLVbRange(vb, f, start, count);   // откат
+            return hr;
         }
         static bool loggedFail = false;
-        if (!loggedFail) { loggedFail = true; Log(SFmt("TL-VB mirror: first failure (lock/CreateVertexBuffer) fvf=0x%03lX count=%lu", (unsigned long)f, (unsigned long)count)); }
+        if (!loggedFail) { loggedFail = true; Log(SFmt("TL-VB mirror: first failure (Lock) fvf=0x%03lX count=%lu", (unsigned long)f, (unsigned long)count)); }
+        g_tlVbFailed++;
     }
     return g_oDPVB(self, pt, vb, start, count, fl);
 }
@@ -682,10 +665,28 @@ HRESULT STDMETHODCALLTYPE Hook_Dev_DrawIndexedPrimitiveVB(IDirect3DDevice7* self
     bool mir = g_devWorldMirror && IsTLFvf(f) && g_haveVp;
     if (g_dumpActive) DumpDraw(4, (DWORD)pt, f, vcount, icount, NULL, (DWORD)(size_t)_ReturnAddress(), mir);
     if (mir) {
-        IDirect3DVertexBuffer7* tbv = MirrorTLVb(vb, f, start, vcount);
-        if (tbv) { g_tlVbMirrored++; return g_oDIPVB(self, pt, tbv, 0, vcount, idx, icount, fl); }
+        if (FlipTLVbRange(vb, f, start, vcount)) {
+            g_tlVbMirrored++;
+            HRESULT hr = g_oDIPVB(self, pt, vb, start, vcount, idx, icount, fl);
+            FlipTLVbRange(vb, f, start, vcount);   // откат
+            return hr;
+        }
+        g_tlVbFailed++;
     }
     return g_oDIPVB(self, pt, vb, start, vcount, idx, icount, fl);
+}
+
+// Strided-методы: только логирование (TL-зеркалирование для них не делаем —
+// данные приходят разреженным массивом; если окажется, что PFX/скайбокс
+// рисуются именно так, добавим отдельный обработчик).
+HRESULT STDMETHODCALLTYPE Hook_Dev_DrawPrimitiveStrided(IDirect3DDevice7* self, D3DPRIMITIVETYPE pt, DWORD fvf, LPD3DDRAWPRIMITIVESTRIDEDDATA data, DWORD count, DWORD fl) {
+    if (g_dumpActive) DumpDraw(5, (DWORD)pt, fvf, count, 0, NULL, (DWORD)(size_t)_ReturnAddress(), false);
+    return g_oDPS(self, pt, fvf, data, count, fl);
+}
+
+HRESULT STDMETHODCALLTYPE Hook_Dev_DrawIndexedPrimitiveStrided(IDirect3DDevice7* self, D3DPRIMITIVETYPE pt, DWORD fvf, LPD3DDRAWPRIMITIVESTRIDEDDATA data, DWORD vcount, LPWORD idx, DWORD icount, DWORD fl) {
+    if (g_dumpActive) DumpDraw(6, (DWORD)pt, fvf, vcount, icount, NULL, (DWORD)(size_t)_ReturnAddress(), false);
+    return g_oDIPS(self, pt, fvf, data, vcount, idx, icount, fl);
 }
 
 template <class F>
@@ -718,15 +719,17 @@ bool EnsureDeviceHooks() {
     ok = PatchSlot(vt, 8,  &Hook_Dev_SetRenderTarget,       g_oSetRT) && ok;   // слот 8 = SetRenderTarget (слот 9 = GetRenderTarget!)
     ok = PatchSlot(vt, 11, &Hook_Dev_SetTransform,          g_oSetTransform) && ok;
     ok = PatchSlot(vt, 13, &Hook_Dev_SetViewport,           g_oSetViewport) && ok;
-    ok = PatchSlot(vt, 20, &Hook_Dev_SetRenderState,        g_oSetRS) && ok;   // эмпирически на этой сборке SetRenderState = 20
+    ok = PatchSlot(vt, 20, &Hook_Dev_SetRenderState,        g_oSetRS) && ok;   // SDK-порядок: SetRenderState = 20 (нестандартный vtable!)
     ok = PatchSlot(vt, 25, &Hook_Dev_DrawPrimitive,         g_oDP) && ok;
     ok = PatchSlot(vt, 26, &Hook_Dev_DrawIndexedPrimitive,  g_oDIP) && ok;
-    ok = PatchSlot(vt, 32 + ZM_VB_SLOT_OFFSET, &Hook_Dev_DrawPrimitiveVB, g_oDPVB) && ok;
-    ok = PatchSlot(vt, 33 + ZM_VB_SLOT_OFFSET, &Hook_Dev_DrawIndexedPrimitiveVB, g_oDIPVB) && ok;
+    ok = PatchSlot(vt, 29, &Hook_Dev_DrawPrimitiveStrided,  g_oDPS) && ok;
+    ok = PatchSlot(vt, 30, &Hook_Dev_DrawIndexedPrimitiveStrided, g_oDIPS) && ok;
+    ok = PatchSlot(vt, 31, &Hook_Dev_DrawPrimitiveVB,       g_oDPVB) && ok;
+    ok = PatchSlot(vt, 32, &Hook_Dev_DrawIndexedPrimitiveVB, g_oDIPVB) && ok;
 
     g_devHooked = ok;
-    Log(ok ? SFmt("device hooks installed (cull=%lu, viewport %lux%lu, vbSlotOffset=%d)",
-        (unsigned long)g_engCull, (unsigned long)g_vp.dwWidth, (unsigned long)g_vp.dwHeight, ZM_VB_SLOT_OFFSET)
+    Log(ok ? SFmt("device hooks installed (cull=%lu, viewport %lux%lu, slots DP25/DIP26/DPS29/DIPS30/DPVB31/DIPVB32)",
+        (unsigned long)g_engCull, (unsigned long)g_vp.dwWidth, (unsigned long)g_vp.dwHeight)
            : std::string("device hooks: FAILED (see slots)"));
     return ok;
 }
@@ -1086,6 +1089,10 @@ int __fastcall Hook_Vob_Render(zCVob* self, zTRenderContext& ctx) {
 }
 
 // ───────────────────────── Хук zCWorld::Render ─────────────────────────
+inline bool IsMainWorld(zCWorld* w) {
+    return ogame && w == (zCWorld*)ogame->GetGameWorld();
+}
+
 void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam);
 CInvoke<void(__fastcall*)(zCWorld*, void*, zCCamera&)> Ivk_World_Render(0x00621700, &Hook_World_Render);
 void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
@@ -1145,9 +1152,7 @@ void Game_Entry() {
 
 void Game_Init() { }
 
-void Game_Exit() {
-    if (g_tlVbCache.vb) { g_tlVbCache.vb->Release(); g_tlVbCache.vb = NULL; }
-}
+void Game_Exit() { }
 
 void Game_PreLoop() { DumpText("event Game_PreLoop"); }
 
