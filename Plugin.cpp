@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════
-// zMirrorTest V1.5.1
+// zMirrorTest V1.5.2
 // Плагин зеркального режима для Gothic 2 NotR (Union SDK, G2A).
 //
 // УПРАВЛЕНИЕ:
@@ -7,9 +7,13 @@
 //              ванилла = FLIP, внешний ddraw-враппер (GD3D11/dgVoodoo) = PROJ).
 //   END      — телеметрия ON/OFF (лог zMirror_log.txt + дамп zMirror_dump.txt).
 //   ]        — зеркалирование сущностей (все NPC) ON/OFF (любой режим).
-//   PAGEDOWN — режим детекта карты: AUTO(строгий) → LENIENT → DOCONLY → FORCE_ON → FORCE_OFF.
 //   INSERT   — (телеметрия включена) дамп ОДНОГО кадра.
 //   PAGEUP   — метка сценария в логе.
+//
+// КАРТА: детект фиксированный (LENIENT): карта считается открытой, если известен
+// объект oCViewDocumentMap, последний показанный документ — карта, и менеджер
+// документов принимает ввод. Книги/обычные документы НЕ триггерят зеркалирование.
+// PgDn и альтернативные режимы детекта удалены.
 //
 // РЕЖИМЫ ЗЕРКАЛА:
 //   CPU  — переворот строк бэкбуфера (Lock + SSE2).
@@ -45,6 +49,8 @@
 //   V1.5.1 — фикс вылета карты (сигнатура oCDocumentManager::Show: id берётся из edx);
 //            чистка: CPU-режим убран из цикла HOME, DELETE и «[» удалены
 //            (бэкенд авто, FLIP не требует инверсии полигонов).
+//   V1.5.2 — удалён PgDn и все альтернативные режимы детекта карты; детект
+//            зафиксирован на LENIENT (единственный стабильный).
 // ═══════════════════════════════════════════════════════════════════
 
 #include "resource.h"
@@ -166,10 +172,7 @@ zCView* g_mapView = NULL;   // последний открытый oCViewDocumen
 int g_mapUpdCount = 0;
 int g_finalFlips = 0;        // сколько раз сделан финальный переворот (для лога)
 
-// Детект открытой карты (режимы PAGEDOWN)
-enum { MAPD_AUTO = 0, MAPD_LENIENT = 1, MAPD_DOCONLY = 2, MAPD_ON = 3, MAPD_OFF = 4, MAPD_COUNT = 5 };
-const char* const kMapDetNames[MAPD_COUNT] = { "AUTO", "LENIENT", "DOCONLY", "FORCE_ON", "FORCE_OFF" };
-int  g_mapDet = MAPD_AUTO;
+// Детект открытой карты — фиксированный LENIENT:
 bool g_mapDocIsMap = false;     // последний показанный документ — карта
 bool g_mapUpdInShow = false;    // UpdatePosition вызван внутри Show()
 int  g_docShowDepth = 0;
@@ -414,10 +417,10 @@ void FinishDump() {
     out += "-----\n";
     out += SFmt("ENGINE this frame: DrawPolySimple verts=%d x=[%.0f..%.0f] | DrawVertexBuffer-TL verts=%d x=[%.0f..%.0f]\n",
         g_dumpPS, g_psMinX, g_psMaxX, g_dumpVBTL, g_vbTlMinX, g_vbTlMaxX);
-    out += SFmt("BACKEND mode=%s pref=%s usesFlip=%d wrapper=%d | GPUFLIP state=%d adj=(%d,%d) tex=%lux%lu framesOk=%ld | MAP det=%s sig=0x%X finalFlip=%d finalFlipsTotal=%d\n",
+    out += SFmt("BACKEND mode=%s pref=%s usesFlip=%d wrapper=%d | GPUFLIP state=%d adj=(%d,%d) tex=%lux%lu framesOk=%ld | MAP sig=0x%X finalFlip=%d finalFlipsTotal=%d\n",
         kModeNames[g_mode], kBackendNames[g_backendPref], GpuUsesFlip() ? 1 : 0, g_wrapperDetected ? 1 : 0,
         g_gf.state, g_gf.adjX, g_gf.adjY, (unsigned long)g_gf.texW, (unsigned long)g_gf.texH, g_gf.framesOk,
-        kMapDetNames[g_mapDet], MapSignals(), g_frameFinalFlip ? 1 : 0, g_finalFlips);
+        MapSignals(), g_frameFinalFlip ? 1 : 0, g_finalFlips);
     {
         long wE = 0, pE = 0, oE = 0;
         for (int p = 0; p < 3; p++) { wE += g_aggWorldExtra[p]; pE += g_aggProjOtherExtra[p][0]; oE += g_aggProjOtherExtra[p][1]; }
@@ -893,14 +896,12 @@ int MapSignals() {
 }
 
 bool MapOnScreenNow() {
-    if (g_mapDet == MAPD_ON) return true;
-    if (g_mapDet == MAPD_OFF) return false;
+    // Фиксированный LENIENT: карта открыта = mapView есть + последний документ карта
+    // + менеджер документов принимает ввод. Книги/документы не триггерят.
     if (!ogame || !screen) return false;
     int s = MapSignals();
     if (!(s & 1) || !(s & 2)) return false;
-    if (g_mapDet == MAPD_DOCONLY) return true;
-    if (g_mapDet == MAPD_LENIENT) return (s & (4 | 8)) != 0;
-    return (s & 4) && (s & 8);   // AUTO: строго
+    return (s & 8) != 0;   // mgrEnabled (без требования dlgOnScreen — он не всегда виден)
 }
 
 // ~oCViewDocumentMap — очистка указателя карты при закрытии/удалении
@@ -1288,8 +1289,8 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
 // ───────────────────────── События Union ─────────────────────────
 void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.5.1 loaded\n", false);
-    WriteText("zMirror_dump.txt", "zMirrorTest V1.5.1 dump file\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.5.2 loaded\n", false);
+    WriteText("zMirror_dump.txt", "zMirrorTest V1.5.2 dump file\n", false);
 }
 
 void Game_Init() { }
@@ -1322,14 +1323,6 @@ void Game_Loop() {
         Log(std::string("mirror mode: ") + kModeNames[g_mode]);
         if (g_mode == MODE_GPU) Msg(SFmt("MIRROR MODE: GPU [%s]", GpuUsesFlip() ? "FLIP" : "PROJ"));
         else Msg("MIRROR MODE: OFF");
-    }
-
-    // PAGEDOWN — режим детекта карты
-    static bool wasPgDn = false;
-    if (KeyEdge(VK_NEXT, wasPgDn)) {
-        g_mapDet = (g_mapDet + 1) % MAPD_COUNT;
-        Log(SFmt("map detect mode: %s (sig=0x%X)", kMapDetNames[g_mapDet], (ogame && screen) ? MapSignals() : 0));
-        Msg(SFmt("MAP DETECT: %s", kMapDetNames[g_mapDet]));
     }
 
     // END — телеметрия
@@ -1391,8 +1384,8 @@ void Game_Loop() {
     if (g_teleOn) {
         int sig = (ogame && screen) ? MapSignals() : 0;
         if (sig != lastSig) {
-            Log(SFmt("MAPSIG bits=0x%X (mapView=%d docIsMap=%d dlgOnScreen=%d mgrEnabled=%d) det=%s onScreenNow=%d modal=%s mark=%d frame=%d", sig,
-                sig & 1, (sig >> 1) & 1, (sig >> 2) & 1, (sig >> 3) & 1, kMapDetNames[g_mapDet], MapOnScreenNow() ? 1 : 0,
+            Log(SFmt("MAPSIG bits=0x%X (mapView=%d docIsMap=%d dlgOnScreen=%d mgrEnabled=%d) onScreenNow=%d modal=%s mark=%d frame=%d", sig,
+                sig & 1, (sig >> 1) & 1, (sig >> 2) & 1, (sig >> 3) & 1, MapOnScreenNow() ? 1 : 0,
                 ModalName().c_str(), g_mark, g_frame));
             lastSig = sig;
         }
