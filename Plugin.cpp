@@ -531,7 +531,7 @@ void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, z
         if (copy.size() < (size_t)count) copy.resize(count);
         memcpy(&copy[0], verts, sizeof(zTRndSimpleVertex) * (size_t)count);
         float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
-        for (int i = 0; i < count; i++) copy[i].pos.x = cx - copy[i].pos.x;
+        for (int i = 0; i < count; i++) copy[i].pos.n[0] = cx - copy[i].pos.n[0];
         g_psMirrored += count;
         Ivk_Rnd_DrawPolySimple(self, edx, tex, &copy[0], count);
         return;
@@ -547,7 +547,7 @@ int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* 
         if (start >= 0 && start + count <= (int)vb->numVertex) {
             float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
             zVEC4* p = vb->array.XYZRHWPtr + start;
-            for (int i = 0; i < count; i++) p[i].x = cx - p[i].x;
+            for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];
             mirrored = true;
             g_vbTlMirrored += count;
             if (g_dumpActive) g_dumpVBTL += count;
@@ -557,7 +557,7 @@ int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* 
     if (mirrored) {
         float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
         zVEC4* p = vb->array.XYZRHWPtr + start;
-        for (int i = 0; i < count; i++) p[i].x = cx - p[i].x;   // откат
+        for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];   // откат
     }
     return r;
 }
