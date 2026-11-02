@@ -1094,13 +1094,15 @@ bool MapViewPixelRect(zCView* mv, int& x1, int& y1, int& x2, int& y2) {
             mv->vposx, mv->vposy, mv->vsizex, mv->vsizey,
             mv->isOpen ? 1 : 0, mv->isClosed ? 1 : 0, (unsigned long)(size_t)mv->owner));
     }
-    long vx = mv->vposx, vy = mv->vposy, vw = mv->vsizex, vh = mv->vsizey;
+    // Координаты view лежат по смещению +40 от self (см. MAP RAWHEX: [10..13]).
+    // Чтение через поля zCView* невозможно: первый базовый класс у oCViewDocumentMap —
+    // zCObject (vtable 0x0083BACC), поэтому поля сдвинуты.
+    long vx = *(long*)((char*)mv + 40);
+    long vy = *(long*)((char*)mv + 44);
+    long vw = *(long*)((char*)mv + 48);
+    long vh = *(long*)((char*)mv + 52);
     // Строгая валидация: только «нормальные» виртуальные координаты (0..8192).
-    // Если поля содержат мусор (как в MAX raw) — НЕ флипаем и НЕ логируем покадрово.
     if (vx < 0 || vy < 0 || vw <= 0 || vh <= 0 || vw > 8192 || vh > 8192) return false;
-    zCView* p = mv->owner;
-    int guard = 0;
-    while (p && p != screen && guard++ < 32) { vx += p->vposx; vy += p->vposy; p = p->owner; }
     x1 = screen->nax((int)vx);
     y1 = screen->nay((int)vy);
     x2 = screen->nax((int)(vx + vw));
