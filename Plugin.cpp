@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════
-// zMirrorTest V1.5.4
+// zMirrorTest V1.5.5
 // Плагин зеркального режима для Gothic 2 NotR (Union SDK, G2A).
 //
 // УПРАВЛЕНИЕ:
@@ -67,6 +67,11 @@
 //            MATRIX_RIGHT / MATRIX_FULL (фантом) / SKELETON_LOCAL.
 //   V1.5.4 — `]` = эталон (MATRIX_RIGHT) только для ГГ; `[` = тестовые уровни
 //            зеркалирования перемещений (SKEL_TRAFO / ROOT_ONLY); телеметрия MOV.
+//   V1.5.5 — фикс телеметрии MOV: позиция VOB читается из последнего СТОЛБЦА
+//            (v[0][3], v[1][3], v[2][3]), а не строки; добавлена разность
+//            local = bip − pos (локальная часть смещения корня).
+//            ФИКС `[`-уровней: отрицание трансляции теперь по v[0][3] (pos.x),
+//            а не по v[3][0] (который всегда 0 — поэтому ранее эффекта не было).
 // ═══════════════════════════════════════════════════════════════════
 
 #include "resource.h"
@@ -1224,8 +1229,9 @@ bool IsNpcVob(zCVob* v) {
 }
 
 // ───────────────────────── Зеркалирование перемещений (тест) ─────────────────────────
-// Отрицаем X-компоненту ТРАНСЛЯЦИИ локальных матриц костей (v[3][0] — pos.x в zMAT4),
-// не трогая вращение. Намотка полигонов не меняется → cull-паритет не нужен.
+// В zMAT4 translation лежит в последнем СТОЛБЦЕ: pos = (v[0][3], v[1][3], v[2][3]).
+// Отрицаем X-компоненту translation (v[0][3]) у локальных матриц костей,
+// не трогая вращение (намотка полигонов не меняется → cull-паритет не нужен).
 // zCModelNodeInst::trafo — offset 0x0C; zCModel::nodeList — offset 0x70.
 void MirrorSkeletonTranslations(zCModel* model, bool rootOnly) {
     if (!model) return;
@@ -1240,7 +1246,7 @@ void MirrorSkeletonTranslations(zCModel* model, bool rootOnly) {
         if (!ni) continue;
         if (rootOnly && ni->parentNode) continue;   // только корень (Bip01)
         zMAT4* t = (zMAT4*)((char*)ni + 0x0C);
-        t->v[3][0] = -t->v[3][0];
+        t->v[0][3] = -t->v[0][3];
     }
 }
 
@@ -1345,8 +1351,8 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
 // ───────────────────────── События Union ─────────────────────────
 void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.5.4 loaded\n", false);
-    WriteText("zMirror_dump.txt", "zMirrorTest V1.5.4 dump file\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.5.5 loaded\n", false);
+    WriteText("zMirror_dump.txt", "zMirrorTest V1.5.5 dump file\n", false);
 }
 
 void Game_Init() { }
@@ -1462,10 +1468,10 @@ void Game_Loop() {
         if (now - lastMovTick >= 200) {
             lastMovTick = now;
 
-            // Позиция ГГ (мировая, из VOB): zMAT4 v[3][0..2]
-            float px = player->trafoObjToWorld.v[3][0];
-            float py = player->trafoObjToWorld.v[3][1];
-            float pz = player->trafoObjToWorld.v[3][2];
+            // Позиция ГГ (мировая, из VOB): в zMAT4 translation лежит в последнем СТОЛБЦЕ
+            float px = player->trafoObjToWorld.v[0][3];
+            float py = player->trafoObjToWorld.v[1][3];
+            float pz = player->trafoObjToWorld.v[2][3];
 
             // Позиция корня скелета (Bip01): ищем узел без родителя
             float bx = 0.0f, by = 0.0f, bz = 0.0f;
@@ -1488,21 +1494,27 @@ void Game_Loop() {
                 }
             }
 
-            static float pPrev[3] = {0,0,0}, bPrev[3] = {0,0,0};
+            // Локальная часть смещения корня = bip − pos (что именно «внутри» скелета)
+            float lx = bx - px, ly = by - py, lz = bz - pz;
+
+            static float pPrev[3] = {0,0,0}, bPrev[3] = {0,0,0}, lPrev[3] = {0,0,0};
             static bool havePrev = false;
             if (havePrev) {
-                Log(SFmt("MOV pos=(%.1f, %.1f, %.1f) dPos=(%.2f, %.2f, %.2f) | bip=(%.1f, %.1f, %.1f) dBip=(%.2f, %.2f, %.2f) ent=%d move=%d frame=%d",
+                Log(SFmt("MOV pos=(%.1f, %.1f, %.1f) dPos=(%.2f, %.2f, %.2f) | bip=(%.1f, %.1f, %.1f) dBip=(%.2f, %.2f, %.2f) | local=(%.1f, %.1f, %.1f) dLocal=(%.2f, %.2f, %.2f) ent=%d move=%d frame=%d",
                     px, py, pz,
                     px - pPrev[0], py - pPrev[1], pz - pPrev[2],
                     bx, by, bz,
                     bx - bPrev[0], by - bPrev[1], bz - bPrev[2],
+                    lx, ly, lz,
+                    lx - lPrev[0], ly - lPrev[1], lz - lPrev[2],
                     g_entMirror ? 1 : 0, g_moveMirror, g_frame));
             } else {
-                Log(SFmt("MOV pos=(%.1f, %.1f, %.1f) | bip=(%.1f, %.1f, %.1f) haveBip=%d ent=%d move=%d frame=%d",
-                    px, py, pz, bx, by, bz, haveBip ? 1 : 0, g_entMirror ? 1 : 0, g_moveMirror, g_frame));
+                Log(SFmt("MOV pos=(%.1f, %.1f, %.1f) | bip=(%.1f, %.1f, %.1f) | local=(%.1f, %.1f, %.1f) haveBip=%d ent=%d move=%d frame=%d",
+                    px, py, pz, bx, by, bz, lx, ly, lz, haveBip ? 1 : 0, g_entMirror ? 1 : 0, g_moveMirror, g_frame));
             }
             pPrev[0] = px; pPrev[1] = py; pPrev[2] = pz;
             bPrev[0] = bx; bPrev[1] = by; bPrev[2] = bz;
+            lPrev[0] = lx; lPrev[1] = ly; lPrev[2] = lz;
             havePrev = true;
         }
     }
