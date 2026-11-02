@@ -59,6 +59,8 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <utility>
+#include <functional>
 #include <fstream>
 #include <algorithm>
 #include <cmath>
@@ -154,6 +156,8 @@ int g_psMirrored = 0;      // сколько вершин DrawPolySimple отз�
 int g_vbTlMirrored = 0;    // сколько TL-вершин DrawVertexBuffer отзеркалено (GPU)
 int g_dumpPS = 0;          // дамп: всего вершин DrawPolySimple за кадр
 int g_dumpVBTL = 0;        // дамп: всего TL-вершин DrawVertexBuffer за кадр
+float g_psMinX = 1e30f, g_psMaxX = -1e30f;      // диапазон X у DrawPolySimple (мир)
+float g_vbTlMinX = 1e30f, g_vbTlMaxX = -1e30f;  // диапазон X у TL-DrawVertexBuffer (мир)
 
 void PerfReset() {
     memset(&g_perf, 0, sizeof(g_perf));
@@ -371,7 +375,7 @@ struct DumpEntry {
         calls(0), verts(0), idx(0), minX(1e30f), maxX(-1e30f), minY(1e30f), maxY(-1e30f), rhw0(0), tlSamples(false) {}
 };
 
-const size_t kDumpCap = 12000;
+const size_t kDumpCap = 256;   // лимит ДЕТАЛЬНЫХ записей; дальше — только агрегаты
 std::vector<DumpEntry> g_dump;
 bool g_dumpRequested = false;
 bool g_dumpActive = false;
@@ -379,6 +383,17 @@ int  g_dumpNo = 0;
 DWORD g_dumpStartTick = 0;
 int  g_dumpDropped = 0;
 bool g_dumpSawPrint = false;
+
+// Агрегаты всегда (независимо от лимита деталей):
+// g_agg[фаза][kind] — вызовы, g_aggV — вершины, g_aggI — индексы.
+long g_agg[3][7];
+long g_aggV[3][7];
+long g_aggI[3][7];
+long g_aggWorldExtra[3];          // SetTransform WORLD сверх деталей
+long g_aggProjOtherExtra[3][2];   // [фаза][0=PROJ, 1=OTHER] сверх деталей
+long g_worldDetailN = 0;          // сколько детальных WORLD-матриц уже записано
+long g_projOtherDetailN[3][2];
+std::map<DWORD, int> g_dumpCallers;  // адрес вызывающего -> сколько вызовов
 
 std::map<void*, DWORD> g_vbFvf;
 
@@ -413,6 +428,10 @@ void SampleTL(DumpEntry& e, const void* verts, DWORD fvf, DWORD n) {
 
 void DumpDraw(int kind, DWORD prim, DWORD fvf, DWORD vcount, DWORD icount, const void* verts, DWORD caller, bool tlMirrored) {
     if (!g_dumpActive) return;
+    int pi = (g_inMainWorld ? 0 : (g_worldDepth > 0 ? 1 : 2));
+    if (kind >= 1 && kind <= 6) { g_agg[pi][kind]++; g_aggV[pi][kind] += vcount; g_aggI[pi][kind] += icount; }
+    if (g_dumpCallers.size() < 128) g_dumpCallers[caller]++;
+    if (g_dump.size() >= kDumpCap) { g_dumpDropped++; return; }
     bool flip = CullFlipNow();
     char ph = CurPhase();
     if (!g_dump.empty()) {
@@ -424,7 +443,6 @@ void DumpDraw(int kind, DWORD prim, DWORD fvf, DWORD vcount, DWORD icount, const
             return;
         }
     }
-    if (g_dump.size() >= kDumpCap) { g_dumpDropped++; return; }
     DumpEntry e;
     e.kind = kind; e.prim = prim; e.fvf = fvf; e.cull = g_engCull; e.caller = caller; e.phase = ph;
     e.flip = flip; e.tlMirrored = tlMirrored; e.calls = 1; e.verts = vcount; e.idx = icount;
@@ -434,22 +452,21 @@ void DumpDraw(int kind, DWORD prim, DWORD fvf, DWORD vcount, DWORD icount, const
 
 void DumpTransform(DWORD type, const D3DMATRIX* m) {
     if (!g_dumpActive || !m) return;
+    int pi = (g_inMainWorld ? 0 : (g_worldDepth > 0 ? 1 : 2));
     const char* n = (type == 1) ? "WORLD" : (type == 2) ? "VIEW" : (type == 3) ? "PROJ" : "OTHER";
     if (type == 1) {
-        if (!g_dump.empty() && g_dump.back().kind == 12 && g_dump.back().phase == CurPhase()) { g_dump.back().calls++; return; }
-        if (g_dump.size() >= kDumpCap) { g_dumpDropped++; return; }
+        // Детально пишем только первые 12 различных WORLD-матриц
+        if (g_dump.size() >= kDumpCap || g_worldDetailN >= 12) { g_aggWorldExtra[pi]++; return; }
+        g_worldDetailN++;
         DumpEntry e; e.kind = 12; e.phase = CurPhase(); e.calls = 1;
         e.text = std::string("SetTransform WORLD first=") + MatStr(*m);
         g_dump.push_back(e);
         return;
     }
-    // PROJ/OTHER: агрегируем подряд идущие одинаковые матрицы
+    int tj = (type == 3) ? 0 : 1;
+    if (g_dump.size() >= kDumpCap || g_projOtherDetailN[pi][tj] >= 6) { g_aggProjOtherExtra[pi][tj]++; return; }
+    g_projOtherDetailN[pi][tj]++;
     std::string t = std::string("SetTransform ") + n + (g_devWorldMirror ? " (device-mirrored: col0 negated)" : "") + " " + MatStr(*m);
-    if (!g_dump.empty()) {
-        DumpEntry& l = g_dump.back();
-        if (l.kind == 13 && l.phase == CurPhase() && l.text == t) { l.calls++; return; }
-    }
-    if (g_dump.size() >= kDumpCap) { g_dumpDropped++; return; }
     DumpEntry e; e.kind = 13; e.phase = CurPhase(); e.calls = 1; e.text = t;
     g_dump.push_back(e);
 }
@@ -459,6 +476,16 @@ void StartDump() {
     g_vbFvf.clear();
     g_dumpDropped = 0; g_dumpSawPrint = false;
     g_dumpPS = 0; g_dumpVBTL = 0;
+    g_psMinX = 1e30f; g_psMaxX = -1e30f;
+    g_vbTlMinX = 1e30f; g_vbTlMaxX = -1e30f;
+    memset(g_agg, 0, sizeof(g_agg));
+    memset(g_aggV, 0, sizeof(g_aggV));
+    memset(g_aggI, 0, sizeof(g_aggI));
+    memset(g_aggWorldExtra, 0, sizeof(g_aggWorldExtra));
+    memset(g_aggProjOtherExtra, 0, sizeof(g_aggProjOtherExtra));
+    g_worldDetailN = 0;
+    memset(g_projOtherDetailN, 0, sizeof(g_projOtherDetailN));
+    g_dumpCallers.clear();
     g_dumpRequested = false;
     g_dumpActive = true;
     g_dumpNo++;
@@ -473,30 +500,38 @@ void FinishDump() {
     if (!g_dumpActive) return;
     g_dumpActive = false;
 
-    struct Sum { int tl, xyz, other, vb, strid; unsigned long long tlV, xyzV, stridV; } sum[3];
-    memset(sum, 0, sizeof(sum));
-    for (size_t i = 0; i < g_dump.size(); i++) {
-        const DumpEntry& e = g_dump[i];
-        if (e.kind < 1 || e.kind > 6) continue;
-        int pi = (e.phase == 'W') ? 0 : (e.phase == 'w') ? 1 : 2;
-        if (e.kind == 3 || e.kind == 4) sum[pi].vb += e.calls;
-        else if (e.kind == 5 || e.kind == 6) { sum[pi].strid += e.calls; sum[pi].stridV += e.verts; }
-        if (IsTLFvf(e.fvf)) { sum[pi].tl += e.calls; sum[pi].tlV += e.verts; }
-        else if ((e.fvf & 0x00E) != 0) { sum[pi].xyz += e.calls; sum[pi].xyzV += e.verts; }
-        else sum[pi].other += e.calls;
-    }
-
     static const char* kn[7] = { "", "DP", "DIP", "DPVB", "DIPVB", "DPS", "DIPS" };
+    static const char* pn[3] = { "W (main world)", "w (other worlds)", "U (after world / UI)" };
     std::string out;
     out += SFmt("\n===== DUMP #%d  mode=%s ent=%d frame=%d entries=%d dropped=%d =====\n",
         g_dumpNo, kModeNames[g_mode], g_entMirror ? 1 : 0, g_frame, (int)g_dump.size(), g_dumpDropped);
-    static const char* pn[3] = { "W (main world)", "w (other worlds)", "U (after world / UI)" };
-    for (int p = 0; p < 3; p++)
-        out += SFmt("SUMMARY phase %-20s : TL(XYZRHW) calls=%d verts=%llu | XYZ(3D) calls=%d verts=%llu | other=%d | VB-calls=%d | Strided-calls=%d verts=%llu\n",
-            pn[p], sum[p].tl, sum[p].tlV, sum[p].xyz, sum[p].xyzV, sum[p].other, sum[p].vb, sum[p].strid, sum[p].stridV);
+    for (int p = 0; p < 3; p++) {
+        out += SFmt("SUMMARY phase %-20s : ", pn[p]);
+        for (int k = 1; k <= 6; k++)
+            out += SFmt("%s=%ld/%lld ", kn[k], g_agg[p][k], (long long)g_aggV[p][k]);
+        out += "\n";
+    }
     out += "-----\n";
-    out += SFmt("ENGINE this frame: DrawPolySimple verts=%d | DrawVertexBuffer-TL verts=%d | mapView=%s\n",
-        g_dumpPS, g_dumpVBTL, g_mapView ? "tracked" : "none");
+    out += SFmt("ENGINE this frame: DrawPolySimple verts=%d x=[%.0f..%.0f] | DrawVertexBuffer-TL verts=%d x=[%.0f..%.0f] | mapView=%s\n",
+        g_dumpPS, g_psMinX, g_psMaxX, g_dumpVBTL, g_vbTlMinX, g_vbTlMaxX,
+        g_mapView ? "tracked" : "none");
+    {
+        long wE = 0, pE = 0, oE = 0;
+        for (int p = 0; p < 3; p++) { wE += g_aggWorldExtra[p]; pE += g_aggProjOtherExtra[p][0]; oE += g_aggProjOtherExtra[p][1]; }
+        out += SFmt("SetTransform (not detailed): WORLD=%ld PROJ=%ld OTHER=%ld\n", wE, pE, oE);
+    }
+    if (g_dumpDropped > 0) out += SFmt("TRUNCATED details (budget %u entries) — aggregates above are full\n", (unsigned)kDumpCap);
+    if (!g_dumpCallers.empty()) {
+        out += "TOP CALLERS (draw/engine, by calls):\n";
+        std::vector<std::pair<int, DWORD> > v;
+        for (std::map<DWORD, int>::iterator it = g_dumpCallers.begin(); it != g_dumpCallers.end(); ++it)
+            v.push_back(std::make_pair(it->second, it->first));
+        std::sort(v.begin(), v.end(), std::greater<std::pair<int, DWORD> >());
+        int n = (int)v.size(); if (n > 20) n = 20;
+        for (int i = 0; i < n; i++)
+            out += SFmt("  0x%08lX x%d\n", (unsigned long)v[i].second, v[i].first);
+    }
+    out += "-----\n";
 
     for (size_t i = 0; i < g_dump.size(); i++) {
         const DumpEntry& e = g_dump[i];
@@ -525,8 +560,21 @@ void FinishDump() {
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
 CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(0x0064AC30, &Hook_Rnd_DrawPolySimple);
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
-    if (g_dumpActive && verts && count > 0) g_dumpPS += count;
+    if (g_dumpActive && verts && count > 0) {
+        g_dumpPS += count;
+        if (g_dumpCallers.size() < 128) g_dumpCallers[(DWORD)(size_t)_ReturnAddress()]++;
+    }
     if (g_devWorldMirror && g_haveVp && verts && count > 0 && count <= 200000) {
+        static bool loggedSample = false;
+        for (int i = 0; i < count && i < 64; i++) {
+            if (verts[i].pos.n[0] < g_psMinX) g_psMinX = verts[i].pos.n[0];
+            if (verts[i].pos.n[0] > g_psMaxX) g_psMaxX = verts[i].pos.n[0];
+        }
+        if (!loggedSample) {
+            loggedSample = true;
+            Log(SFmt("PS sample: x0=%.1f y0=%.1f z=%.1f uv=(%.2f,%.2f) count=%d (mirror branch)", verts[0].pos.n[0],
+                verts[0].pos.n[1], verts[0].z, verts[0].uv.n[0], verts[0].uv.n[1], count));
+        }
         static std::vector<zTRndSimpleVertex> copy;
         if (copy.size() < (size_t)count) copy.resize(count);
         memcpy(&copy[0], verts, sizeof(zTRndSimpleVertex) * (size_t)count);
@@ -543,10 +591,20 @@ int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* 
 CInvoke<int(__fastcall*)(void*, void*, zCVertexBuffer*, int, int, unsigned short*, unsigned long)> Ivk_Rnd_DrawVertexBuffer(0x006519F0, &Hook_Rnd_DrawVertexBuffer);
 int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* vb, int start, int count, unsigned short* idx, unsigned long fl) {
     bool mirrored = false;
+    if (g_dumpActive && g_dumpCallers.size() < 128) g_dumpCallers[(DWORD)(size_t)_ReturnAddress()]++;
     if (g_devWorldMirror && g_haveVp && vb && count > 0 && vb->array.XYZRHWPtr) {
         if (start >= 0 && start + count <= (int)vb->numVertex) {
             float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
             zVEC4* p = vb->array.XYZRHWPtr + start;
+            for (int i = 0; i < count && i < 64; i++) {
+                if (p[i].n[0] < g_vbTlMinX) g_vbTlMinX = p[i].n[0];
+                if (p[i].n[0] > g_vbTlMaxX) g_vbTlMaxX = p[i].n[0];
+            }
+            static bool loggedSample = false;
+            if (!loggedSample && count > 0) {
+                loggedSample = true;
+                Log(SFmt("VB-TL sample: x0=%.1f y0=%.1f z=%.1f w=%.1f count=%d", p[0].n[0], p[0].n[1], p[0].n[2], p[0].n[3], count));
+            }
             for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];
             mirrored = true;
             g_vbTlMirrored += count;
@@ -1092,8 +1150,7 @@ void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
     DumpText("EVENT oCViewDocumentMap::UpdatePosition");
     Ivk_MapView_UpdatePosition(self, edx);
     g_mapView = self;   // запоминаем объект карты (даже если класс отдаётся как zCViewDialog)
-    // Авто-арм дампа при открытии карты — чтобы поймать кадр с отрисовкой карты.
-    if (g_teleOn && !g_dumpActive && !g_dumpRequested) g_dumpRequested = true;
+    // (авто-арм дампа убран: дампы — только по INSERT)
 }
 #endif
 
