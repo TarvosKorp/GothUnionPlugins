@@ -1,30 +1,31 @@
 // ═══════════════════════════════════════════════════════════════════
-// zMirrorTest V1.5.6
+// zMirrorTest V1.6.0
 // Плагин зеркального режима для Gothic 2 NotR (Union SDK, G2A).
 //
 // УПРАВЛЕНИЕ:
-//   HOME — переключение зеркала: OFF ↔ GPU.
-//          GPU-бэкенд подбирается автоматически:
-//            ванилла → FLIP (переворот готового кадра на видеокарте),
-//            внешний ddraw-враппер (GD3D11/dgVoodoo) → PROJ (проекция+cull+TL).
-//   END  — телеметрия ON/OFF (лог zMirror_log.txt: PERF-замеры FPS).
-//   PAGEUP — метка сценария (MARK) в логе.
+//   HOME   — зеркало OFF <-> GPU (бэкенд авто: ванилла = FLIP, GD3D11/ddraw-враппер = PROJ).
+//   END    — телеметрия ON/OFF (PERF-замеры в zMirror_log.txt).
+//   PAGEUP — метка MARK в логе + ДАМП карты: при открытой карте пишет в лог список
+//            DrawPolySimple-квадов кадра (текстура/рамка/попадание) — строки "MAPDUMP".
+//   [      — метод зеркалирования КАРТЫ: AUTO -> FINAL -> SELECT -> AUTO.
+//              SELECT — зеркалятся только квады карты (картинка + маячок) в DrawPolySimple:
+//                       HUD не трогается, нет доп. прохода, работает и на GD3D11.
+//              FINAL  — старый метод: переворот всего кадра в Vid_Blit (только ванилла).
+//              AUTO   — SELECT, а если квады карты не найдены — FINAL (ванилла).
+//   ]      — ТЕСТ намотки полигонов для GD3D11 (PROJ): OFF -> FLIPCCW -> CULLNONE -> FLIPCCW_VP -> OFF.
+//              Хук ID3D11DeviceContext::RSSetState: во время рендера мира подменяет
+//              растеризатор GD3D11 (инверт FrontCounterClockwise / CullMode=NONE).
 //
-// ЧТО РАБОТАЕТ:
-//   - GPU-FLIP (ванилла): полное зеркалирование кадра на GPU (мир, скайбокс,
-//     PFX, NPC, тени) без потерь FPS; калибровка по пикселям и авто-откат на CPU.
-//   - GPU-PROJ (GD3D11/dgVoodoo): зеркалирование мира проекцией + cull + TL.
-//   - Своп LR-клавиш и инверсия мыши X в зеркале; в модальных окнах и при
-//     взломе замков своп отключается.
-//   - Надписи фокуса (NPC/предметы/Mobsi) зеркалятся по X.
-//   - Карта: первичная тест-заглушка — пока открыта карта, кадр зеркалится
-//     целиком в конце кадра (Hook_Rnd_VidBlit). Книги/документы не триггерят.
-//     Известные ограничения: инверсия HUD-баров и просадка FPS.
+// ЧТО РАБОТАЕТ (см. Instructions.md/Ideas.txt):
+//   - GPU-FLIP (ванилла): переворот готового кадра на GPU без потерь FPS.
+//   - GPU-PROJ (GD3D11): отражение проекции + TL-вершин; намотка — тест на "]".
+//   - Своп LR-клавиш/мыши, надписи фокуса, анти-своп в модалках и взломе.
 // ═══════════════════════════════════════════════════════════════════
 
 #include "resource.h"
 #include <string>
 #include <vector>
+#include <map>
 #include <fstream>
 #include <algorithm>
 #include <cmath>
@@ -120,6 +121,27 @@ inline bool FlipModeActive() { return g_mode == MODE_GPU && GpuUsesFlip(); }
 bool g_frameFinalFlip = false;
 bool g_worldRenderedThisFrame = false;
 
+// Карта: способ зеркалирования ("[") и выборочный режим (квады карты в DrawPolySimple)
+enum { MAPM_AUTO = 0, MAPM_FINAL = 1, MAPM_SELECT = 2, MAPM_COUNT = 3 };
+const char* const kMapModeNames[MAPM_COUNT] = { "AUTO", "FINAL", "SELECT" };
+int   g_mapMode = MAPM_AUTO;
+bool  g_frameMapOpen = false;    // карта открыта в этом кадре (решено при рендере мира)
+bool  g_mapSelOk = false;        // выборочный путь найден (квады карты реально проходят через DrawPolySimple)
+bool  g_mapPageSeen = false;     // картинка карты уже встречена в этом кадре
+float g_mapL = 0, g_mapR = 0;    // рамка картинки карты по X (пиксели)
+int   g_selCand = 0;             // кандидаты (квады карты) в этом кадре
+int   g_selApplied = 0;          // зеркалено квадов (для PERF)
+bool  g_mapDumpArm = false;      // PAGEUP: дамп квадов при открытой карте
+struct MapQuadRec { std::string tex; int n; float x0, x1, y0, y1; int hit; };
+std::vector<MapQuadRec> g_mapDump;
+
+// Тест намотки GD3D11 ("]")
+enum { PT_OFF = 0, PT_FLIPCCW = 1, PT_CULLNONE = 2, PT_FLIPCCW_VP = 3, PT_COUNT = 4 };
+const char* const kPolyTestNames[PT_COUNT] = { "OFF", "FLIPCCW", "CULLNONE", "FLIPCCW_VP" };
+int  g_polyTest = PT_OFF;
+bool g_d11Tried = false, g_d11Ok = false;
+int  g_rsCalls = 0, g_rsSubst = 0, g_rsInstances = 0;
+
 int g_mark = 0;            // счётчик меток сценария (PAGEUP)
 void SyncMouseFlip();      // forward (определена ниже)
 
@@ -196,11 +218,12 @@ void PerfFrame() {
     if (g_perf.frames >= 300) {
         double avg = g_perf.frameSum / g_perf.frames;
         double am = g_perf.mirrorN ? g_perf.mirrorSum / g_perf.mirrorN : 0.0;
-        Log(SFmt("PERF mode=%s backend=%s frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms psMirrored=%d vbTlMirrored=%d gf(state=%d ok=%ld)",
+        Log(SFmt("PERF mode=%s backend=%s frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms psMirrored=%d vbTlMirrored=%d gf(state=%d ok=%ld) map(mode=%s selOk=%d applied=%d) poly(test=%s hook=%d calls=%d subst=%d inst=%d)",
             kModeNames[g_mode], g_mode == MODE_GPU ? (GpuUsesFlip() ? "FLIP" : "PROJ") : "-", g_perf.frames, avg, 1000.0 / avg, am,
-            g_psMirrored, g_vbTlMirrored, g_gf.state, g_gf.framesOk));
+            g_psMirrored, g_vbTlMirrored, g_gf.state, g_gf.framesOk, kMapModeNames[g_mapMode], g_mapSelOk ? 1 : 0, g_selApplied,
+            kPolyTestNames[g_polyTest], g_d11Ok ? 1 : 0, g_rsCalls, g_rsSubst, g_rsInstances));
         g_perf.frameSum = 0; g_perf.frames = 0; g_perf.mirrorSum = 0; g_perf.mirrorN = 0;
-        g_psMirrored = 0; g_vbTlMirrored = 0;
+        g_psMirrored = 0; g_vbTlMirrored = 0; g_selApplied = 0; g_rsCalls = 0; g_rsSubst = 0;
     }
 }
 
@@ -350,6 +373,95 @@ bool EnsureDeviceHooks() {
     Log(ok ? SFmt("device hooks installed (cull=%lu, viewport %lux%lu, slots SetTransform11/SetViewport13/SetRenderState20)",
         (unsigned long)g_engCull, (unsigned long)g_vp.dwWidth, (unsigned long)g_vp.dwHeight)
            : std::string("device hooks: FAILED (see slots)"));
+    return ok;
+}
+
+// ───────────────────────── GD3D11: тест намотки (хук ID3D11DeviceContext::RSSetState) ─────────────────────────
+// Без заголовков d3d11.h: vtable-слоты и структура описаны вручную.
+// Контекст берём из «пробного» устройства: vtable класса контекста общая для всех контекстов d3d11.dll.
+struct ZmRastDesc { int Fill, Cull, FrontCCW, DepthBias; float DepthBiasClamp, SlopeBias; int DepthClip, Scissor, Multisample, AALine; };
+typedef void (STDMETHODCALLTYPE *PFN_RSSetState)(void*, void*);
+typedef void (STDMETHODCALLTYPE *PFN_RSSetViewports)(void*, UINT, const float*);
+typedef void (STDMETHODCALLTYPE *PFN_RsGetDesc)(void*, ZmRastDesc*);
+typedef void (STDMETHODCALLTYPE *PFN_GetDev)(void*, void**);
+typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateRS)(void*, const ZmRastDesc*, void**);
+typedef ULONG (STDMETHODCALLTYPE *PFN_Rel)(void*);
+
+PFN_RSSetState     g_oRSSetState = NULL;
+PFN_RSSetViewports g_oRSSetVP = NULL;
+void* g_rsCtx = NULL;
+void* g_rsLastOrig = NULL;
+bool  g_rsHaveOrig = false;
+float g_rsVpW = 0.0f;
+std::map<size_t, void*> g_rsCache;
+
+inline void** Vt(void* o) { return *(void***)o; }
+
+void* RsVariant(void* st, int kind) {   // kind 1 = инверт FrontCounterClockwise, 2 = CullMode NONE
+    if (!st) return st;
+    size_t key = ((size_t)st << 2) | (size_t)kind;
+    std::map<size_t, void*>::iterator it = g_rsCache.find(key);
+    if (it != g_rsCache.end()) return it->second;
+    void* res = st;
+    ZmRastDesc d; memset(&d, 0, sizeof(d));
+    ((PFN_RsGetDesc)Vt(st)[7])(st, &d);
+    if (kind == 1) d.FrontCCW = d.FrontCCW ? 0 : 1; else d.Cull = 1;   // D3D11_CULL_NONE = 1
+    void* dev = NULL;
+    ((PFN_GetDev)Vt(st)[3])(st, &dev);
+    if (dev) {
+        void* ns = NULL;
+        if (SUCCEEDED(((PFN_CreateRS)Vt(dev)[22])(dev, &d, &ns)) && ns) { res = ns; g_rsInstances++; }
+        ((PFN_Rel)Vt(dev)[2])(dev);
+    }
+    g_rsCache[key] = res;
+    return res;
+}
+
+inline bool RsSubstActive() {
+    if (g_polyTest == PT_OFF || !g_devWorldMirror) return false;
+    if (g_polyTest == PT_FLIPCCW_VP) return g_rsVpW > 0.0f && g_haveVp && fabsf(g_rsVpW - (float)g_vp.dwWidth) < 2.0f;
+    return true;
+}
+
+void RsReapply() {   // переустановить текущий растеризатор (смена области действия)
+    if (!g_rsCtx || !g_oRSSetState || !g_rsHaveOrig) return;
+    void* st = g_rsLastOrig;
+    if (RsSubstActive()) st = RsVariant(st, g_polyTest == PT_CULLNONE ? 2 : 1);
+    g_oRSSetState(g_rsCtx, st);
+}
+
+void STDMETHODCALLTYPE Hook_RSSetState(void* ctx, void* st) {
+    g_rsCtx = ctx; g_rsLastOrig = st; g_rsHaveOrig = true; g_rsCalls++;
+    if (RsSubstActive()) { st = RsVariant(st, g_polyTest == PT_CULLNONE ? 2 : 1); g_rsSubst++; }
+    g_oRSSetState(ctx, st);
+}
+
+void STDMETHODCALLTYPE Hook_RSSetViewports(void* ctx, UINT n, const float* vp) {
+    if (n && vp) g_rsVpW = vp[2];   // D3D11_VIEWPORT: TopLeftX, TopLeftY, Width, Height, MinDepth, MaxDepth
+    g_oRSSetVP(ctx, n, vp);
+    if (g_polyTest == PT_FLIPCCW_VP && g_devWorldMirror) RsReapply();
+}
+
+bool InstallD3D11Hooks() {
+    if (g_d11Tried) return g_d11Ok;
+    g_d11Tried = true;
+    HMODULE h = LoadLibraryA("d3d11.dll");
+    if (!h) { Log("D3D11 hook: d3d11.dll not found"); return false; }
+    typedef HRESULT (WINAPI *PFN_CD)(void*, UINT, HMODULE, UINT, const UINT*, UINT, UINT, void**, UINT*, void**);
+    PFN_CD cd = (PFN_CD)GetProcAddress(h, "D3D11CreateDevice");
+    if (!cd) { Log("D3D11 hook: D3D11CreateDevice missing"); return false; }
+    const UINT levels[3] = { 0xB000, 0xA100, 0xA000 };
+    void* dev = NULL; void* ctx = NULL; UINT fl = 0;
+    HRESULT hr = cd(NULL, 1 /*HARDWARE*/, NULL, 0, levels, 3, 7, &dev, &fl, &ctx);
+    if (FAILED(hr) || !ctx) hr = cd(NULL, 5 /*WARP*/, NULL, 0, levels, 3, 7, &dev, &fl, &ctx);
+    if (FAILED(hr) || !ctx) { Log(SFmt("D3D11 hook: probe device failed hr=0x%08lX", (unsigned long)hr)); return false; }
+    void** vt = Vt(ctx);
+    bool ok = PatchSlot(vt, 43, &Hook_RSSetState, g_oRSSetState);
+    ok = PatchSlot(vt, 44, &Hook_RSSetViewports, g_oRSSetVP) && ok;
+    ((PFN_Rel)Vt(ctx)[2])(ctx);
+    if (dev) ((PFN_Rel)Vt(dev)[2])(dev);
+    g_d11Ok = ok;
+    Log(SFmt("D3D11 hook: RSSetState/RSSetViewports vtable patch %s (featureLevel=0x%X)", ok ? "OK" : "FAILED", fl));
     return ok;
 }
 
@@ -626,6 +738,44 @@ void MirrorFrame(bool inScene) {
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
 CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(0x0064AC30, &Hook_Rnd_DrawPolySimple);
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
+    // Карта (SELECT/AUTO): зеркалим ТОЛЬКО квады карты — картинку и всё, что нарисовано после неё в её рамке (маячок).
+    if (g_frameMapOpen && g_mapMode != MAPM_FINAL && verts && count > 0 && count <= 64) {
+        float mn = 1e30f, mx = -1e30f, my0 = 1e30f, my1 = -1e30f;
+        for (int i = 0; i < count; i++) {
+            float x = verts[i].pos.n[0], y = verts[i].pos.n[1];
+            if (x < mn) mn = x; if (x > mx) mx = x; if (y < my0) my0 = y; if (y > my1) my1 = y;
+        }
+        std::string nm = "<null>";
+        bool isPage = false;
+        if (tex) {
+            zSTRING zn = tex->GetObjectName();
+            const char* c = zn.ToChar();
+            nm = c ? c : "";
+            isPage = (c && _strnicmp(c, "MAP", 3) == 0);
+            if (!isPage && !g_mapPageSeen) {   // запасной признак: крупный текстурный квад (карта с нестандартным именем)
+                zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
+                if (rnd && rnd->xd3d_scrWidth > 0 && rnd->xd3d_scrHeight > 0 &&
+                    (mx - mn) >= 0.3f * (float)rnd->xd3d_scrWidth && (my1 - my0) >= 0.4f * (float)rnd->xd3d_scrHeight) isPage = true;
+            }
+        }
+        bool hit = false;
+        if (isPage) { g_mapL = mn; g_mapR = mx; g_mapPageSeen = true; hit = true; }
+        else if (g_mapPageSeen && mn >= g_mapL - 1.0f && mx <= g_mapR + 1.0f) hit = true;
+        if (g_mapDumpArm && g_mapDump.size() < 64) { MapQuadRec r = { nm, count, mn, mx, my0, my1, hit ? 1 : 0 }; g_mapDump.push_back(r); }
+        if (hit) {
+            g_selCand++;
+            if (!g_frameFinalFlip) {
+                static std::vector<zTRndSimpleVertex> mcopy;
+                if (mcopy.size() < (size_t)count) mcopy.resize(count);
+                memcpy(&mcopy[0], verts, sizeof(zTRndSimpleVertex) * (size_t)count);
+                float cx = g_mapL + g_mapR;
+                for (int i = 0; i < count; i++) mcopy[i].pos.n[0] = cx - mcopy[i].pos.n[0];
+                g_selApplied++;
+                Ivk_Rnd_DrawPolySimple(self, edx, tex, &mcopy[0], count);
+                return;
+            }
+        }
+    }
     if (g_devWorldMirror && g_haveVp && verts && count > 0 && count <= 200000) {
         static std::vector<zTRndSimpleVertex> copy;
         if (copy.size() < (size_t)count) copy.resize(count);
@@ -754,12 +904,21 @@ void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
 void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagRECT* r2);
 CInvoke<void(__fastcall*)(void*, void*, int, tagRECT*, tagRECT*)> Ivk_Rnd_VidBlit(0x00657670, &Hook_Rnd_VidBlit);
 void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagRECT* r2) {
-    bool doFlip = false;
-    if (FlipModeActive()) {
-        if (g_frameFinalFlip) doFlip = true;
-        else if (!g_worldRenderedThisFrame && MapOnScreenNow()) doFlip = true;
+    bool doFlip = FlipModeActive() && g_frameFinalFlip;
+    if (g_frameMapOpen && g_selCand > 0 && !g_mapSelOk) { g_mapSelOk = true; Log(SFmt("MAP select path found: %d quad(s), page L=%.0f R=%.0f", g_selCand, g_mapL, g_mapR)); }
+    if (g_mapDumpArm && g_frameMapOpen) {
+        for (size_t i = 0; i < g_mapDump.size(); i++) {
+            const MapQuadRec& r = g_mapDump[i];
+            Log(SFmt("MAPDUMP #%d tex='%s' n=%d x=[%.0f..%.0f] y=[%.0f..%.0f] hit=%d", (int)i, r.tex.c_str(), r.n, r.x0, r.x1, r.y0, r.y1, r.hit));
+        }
+        Log(SFmt("MAPDUMP summary: quads=%d cand=%d pageSeen=%d L=%.0f R=%.0f mode=%s selOk=%d finalFlip=%d sig=0x%X", (int)g_mapDump.size(), g_selCand,
+            g_mapPageSeen ? 1 : 0, g_mapL, g_mapR, kMapModeNames[g_mapMode], g_mapSelOk ? 1 : 0, g_frameFinalFlip ? 1 : 0, MapSignals()));
+        g_mapDump.clear(); g_mapDumpArm = false;
     }
     g_frameFinalFlip = false;
+    g_frameMapOpen = false;
+    g_mapPageSeen = false;
+    g_selCand = 0;
     g_worldRenderedThisFrame = false;
     if (doFlip) {
         zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
@@ -964,7 +1123,8 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
         g_inMainWorld = true;
         if (g_teleOn) PerfFrame();
         g_worldRenderedThisFrame = true;
-        g_frameFinalFlip = useFlip && MapOnScreenNow();
+        g_frameMapOpen = MirrorOn() && MapOnScreenNow();
+        g_frameFinalFlip = useFlip && g_frameMapOpen && (g_mapMode == MAPM_FINAL || (g_mapMode == MAPM_AUTO && !g_mapSelOk));
 
         if (useProj) {
             if (EnsureDeviceHooks()) {
@@ -973,6 +1133,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
                 devMirrorStarted = true;
                 SyncCull();
                 SyncProj();
+                if (g_polyTest != PT_OFF) RsReapply();
             }
             else {
                 static bool w = false;
@@ -991,6 +1152,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
             g_worldCullFlip = false;
             SyncCull();
             SyncProj();
+            if (g_polyTest != PT_OFF) RsReapply();
         }
         if (useFlip && !g_frameFinalFlip) MirrorFrame(true);   // карта открыта → переворот будет в конце кадра
         g_uiPhase = true;
@@ -1000,7 +1162,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
 // ───────────────────────── События Union ─────────────────────────
 void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.5.6 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.6.0 loaded\n", false);
 }
 
 void Game_Init() { }
@@ -1045,8 +1207,30 @@ void Game_Loop() {
     static bool wasPgUp = false;
     if (KeyEdge(VK_PRIOR, wasPgUp)) {
         g_mark++;
-        Log(SFmt("=== MARK %d === frame=%d mode=%s", g_mark, g_frame, kModeNames[g_mode]));
-        Msg(SFmt("MARK %d", g_mark));
+        Log(SFmt("=== MARK %d === frame=%d mode=%s mapMode=%s polyTest=%s", g_mark, g_frame, kModeNames[g_mode], kMapModeNames[g_mapMode], kPolyTestNames[g_polyTest]));
+        g_mapDumpArm = true; g_mapDump.clear();
+        Msg(SFmt("MARK %d (map dump armed)", g_mark));
+    }
+
+    // [ — метод зеркалирования карты: AUTO -> FINAL -> SELECT
+    static bool wasLB = false;
+    if (KeyEdge(VK_OEM_4, wasLB)) {
+        g_mapMode = (g_mapMode + 1) % MAPM_COUNT;
+        g_mapSelOk = false;
+        Log(SFmt("map mode: %s", kMapModeNames[g_mapMode]));
+        Msg(SFmt("MAP MODE: %s", kMapModeNames[g_mapMode]));
+    }
+
+    // ] — тест намотки полигонов GD3D11: OFF -> FLIPCCW -> CULLNONE -> FLIPCCW_VP
+    static bool wasRB = false;
+    if (KeyEdge(VK_OEM_6, wasRB)) {
+        g_polyTest = (g_polyTest + 1) % PT_COUNT;
+        if (g_polyTest != PT_OFF && !InstallD3D11Hooks()) { g_polyTest = PT_OFF; Msg("POLY TEST: D3D11 hook FAILED (see log)"); }
+        else {
+            RsReapply();
+            Log(SFmt("poly test: %s (D3D11 hook=%d backend=%s)", kPolyTestNames[g_polyTest], g_d11Ok ? 1 : 0, GpuUsesFlip() ? "FLIP" : "PROJ"));
+            Msg(SFmt("POLY TEST: %s", kPolyTestNames[g_polyTest]));
+        }
     }
 }
 
