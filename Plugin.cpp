@@ -1,17 +1,16 @@
 // ═══════════════════════════════════════════════════════════════════
-// zMirrorTest V1.7.3
+// zMirrorTest V1.7.4
 // Плагин зеркального режима для Gothic 2 NotR (Union SDK, G2A).
 //
 // УПРАВЛЕНИЕ:
 //   HOME   — зеркало OFF <-> GPU (бэкенд авто: ванилла = FLIP, GD3D11 = PROJ/FLIP11).
 //   END    — телеметрия ON/OFF (PERF-замеры в zMirror_log.txt).
 //   [      — метод зеркала на GD3D11: PROJ <-> FLIP11.
-//              PROJ    — отражение проекции + TL-вершин (мир отражается, полигоны
-//                        вывернуты, лечатся тестом намотки "]").
-//              FLIP11  — диагностический полноэкранный переворот в Present;
-//                        переворачивает также UI и не является финальным режимом.
-//   ]      — тест намотки полигонов для GD3D11 (PROJ): OFF <-> FLIPCCW.
-//            Перехват ID3D11DeviceContext::RSSetState на правильном слоте 43.
+//              PROJ    — отражение проекции мира + коррекция culling на D3D7-слое.
+//              FLIP11  — GPU-FLIP мира на границе zCWorld::Render, до HUD/UI;
+//                        использует D3D7-совместимый GPU-путь GD3D11.
+//   ]      — диагностический тест отсечения для GD3D11 (PROJ): OFF <-> CULLNONE.
+//            Не переключает FrontCounterClockwise: PROJ уже инвертирует D3D7 CULLMODE.
 //
 // ЧТО ИЗМЕНИЛОСЬ ПО СРАВНЕНИЮ С V1.6.0:
 //   - Карта: режим FINAL убран. Всегда SELECT (только квады карты в DrawPolySimple:
@@ -28,7 +27,10 @@
 //         (инлайн-патч) — если устройство создаётся после загрузки плагина;
 //       * fallback: «пробный» свопчейн на скрытом окне -> хук IDXGISwapChain::Present
 //         (слот 8) -> первый чужой Present выдаёт устройство/контекст GD3D11.
-//   - FLIP11: диагностическое копирование swapchain backbuffer и зеркальный треугольник.
+//   - FLIP11 перенесён с IDXGISwapChain::Present на границу zCWorld::Render:
+//     используется проверенный GPU-FLIP quad из ванильного пути через D3D7-совместимый
+//     интерфейс GD3D11. Проходит после мира и до HUD, поэтому UI не зеркалится.
+//   - ] переведена на CULLNONE-диагностику, чтобы не делать вторую инверсию winding.
 //   - Все используемые D3D11 vtable offsets сверены с порядком методов интерфейсов.
 //
 // РАБОТАЕТ (проверено):
@@ -149,8 +151,8 @@ int   g_selCand = 0;            // кандидаты (квады карты) в
 int   g_selApplied = 0;          // зеркалено квадов (для PERF)
 
 // Тест намотки GD3D11 ("]")
-enum { PT_OFF = 0, PT_FLIPCCW = 1, PT_CULLNONE = 2, PT_FLIPCCW_VP = 3, PT_COUNT = 4 };
-const char* const kPolyTestNames[PT_COUNT] = { "OFF", "FLIPCCW", "CULLNONE", "FLIPCCW_VP" };
+enum { PT_OFF = 0, PT_CULLNONE = 1, PT_COUNT = 2 };
+const char* const kPolyTestNames[PT_COUNT] = { "OFF", "CULLNONE" };
 int  g_polyTest = PT_OFF;
 int  g_rsCalls = 0, g_rsSubst = 0, g_rsInstances = 0;
 bool g_d11Ok = false;      // D3D11: хук контекста установлен (для PERF)
@@ -580,14 +582,9 @@ void* RsVariant(void* st, int kind) {   // kind 1 = инверт FrontCounterClo
 }
 
 inline bool RsSubstActive() {
-    if (g_polyTest == PT_OFF || !g_devWorldMirror) return false;
-    if (g_polyTest == PT_FLIPCCW_VP) {
-        // только «экранный» вьюпорт (не теневые карты): ширина вьюпорта = ширина экрана
-        zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
-        float sw = rnd ? (float)rnd->xd3d_scrWidth : 0.0f;
-        return sw > 0.0f && g_rsVpW > 0.0f && fabsf(g_rsVpW - sw) < 2.0f;
-    }
-    return true;
+    // PROJ уже меняет D3D7 CULLMODE. Единственная дополнительная диагностика —
+    // временно отключить culling, не инвертируя FrontCounterClockwise второй раз.
+    return g_polyTest == PT_CULLNONE && g_devWorldMirror;
 }
 
 void RsReapply() {   // переустановить текущий растеризатор (смена области действия)
@@ -614,7 +611,6 @@ void STDMETHODCALLTYPE Hook_RSSetState(void* ctx, void* st) {
 void STDMETHODCALLTYPE Hook_RSSetViewports(void* ctx, UINT n, const float* vp) {
     if (n && vp) g_rsVpW = vp[2];   // D3D11_VIEWPORT: TopLeftX, TopLeftY, Width, Height, MinDepth, MaxDepth
     g_oRSSetVP(ctx, n, vp);
-    if (g_polyTest == PT_FLIPCCW_VP && g_devWorldMirror) RsReapply();
 }
 
 void ZmInstallCtxHooks() {
@@ -644,7 +640,7 @@ void* g_vtProbeL = NULL;   // vtable legacy-пробника
 PFN_Present_T g_oPresentF = NULL;
 PFN_Present_T g_oPresentL = NULL;
 
-void ZmFlipScDo(void* sc);   // forward (FLIP11, ниже)
+void ZmFlipScDo(void* sc);   // legacy Present-pass reference; intentionally not called
 
 HRESULT STDMETHODCALLTYPE Hook_Present(void* sc, UINT sync, UINT flags) {
     PFN_Present_T orig = g_oPresentL ? g_oPresentL : g_oPresentF;
@@ -681,9 +677,8 @@ HRESULT STDMETHODCALLTYPE Hook_Present(void* sc, UINT sync, UINT flags) {
             }
         }
     }
-    if (IsScreenFlipActive() && g_d11.ok && g_d11.sc == sc) {
-        ZmFlipScDo(sc);
-    }
+    // FLIP11 больше не меняет swapchain здесь: к этому моменту GD3D11 уже
+    // мог наложить HUD/ImGui. Переворот выполняется на границе мира и UI.
     return orig ? orig(sc, sync, flags) : E_FAIL;
 }
 
@@ -1168,10 +1163,19 @@ int GfFlip(zCRnd_D3D* rnd, IDirectDrawSurface7* rt, bool inScene) {
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
     if (!dev || !rnd) return 0;
     if (!GfEnsure(rt, dev)) {
-        if (++g_gf.initFails >= 3) { g_gf.state = -1; Log("GPUFLIP init failed 3 times -> fallback to CPU flip"); }
+        if (++g_gf.initFails >= 3) { g_gf.state = -1; Log("GPUFLIP init failed 3 times -> GPU path disabled; caller decides fallback"); }
         return 0;
     }
     if (g_gf.state < 0) return 0;
+
+    // GD3D11 предоставляет target через свой D3D7-совместимый слой. Для него
+    // используем тот же GPU Blt + TL-quad, но не читаем render target обратно
+    // на CPU ради пиксельной калибровки: это добавляет синхронизацию GPU и
+    // не требуется для стандартной D3D7 screen-space UV-развёртки.
+    if (IsScreenFlipActive() && g_gf.state == 0) {
+        g_gf.state = 1;
+        Log("GPUFLIP: GD3D11 compatibility path, CPU pixel calibration skipped");
+    }
 
     bool cal = (g_gf.state == 0);
     if (inScene) rnd->EndFrame();
@@ -1197,7 +1201,7 @@ int GfFlip(zCRnd_D3D* rnd, IDirectDrawSurface7* rt, bool inScene) {
         int ev = GfEvaluate(rt);
         if (inScene) rnd->BeginFrame();
         if (ev == 1) { g_gf.state = 1; Log(SFmt("GPUFLIP verified OK (adjX=%d adjY=%d)", g_gf.adjX, g_gf.adjY)); }
-        else if (ev == 2) { g_gf.state = -1; Log("GPUFLIP verification FAILED -> fallback to CPU flip"); result = 2; }
+        else if (ev == 2) { g_gf.state = -1; Log("GPUFLIP verification FAILED -> GPU path disabled; caller decides fallback"); result = 2; }
         else if (++g_gf.calTries >= 90) { g_gf.state = 1; Log("GPUFLIP: no informative frames in 90 tries -> assumed OK"); }
     }
     else {
@@ -1206,7 +1210,7 @@ int GfFlip(zCRnd_D3D* rnd, IDirectDrawSurface7* rt, bool inScene) {
     }
     if (!drew) {
         g_gf.state = -1;
-        Log("GPUFLIP draw failed -> fallback to CPU flip");
+        Log("GPUFLIP draw failed -> GPU path disabled; caller decides fallback");
     }
     if (result == 1) g_gf.framesOk++;
     return result;
@@ -1240,6 +1244,54 @@ void MirrorFrame(bool inScene) {
 
     if (ok) g_failStreak = 0;
     else if (++g_failStreak >= 30) { g_mode = MODE_OFF; SyncMouseFlip(); Log("mirror auto-disabled: 30 failures in a row"); }
+}
+
+// GD3D11 FLIP11: тот же GPU-FLIP quad, что и в ванильном backend, но на
+// D3D7-совместимом render target GD3D11. Вызов из Hook_World_Render выполняется
+// после сцены и до HUD/интерфейса. При ошибке не переходим на CPU Lock/переворот:
+// лучше оставить кадр обычным, чем блокировать GPU или зеркалить UI.
+void MirrorFrameFlip11Scene() {
+    zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
+    if (!rnd) return;
+    IDirectDrawSurface7* rt = AcquireTarget();
+    if (!rt) {
+        static bool warnedNoTarget = false;
+        if (!warnedNoTarget) { warnedNoTarget = true; Log("FLIP11: scene render target unavailable through D3D7 wrapper"); }
+        return;
+    }
+
+    LARGE_INTEGER f, t0, t1;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&t0);
+
+    static bool announced = false;
+    if (!announced) {
+        announced = true;
+        Log("FLIP11: scene-boundary GPU-FLIP active (after zCWorld::Render, before HUD)");
+    }
+
+    int r = GfFlip(rnd, rt, true);
+    bool ok = (r == 1 || r == 2);
+    rt->Release();
+
+    QueryPerformanceCounter(&t1);
+    g_perf.mirrorSum += (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)f.QuadPart;
+    g_perf.mirrorN++;
+
+    if (ok) {
+        g_failStreak = 0;
+    } else {
+        static bool warnedFailure = false;
+        if (!warnedFailure) {
+            warnedFailure = true;
+            Log(SFmt("FLIP11: scene GPU-FLIP failed (state=%d); CPU fallback intentionally disabled", g_gf.state));
+        }
+        if (++g_failStreak >= 30) {
+            g_mode = MODE_OFF;
+            SyncMouseFlip();
+            Log("FLIP11: mirror auto-disabled after 30 scene-target failures");
+        }
+    }
 }
 
 // ───────────────────────── Хуки на уровне движка (zCRnd_D3D) — TL-зеркалирование PROJ ─────────────────────────
@@ -1620,6 +1672,10 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
     Ivk_World_Render(self, edx, cam);
 
+    // Как и ванильный GPU-FLIP, отражаем уже готовый мир до начала UI-фазы.
+    // Не используем Present: там HUD/ImGui уже могут быть частью backbuffer.
+    if (main && useScFlip) MirrorFrameFlip11Scene();
+
     g_worldDepth--;
     g_inMainWorld = prevInMain;
     if (main) {
@@ -1638,7 +1694,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
 // ───────────────────────── События Union ─────────────────────────
 void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.7.3 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.7.4 loaded\n", false);
 }
 
 void Game_Init() { }
@@ -1694,17 +1750,16 @@ void Game_Loop() {
         Msg(SFmt("METHOD: %s", kMethodNames[g_method]));
     }
 
-    // ] — тест намотки полигонов GD3D11 (PROJ): OFF -> FLIPCCW -> CULLNONE -> FLIPCCW_VP
+    // ] — диагностический тест GD3D11 (PROJ): OFF <-> CULLNONE.
+    // FrontCCW не трогаем: D3D7 Hook_Dev_SetRenderState уже инвертирует CULLMODE.
     static bool wasRB = false;
     if (KeyEdge(VK_OEM_6, wasRB)) {
         if (g_method != METH_PROJ) {
             Msg("POLY TEST: applies to PROJ method only");
         }
         else {
-            // Только безопасное переключение OFF <-> FLIPCCW.
-            // CULLNONE и FLIPCCW_VP исключены: не нужны для обычного отражения
-            // и приводили к нестабильному переустановлению состояний GD3D11.
-            g_polyTest = (g_polyTest == PT_OFF) ? PT_FLIPCCW : PT_OFF;
+            // CULLNONE — диагностический режим без второй инверсии winding.
+            g_polyTest = (g_polyTest == PT_OFF) ? PT_CULLNONE : PT_OFF;
             if (g_polyTest != PT_OFF) {
                 AcquireD3D11();
                 if (!g_d11.ok) { g_polyTest = PT_OFF; Msg("POLY TEST: D3D11 not available (see log)"); }
