@@ -1,17 +1,16 @@
 // ═══════════════════════════════════════════════════════════════════
-// zMirrorTest V1.7.4
+// zMirrorTest V1.7.5
 // Плагин зеркального режима для Gothic 2 NotR (Union SDK, G2A).
 //
 // УПРАВЛЕНИЕ:
 //   HOME   — зеркало OFF <-> GPU (бэкенд авто: ванилла = FLIP, GD3D11 = PROJ/FLIP11).
 //   END    — телеметрия ON/OFF (PERF-замеры в zMirror_log.txt).
 //   [      — метод зеркала на GD3D11: PROJ <-> FLIP11.
-//              PROJ    — отражение проекции мира + коррекция culling на D3D7-слое.
-//              FLIP11  — GPU-FLIP мира на границе zCWorld::Render, до HUD/UI;
-//                        использует D3D7-совместимый GPU-путь GD3D11.
-//   ]      — диагностический тест отсечения для GD3D11 (PROJ): OFF <-> CULLNONE.
-//            Не переключает FrontCounterClockwise: PROJ уже инвертирует D3D7 CULLMODE.
-//
+//              PROJ    — отражение проекции; CULLNONE является штатным режимом
+//                        растеризатора на время отрисовки мира.
+//              FLIP11  — горизонтальное отражение активного D3D11 scene target до HUD/UI.
+//   ]      — удалена: CULLNONE стал постоянной настройкой PROJ.
+
 // ЧТО ИЗМЕНИЛОСЬ ПО СРАВНЕНИЮ С V1.6.0:
 //   - Карта: режим FINAL убран. Всегда SELECT (только квады карты в DrawPolySimple:
 //     картинка + маячок). HUD не затрагивается, доп. прохода нет, работает на обоих
@@ -27,10 +26,10 @@
 //         (инлайн-патч) — если устройство создаётся после загрузки плагина;
 //       * fallback: «пробный» свопчейн на скрытом окне -> хук IDXGISwapChain::Present
 //         (слот 8) -> первый чужой Present выдаёт устройство/контекст GD3D11.
-//   - FLIP11 перенесён с IDXGISwapChain::Present на границу zCWorld::Render:
-//     используется проверенный GPU-FLIP quad из ванильного пути через D3D7-совместимый
-//     интерфейс GD3D11. Проходит после мира и до HUD, поэтому UI не зеркалится.
-//   - ] переведена на CULLNONE-диагностику, чтобы не делать вторую инверсию winding.
+//   - FLIP11 выполняется на границе zCWorld::Render -> HUD через текущий D3D11 RTV.
+//     D3D7 GetRenderTarget у GD3D11 не выдаёт scene target; теперь RTV берётся через
+//     ID3D11DeviceContext::OMGetRenderTargets, а scratch-copy и draw идут на GPU.
+//   - CULLNONE стал постоянным состоянием PROJ; клавиша ] удалена.
 //   - Все используемые D3D11 vtable offsets сверены с порядком методов интерфейсов.
 //
 // РАБОТАЕТ (проверено):
@@ -150,10 +149,8 @@ float g_mapL = 0, g_mapR = 0;   // рамка картинки карты по X
 int   g_selCand = 0;            // кандидаты (квады карты) в этом кадре
 int   g_selApplied = 0;          // зеркалено квадов (для PERF)
 
-// Тест намотки GD3D11 ("]")
-enum { PT_OFF = 0, PT_CULLNONE = 1, PT_COUNT = 2 };
-const char* const kPolyTestNames[PT_COUNT] = { "OFF", "CULLNONE" };
-int  g_polyTest = PT_OFF;
+// Для PROJ отключаем D3D11 face-culling на время рендера мира.
+// Это штатная конфигурация, проверенная пользователем; отдельного переключателя нет.
 int  g_rsCalls = 0, g_rsSubst = 0, g_rsInstances = 0;
 bool g_d11Ok = false;      // D3D11: хук контекста установлен (для PERF)
 
@@ -232,12 +229,12 @@ void PerfFrame() {
     if (g_perf.frames >= 300) {
         double avg = g_perf.frameSum / g_perf.frames;
         double am = g_perf.mirrorN ? g_perf.mirrorSum / g_perf.mirrorN : 0.0;
-        Log(SFmt("PERF mode=%s backend=%s method=%s frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms psMirrored=%d vbTlMirrored=%d gf(state=%d ok=%ld) poly(test=%s d11(hook=%d calls=%d subst=%d inst=%d)",
+        Log(SFmt("PERF mode=%s backend=%s method=%s frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms psMirrored=%d vbTlMirrored=%d gf(state=%d ok=%ld) poly(mode=%s d11(hook=%d calls=%d subst=%d inst=%d)",
             kModeNames[g_mode], g_mode == MODE_GPU ? (GpuUsesFlip() ? "FLIP" : "PROJ") : "-",
             g_mode == MODE_GPU && !GpuUsesFlip() ? kMethodNames[g_method] : "-",
             g_perf.frames, avg, 1000.0 / avg, am,
             g_psMirrored, g_vbTlMirrored, g_gf.state, g_gf.framesOk,
-            kPolyTestNames[g_polyTest], g_d11Ok ? 1 : 0, g_rsCalls, g_rsSubst, g_rsInstances));
+            "CULLNONE", g_d11Ok ? 1 : 0, g_rsCalls, g_rsSubst, g_rsInstances));
         g_perf.frameSum = 0; g_perf.frames = 0; g_perf.mirrorSum = 0; g_perf.mirrorN = 0;
         g_psMirrored = 0; g_vbTlMirrored = 0; g_selApplied = 0; g_rsCalls = 0; g_rsSubst = 0;
     }
@@ -582,15 +579,14 @@ void* RsVariant(void* st, int kind) {   // kind 1 = инверт FrontCounterClo
 }
 
 inline bool RsSubstActive() {
-    // PROJ уже меняет D3D7 CULLMODE. Единственная дополнительная диагностика —
-    // временно отключить culling, не инвертируя FrontCounterClockwise второй раз.
-    return g_polyTest == PT_CULLNONE && g_devWorldMirror;
+    // CULLNONE — постоянная часть PROJ, включённая только на время рендера мира.
+    return g_devWorldMirror;
 }
 
 void RsReapply() {   // переустановить текущий растеризатор (смена области действия)
     if (!g_d11.ctx || !g_oRSSetState || !g_rsHaveOrig) return;
     void* st = g_rsLastOrig;
-    if (RsSubstActive()) st = RsVariant(st, g_polyTest == PT_CULLNONE ? 2 : 1);
+    if (RsSubstActive()) st = RsVariant(st, 2);
     g_oRSSetState(g_d11.ctx, st);
 }
 
@@ -604,7 +600,7 @@ void STDMETHODCALLTYPE Hook_RSSetState(void* ctx, void* st) {
         g_rsLastOrig = st;
     }
     g_rsHaveOrig = true;
-    if (RsSubstActive()) { st = RsVariant(st, g_polyTest == PT_CULLNONE ? 2 : 1); g_rsSubst++; }
+    if (RsSubstActive()) { st = RsVariant(st, 2); g_rsSubst++; }
     g_oRSSetState(ctx, st);
 }
 
@@ -640,7 +636,6 @@ void* g_vtProbeL = NULL;   // vtable legacy-пробника
 PFN_Present_T g_oPresentF = NULL;
 PFN_Present_T g_oPresentL = NULL;
 
-void ZmFlipScDo(void* sc);   // legacy Present-pass reference; intentionally not called
 
 HRESULT STDMETHODCALLTYPE Hook_Present(void* sc, UINT sync, UINT flags) {
     PFN_Present_T orig = g_oPresentL ? g_oPresentL : g_oPresentF;
@@ -799,27 +794,24 @@ void AcquireD3D11() {
     }
 }
 
-// ───────────────────────── FLIP11: переворот кадра на GD3D11 ─────────────────────────
-// Диагностический backend: при Present копируем swapchain backbuffer в scratch и
-// рисуем полноэкранный треугольник с зеркальными UV. Он переворачивает весь финальный
-// кадр, включая уже нарисованный HUD/UI; для режима «мир зеркальный, интерфейс нормальный»
-// это НЕ конечное решение, а проверка точки перехвата/копирования.
+// ───────────────────────── FLIP11: D3D11 scene/backbuffer resources ─────────────────────────
+// Рабочий scene pass использует активный RTV в точке перехода к HUD; Present-pass удалён.
 
 struct ZmFlipSc {
-    bool initTried;
+    bool shaderTried;
     void* tex;    // ID3D11Texture2D (scratch)
     void* srv;    // ID3D11ShaderResourceView
     void* sampler; // ID3D11SamplerState
     void* vs;     // ID3D11VertexShader
     void* ps;     // ID3D11PixelShader
-    void* rtv;    // ID3D11RenderTargetView (бэкбуфер)
     void* rs;     // ID3D11RasterizerState (CullMode=NONE для fullscreen triangle)
-    UINT w, h;
+    UINT w, h, format, sampleCount, sampleQuality, mipLevels, arraySize;
     int frames;
 };
 ZmFlipSc g_fs = {};
 
 typedef HRESULT (WINAPI *PFN_D3DCompile)(LPCVOID, SIZE_T, LPCSTR, const void*, void*, LPCSTR, LPCSTR, UINT, UINT, void**, void**);
+inline void ZmRelease(void*& p);
 
 void ZmCompileShaders() {
     typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateVS)(void*, const void*, SIZE_T, void*, void**);
@@ -835,7 +827,7 @@ void ZmCompileShaders() {
         "VSOut main(uint id:SV_VertexID){\n"
         "  VSOut o;\n"
         "  float2 p=float2((id<<1)&2,id&2);\n"
-        "  o.p=float4(p*2.0-1.0,0,1);\n"
+        "  o.p=float4(p*float2(2.0,-2.0)+float2(-1.0,1.0),0,1);\n"
         "  o.uv=p;\n"
         "  return o;\n"
         "}\n";
@@ -848,9 +840,14 @@ void ZmCompileShaders() {
 
     void* vsCode = NULL, *psCode = NULL, *err = NULL;
     HRESULT hr = compile(vssrc, strlen(vssrc), "vs.hlsl", NULL, NULL, "main", "vs_4_0", 0, 0, &vsCode, &err);
+    if (err) { ((PFN_Rel)Vt(err)[2])(err); err = NULL; }
     if (FAILED(hr) || !vsCode) { Log(SFmt("FLIP11: VS compile failed hr=0x%08lX", (unsigned long)hr)); return; }
     hr = compile(pssrc, strlen(pssrc), "ps.hlsl", NULL, NULL, "main", "ps_4_0", 0, 0, &psCode, &err);
-    if (FAILED(hr) || !psCode) { Log(SFmt("FLIP11: PS compile failed hr=0x%08lX", (unsigned long)hr)); return; }
+    if (err) { ((PFN_Rel)Vt(err)[2])(err); err = NULL; }
+    if (FAILED(hr) || !psCode) {
+        ((PFN_Rel)Vt(vsCode)[2])(vsCode);
+        Log(SFmt("FLIP11: PS compile failed hr=0x%08lX", (unsigned long)hr)); return;
+    }
 
     // ID3DBlob: GetBufferPointer = 3, GetBufferSize = 4
     typedef void* (STDMETHODCALLTYPE *PFN_GetBufPtr)(void*);
@@ -859,118 +856,252 @@ void ZmCompileShaders() {
     SIZE_T vsize = ((PFN_GetBufSize)Vt(vsCode)[4])(vsCode);
     const void* pptr = ((PFN_GetBufPtr)Vt(psCode)[3])(psCode);
     SIZE_T psize = ((PFN_GetBufSize)Vt(psCode)[4])(psCode);
-    ((PFN_CreateVS)Vt(g_d11.dev)[12])(g_d11.dev, vptr, vsize, NULL, &g_fs.vs);
-    ((PFN_CreatePS)Vt(g_d11.dev)[15])(g_d11.dev, pptr, psize, NULL, &g_fs.ps);
+    HRESULT vhr = ((PFN_CreateVS)Vt(g_d11.dev)[12])(g_d11.dev, vptr, vsize, NULL, &g_fs.vs);
+    HRESULT phr = ((PFN_CreatePS)Vt(g_d11.dev)[15])(g_d11.dev, pptr, psize, NULL, &g_fs.ps);
     ((PFN_Rel)Vt(vsCode)[2])(vsCode);
     ((PFN_Rel)Vt(psCode)[2])(psCode);
+    if (FAILED(vhr) || FAILED(phr) || !g_fs.vs || !g_fs.ps) {
+        Log(SFmt("FLIP11: shader object creation failed VS=0x%08lX PS=0x%08lX", (unsigned long)vhr, (unsigned long)phr));
+        if (g_fs.vs) ZmRelease(g_fs.vs);
+        if (g_fs.ps) ZmRelease(g_fs.ps);
+        return;
+    }
     Log("FLIP11: shaders compiled");
 }
 
-void ZmFlipScDo(void* sc) {
-    void* ctx = g_d11.ctx, *dev = g_d11.dev;
-    if (!ctx || !dev) return;
+// ───────────────────────── FLIP11: прямой проход по активному D3D11 RTV ─────────────────────────
+// GD3D11 не предоставляет свой HDR/scene target через IDirect3DDevice7::GetRenderTarget.
+// На границе zCWorld::Render -> HUD у GD3D11 уже выбран Backbuffer RTV. Получаем его
+// непосредственно из immediate context, копируем ресурс в scratch и рисуем обратно.
+// Это сохраняет фазу «мир уже готов, интерфейс ещё не начат» и не требует D3D7 Lock/Blt.
 
-    if (!g_fs.initTried) {
-        g_fs.initTried = true;
-        static const GUID IID_T2D = { 0x6f15aaf2, 0xd208, 0x4e89, { 0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c } };
-        typedef HRESULT (STDMETHODCALLTYPE *PFN_GetBuffer)(void*, UINT, const GUID*, void**);
-        typedef void (STDMETHODCALLTYPE *PFN_GetDescTex)(void*, void*);
-        typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateTex)(void*, const void*, const void*, void**);
-        typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateSRV)(void*, void*, const void*, void**);
-        typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateRTV)(void*, void*, const void*, void**);
-        typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateSampler)(void*, const void*, void**);
-        typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateRS)(void*, const void*, void**);
+struct ZmD3D11TexDesc {
+    UINT Width, Height, MipLevels, ArraySize;
+    UINT Format;
+    UINT SampleCount, SampleQuality;
+    UINT Usage, BindFlags, CPUAccessFlags, MiscFlags;
+};
+struct ZmD3D11Viewport {
+    float TopLeftX, TopLeftY, Width, Height, MinDepth, MaxDepth;
+};
 
-        void* bb = NULL;
-        if (FAILED(((PFN_GetBuffer)Vt(sc)[9])(sc, 0, &IID_T2D, &bb)) || !bb) { Log("FLIP11: GetBuffer failed"); return; }
+inline void ZmRelease(void*& p) {
+    if (p) { ((PFN_Rel)Vt(p)[2])(p); p = NULL; }
+}
 
-        // D3D11_TEXTURE2D_DESC
-        struct T2DDesc { UINT Width, Height, MipLevels, ArraySize; UINT Format; UINT SampleDesc_Count, SampleDesc_Quality; UINT Usage, BindFlags, CPUAccessFlags, MiscFlags; };
-        T2DDesc d; ZeroMemory(&d, sizeof(d));
-        ((PFN_GetDescTex)Vt(bb)[10])(bb, &d);          // ID3D11Texture2D::GetDesc = 10
-        g_fs.w = d.Width; g_fs.h = d.Height;
+bool ZmEnsureSceneFlipResources(const ZmD3D11TexDesc& src) {
+    typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateTex)(void*, const void*, const void*, void**);
+    typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateSRV)(void*, void*, const void*, void**);
+    typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateSampler)(void*, const void*, void**);
+    typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateRS)(void*, const void*, void**);
 
-        T2DDesc sd = d;
-        sd.BindFlags = 0x8;                            // D3D11_BIND_SHADER_RESOURCE
-        if (FAILED(((PFN_CreateTex)Vt(dev)[5])(dev, &sd, NULL, &g_fs.tex))) { Log("FLIP11: CreateTexture2D failed"); return; }
-        if (FAILED(((PFN_CreateSRV)Vt(dev)[7])(dev, g_fs.tex, NULL, &g_fs.srv))) { Log("FLIP11: CreateShaderResourceView failed"); return; }
-        if (FAILED(((PFN_CreateRTV)Vt(dev)[9])(dev, bb, NULL, &g_fs.rtv))) { Log("FLIP11: CreateRenderTargetView failed"); ((PFN_Rel)Vt(bb)[2])(bb); return; }
-        ((PFN_Rel)Vt(bb)[2])(bb);
+    if (!g_fs.shaderTried) {
+        g_fs.shaderTried = true;
+        ZmCompileShaders();
+    }
+    if (!g_fs.vs || !g_fs.ps) return false;
 
-        // Полноэкранный треугольник обязан рисоваться независимо от winding
-        // и текущего rasterizer state игры.
-        struct RastDesc { UINT FillMode, CullMode; BOOL FrontCCW; INT DepthBias; float DepthBiasClamp, SlopeScaledDepthBias; BOOL DepthClipEnable, ScissorEnable, MultisampleEnable, AntialiasedLineEnable; };
+    if (!g_fs.rs) {
+        struct RastDesc { UINT FillMode, CullMode; BOOL FrontCCW; INT DepthBias; float DepthBiasClamp, SlopeScaledDepthBias; BOOL DepthClipEnable, ScissorEnable, MultisampleEnable, AALineEnable; };
         RastDesc rd; ZeroMemory(&rd, sizeof(rd));
-        rd.FillMode = 3; // D3D11_FILL_SOLID
-        rd.CullMode = 1; // D3D11_CULL_NONE
+        rd.FillMode = 3;       // D3D11_FILL_SOLID
+        rd.CullMode = 1;       // D3D11_CULL_NONE
         rd.DepthClipEnable = TRUE;
-        if (FAILED(((PFN_CreateRS)Vt(dev)[22])(dev, &rd, &g_fs.rs))) { Log("FLIP11: CreateRasterizerState failed"); return; }
-
-        // D3D11_SAMPLER_DESC: FILTER_MIN_MAG_MIP_POINT=0, CLAMP=3
+        HRESULT hr = ((PFN_CreateRS)Vt(g_d11.dev)[22])(g_d11.dev, &rd, &g_fs.rs);
+        if (FAILED(hr)) { Log(SFmt("FLIP11: scene CreateRasterizerState failed hr=0x%08lX", (unsigned long)hr)); return false; }
+    }
+    if (!g_fs.sampler) {
         struct SmpDesc { UINT Filter, AddressU, AddressV, AddressW; float MipLODBias; UINT MaxAnisotropy, ComparisonFunc; float BorderColor[4]; float MinLOD, MaxLOD; };
         SmpDesc sm; ZeroMemory(&sm, sizeof(sm));
-        sm.AddressU = sm.AddressV = sm.AddressW = 3;
+        sm.AddressU = sm.AddressV = sm.AddressW = 3; // CLAMP
         sm.MaxLOD = 3.402823466e+38F;
-        if (FAILED(((PFN_CreateSampler)Vt(dev)[23])(dev, &sm, &g_fs.sampler))) { Log("FLIP11: CreateSamplerState failed"); return; }
-
-        ZmCompileShaders();
-        if (!g_fs.vs || !g_fs.ps) { Log("FLIP11: shader creation failed"); return; }
-        Log(SFmt("FLIP11: resources ready (%lux%lu)", (unsigned long)g_fs.w, (unsigned long)g_fs.h));
+        HRESULT hr = ((PFN_CreateSampler)Vt(g_d11.dev)[23])(g_d11.dev, &sm, &g_fs.sampler);
+        if (FAILED(hr)) { Log(SFmt("FLIP11: scene CreateSamplerState failed hr=0x%08lX", (unsigned long)hr)); return false; }
     }
 
-    if (!g_fs.tex || !g_fs.srv || !g_fs.rtv || !g_fs.rs || !g_fs.vs || !g_fs.ps) return;
+    bool same = g_fs.tex && g_fs.srv && g_fs.w == src.Width && g_fs.h == src.Height &&
+        g_fs.format == src.Format && g_fs.sampleCount == src.SampleCount &&
+        g_fs.sampleQuality == src.SampleQuality && g_fs.mipLevels == src.MipLevels &&
+        g_fs.arraySize == src.ArraySize;
+    if (same) return true;
 
+    ZmRelease(g_fs.srv);
+    ZmRelease(g_fs.tex);
+    g_fs.w = g_fs.h = g_fs.format = g_fs.sampleCount = g_fs.sampleQuality = g_fs.mipLevels = g_fs.arraySize = 0;
+
+    // Для обычного single-sample backbuffer. MSAA требует отдельного Texture2DMS shader/resolve path.
+    if (src.SampleCount != 1 || src.ArraySize != 1) {
+        static UINT lastBadSamples = 0, lastBadArray = 0;
+        if (lastBadSamples != src.SampleCount || lastBadArray != src.ArraySize) {
+            lastBadSamples = src.SampleCount; lastBadArray = src.ArraySize;
+            Log(SFmt("FLIP11: unsupported scene target sampleCount=%u arraySize=%u", src.SampleCount, src.ArraySize));
+        }
+        return false;
+    }
+
+    ZmD3D11TexDesc sd = src;
+    sd.Usage = 0;             // D3D11_USAGE_DEFAULT
+    sd.BindFlags = 0x8;       // D3D11_BIND_SHADER_RESOURCE
+    sd.CPUAccessFlags = 0;
+    sd.MiscFlags = 0;
+    HRESULT hr = ((PFN_CreateTex)Vt(g_d11.dev)[5])(g_d11.dev, &sd, NULL, &g_fs.tex);
+    if (FAILED(hr) || !g_fs.tex) {
+        Log(SFmt("FLIP11: scene scratch CreateTexture2D failed hr=0x%08lX format=%u %ux%u", (unsigned long)hr, src.Format, src.Width, src.Height));
+        return false;
+    }
+    hr = ((PFN_CreateSRV)Vt(g_d11.dev)[7])(g_d11.dev, g_fs.tex, NULL, &g_fs.srv);
+    if (FAILED(hr) || !g_fs.srv) {
+        ZmRelease(g_fs.tex);
+        Log(SFmt("FLIP11: scene scratch CreateSRV failed hr=0x%08lX format=%u", (unsigned long)hr, src.Format));
+        return false;
+    }
+    g_fs.w = src.Width; g_fs.h = src.Height; g_fs.format = src.Format;
+    g_fs.sampleCount = src.SampleCount; g_fs.sampleQuality = src.SampleQuality;
+    g_fs.mipLevels = src.MipLevels; g_fs.arraySize = src.ArraySize;
+    Log(SFmt("FLIP11: D3D11 scene target ready (%ux%u format=%u samples=%u)", src.Width, src.Height, src.Format, src.SampleCount));
+    return true;
+}
+
+bool ZmFlipSceneD3D11() {
+    if (!g_d11.ctx || !g_d11.dev) return false;
+    void* ctx = g_d11.ctx;
+    void* dev = g_d11.dev;
+
+    typedef void (STDMETHODCALLTYPE *PFN_OMGetRTs)(void*, UINT, void**, void**);
+    typedef void (STDMETHODCALLTYPE *PFN_GetResource)(void*, void**);
+    typedef HRESULT (STDMETHODCALLTYPE *PFN_QueryInterface)(void*, const GUID&, void**);
+    typedef void (STDMETHODCALLTYPE *PFN_GetDescTex)(void*, void*);
     typedef void (STDMETHODCALLTYPE *PFN_CopyResource)(void*, void*, void*);
-    typedef void (STDMETHODCALLTYPE *PFN_OMSetRTs)(void*, UINT, void**, void*);
-    typedef void (STDMETHODCALLTYPE *PFN_RSSetVP2)(void*, UINT, const float*);
-    typedef void (STDMETHODCALLTYPE *PFN_IASetTopo)(void*, UINT);
-    typedef void (STDMETHODCALLTYPE *PFN_SetVS)(void*, void*, void*, UINT);
-    typedef void (STDMETHODCALLTYPE *PFN_SetPS)(void*, void*, void*, UINT);
-    typedef void (STDMETHODCALLTYPE *PFN_SetPSResources)(void*, UINT, UINT, void**);
-    typedef void (STDMETHODCALLTYPE *PFN_SetPSSamplers)(void*, UINT, UINT, void**);
-    typedef void (STDMETHODCALLTYPE *PFN_SetBlend)(void*, void*, const float*, UINT);
-    typedef void (STDMETHODCALLTYPE *PFN_SetDepth)(void*, void*, UINT);
     typedef void (STDMETHODCALLTYPE *PFN_Draw)(void*, UINT, UINT);
-    typedef HRESULT (STDMETHODCALLTYPE *PFN_GetBuffer)(void*, UINT, const GUID*, void**);
+    typedef void (STDMETHODCALLTYPE *PFN_OMSetRTs)(void*, UINT, void**, void*);
+    typedef void (STDMETHODCALLTYPE *PFN_RSSetVP)(void*, UINT, const ZmD3D11Viewport*);
+    typedef void (STDMETHODCALLTYPE *PFN_RSGetVP)(void*, UINT*, ZmD3D11Viewport*);
+    typedef void (STDMETHODCALLTYPE *PFN_IASetTopo)(void*, UINT);
+    typedef void (STDMETHODCALLTYPE *PFN_IAGetTopo)(void*, UINT*);
+    typedef void (STDMETHODCALLTYPE *PFN_SetShader)(void*, void*, void*, UINT);
+    typedef void (STDMETHODCALLTYPE *PFN_GetShader)(void*, void**, void**, UINT*);
+    typedef void (STDMETHODCALLTYPE *PFN_SetInputLayout)(void*, void*);
+    typedef void (STDMETHODCALLTYPE *PFN_GetInputLayout)(void*, void**);
+    typedef void (STDMETHODCALLTYPE *PFN_SetPSResources)(void*, UINT, UINT, void**);
+    typedef void (STDMETHODCALLTYPE *PFN_GetPSResources)(void*, UINT, UINT, void**);
+    typedef void (STDMETHODCALLTYPE *PFN_SetPSSamplers)(void*, UINT, UINT, void**);
+    typedef void (STDMETHODCALLTYPE *PFN_GetPSSamplers)(void*, UINT, UINT, void**);
+    typedef void (STDMETHODCALLTYPE *PFN_SetBlend)(void*, void*, const float*, UINT);
+    typedef void (STDMETHODCALLTYPE *PFN_GetBlend)(void*, void**, float*, UINT*);
+    typedef void (STDMETHODCALLTYPE *PFN_SetDepth)(void*, void*, UINT);
+    typedef void (STDMETHODCALLTYPE *PFN_GetDepth)(void*, void**, UINT*);
+    typedef void (STDMETHODCALLTYPE *PFN_RSSetState2)(void*, void*);
+    typedef void (STDMETHODCALLTYPE *PFN_RSGetState)(void*, void**);
+    typedef void (STDMETHODCALLTYPE *PFN_SetPredication)(void*, void*, BOOL);
+    typedef void (STDMETHODCALLTYPE *PFN_GetPredication)(void*, void**, BOOL*);
+    typedef void (STDMETHODCALLTYPE *PFN_SOSetTargets)(void*, UINT, void**, const UINT*);
+    typedef void (STDMETHODCALLTYPE *PFN_SOGetTargets)(void*, UINT, void**);
 
     static const GUID IID_T2D = { 0x6f15aaf2, 0xd208, 0x4e89, { 0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c } };
-    void* bb = NULL;
-    if (FAILED(((PFN_GetBuffer)Vt(sc)[9])(sc, 0, &IID_T2D, &bb)) || !bb) return;
-    struct T2DDesc { UINT Width, Height, MipLevels, ArraySize; UINT Format; UINT SampleDesc_Count, SampleDesc_Quality; UINT Usage, BindFlags, CPUAccessFlags, MiscFlags; };
-    T2DDesc d; ((void (STDMETHODCALLTYPE *)(void*, void*))Vt(bb)[10])(bb, &d);
-    if (d.Width != g_fs.w || d.Height != g_fs.h) {
-        // размер сменился — освободить и пересоздать при следующем Present
-        ((PFN_Rel)Vt(bb)[2])(bb);
-        if (g_fs.rtv) { ((PFN_Rel)Vt(g_fs.rtv)[2])(g_fs.rtv); g_fs.rtv = NULL; }
-        if (g_fs.rs) { ((PFN_Rel)Vt(g_fs.rs)[2])(g_fs.rs); g_fs.rs = NULL; }
-        if (g_fs.srv) { ((PFN_Rel)Vt(g_fs.srv)[2])(g_fs.srv); g_fs.srv = NULL; }
-        if (g_fs.tex) { ((PFN_Rel)Vt(g_fs.tex)[2])(g_fs.tex); g_fs.tex = NULL; }
-        g_fs.w = d.Width; g_fs.h = d.Height;
-        g_fs.initTried = false;
-        return;
+    void* rtv = NULL; void* dsv = NULL; void* resource = NULL; void* texture = NULL;
+    ((PFN_OMGetRTs)Vt(ctx)[89])(ctx, 1, &rtv, &dsv); // ID3D11DeviceContext::OMGetRenderTargets
+    if (!rtv) {
+        static bool onceNoRT = false;
+        if (!onceNoRT) { onceNoRT = true; Log("FLIP11: OMGetRenderTargets returned no scene RTV at world/UI boundary"); }
+        ZmRelease(dsv);
+        return false;
+    }
+    ((PFN_GetResource)Vt(rtv)[7])(rtv, &resource); // ID3D11View::GetResource
+    HRESULT qhr = resource ? ((PFN_QueryInterface)Vt(resource)[0])(resource, IID_T2D, &texture) : E_NOINTERFACE;
+    if (resource) ZmRelease(resource);
+    if (FAILED(qhr) || !texture) {
+        Log(SFmt("FLIP11: scene RTV resource is not Texture2D hr=0x%08lX", (unsigned long)qhr));
+        ZmRelease(rtv); ZmRelease(dsv); return false;
+    }
+    ZmD3D11TexDesc td; ZeroMemory(&td, sizeof(td));
+    ((PFN_GetDescTex)Vt(texture)[10])(texture, &td);
+    if (!td.Width || !td.Height || !ZmEnsureSceneFlipResources(td)) {
+        ZmRelease(texture); ZmRelease(rtv); ZmRelease(dsv); return false;
     }
 
-    ((PFN_CopyResource)Vt(ctx)[47])(ctx, g_fs.tex, bb);
-    ((PFN_Rel)Vt(bb)[2])(bb);
+    // Сохраняем все затрагиваемые части pipeline. Контекст общий с GD3D11;
+    // после прохода возвращаем его состояние до начала HUD/UI.
+    void* oldRT[8] = {}; void* oldDSV = NULL;
+    ((PFN_OMGetRTs)Vt(ctx)[89])(ctx, 8, oldRT, &oldDSV);
+    void* oldRS = NULL; ((PFN_RSGetState)Vt(ctx)[94])(ctx, &oldRS);
+    ZmD3D11Viewport oldVP[16]; UINT oldVPN = 16; ZeroMemory(oldVP, sizeof(oldVP));
+    ((PFN_RSGetVP)Vt(ctx)[95])(ctx, &oldVPN, oldVP);
+    if (oldVPN > 16) oldVPN = 16;
+    void* oldBlend = NULL; float oldBlendFactor[4] = {}; UINT oldSampleMask = 0xFFFFFFFF;
+    ((PFN_GetBlend)Vt(ctx)[91])(ctx, &oldBlend, oldBlendFactor, &oldSampleMask);
+    void* oldDepth = NULL; UINT oldStencilRef = 0;
+    ((PFN_GetDepth)Vt(ctx)[92])(ctx, &oldDepth, &oldStencilRef);
+    void* oldVS = NULL; void* oldPS = NULL; void* oldGS = NULL; void* oldHS = NULL; void* oldDS = NULL;
+    ((PFN_GetShader)Vt(ctx)[76])(ctx, &oldVS, NULL, NULL);
+    ((PFN_GetShader)Vt(ctx)[74])(ctx, &oldPS, NULL, NULL);
+    ((PFN_GetShader)Vt(ctx)[82])(ctx, &oldGS, NULL, NULL);
+    ((PFN_GetShader)Vt(ctx)[98])(ctx, &oldHS, NULL, NULL);
+    ((PFN_GetShader)Vt(ctx)[102])(ctx, &oldDS, NULL, NULL);
+    void* oldLayout = NULL; ((PFN_GetInputLayout)Vt(ctx)[78])(ctx, &oldLayout);
+    UINT oldTopo = 0; ((PFN_IAGetTopo)Vt(ctx)[83])(ctx, &oldTopo);
+    void* oldSRV[128] = {}; void* oldSamplers[16] = {};
+    ((PFN_GetPSResources)Vt(ctx)[73])(ctx, 0, 128, oldSRV);
+    ((PFN_GetPSSamplers)Vt(ctx)[75])(ctx, 0, 16, oldSamplers);
+    void* oldPredication = NULL; BOOL oldPredicateValue = FALSE;
+    ((PFN_GetPredication)Vt(ctx)[86])(ctx, &oldPredication, &oldPredicateValue);
+    void* oldSO[4] = {}; ((PFN_SOGetTargets)Vt(ctx)[93])(ctx, 4, oldSO);
 
-    float vp[6] = { 0, 0, (float)g_fs.w, (float)g_fs.h, 0, 1 };
-    ((PFN_RSSetVP2)Vt(ctx)[44])(ctx, 1, vp);
-    ((PFN_OMSetRTs)Vt(ctx)[33])(ctx, 1, &g_fs.rtv, NULL);
-    ((PFN_RSSetState)Vt(ctx)[43])(ctx, g_fs.rs);
-    ((PFN_IASetTopo)Vt(ctx)[24])(ctx, 4);                 // D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
-    ((PFN_SetVS)Vt(ctx)[11])(ctx, g_fs.vs, NULL, 0);
-    ((PFN_SetPS)Vt(ctx)[9])(ctx, g_fs.ps, NULL, 0);
-    // Не позволяем унаследованному geometry shader перехватить вершины треугольника.
-    ((PFN_SetVS)Vt(ctx)[23])(ctx, NULL, NULL, 0);
+    // Отвязываем исходный target и PS SRV, чтобы CopyResource не пересекался
+    // с активным output binding. Затем копируем в отдельную текстуру.
+    ((PFN_OMSetRTs)Vt(ctx)[33])(ctx, 0, NULL, NULL);
+    void* nullSRVs[128] = {};
+    ((PFN_SetPSResources)Vt(ctx)[8])(ctx, 0, 128, nullSRVs);
+    ((PFN_CopyResource)Vt(ctx)[47])(ctx, g_fs.tex, texture);
+
+    float vp[6] = { 0.0f, 0.0f, (float)td.Width, (float)td.Height, 0.0f, 1.0f };
+    ((PFN_RSSetVP)Vt(ctx)[44])(ctx, 1, (const ZmD3D11Viewport*)vp);
+    ((PFN_OMSetRTs)Vt(ctx)[33])(ctx, 1, &rtv, NULL);
+    ((PFN_RSSetState2)Vt(ctx)[43])(ctx, g_fs.rs);
+    ((PFN_IASetTopo)Vt(ctx)[24])(ctx, 4); // TRIANGLELIST
+    ((PFN_SetInputLayout)Vt(ctx)[17])(ctx, NULL);
+    ((PFN_SetShader)Vt(ctx)[11])(ctx, g_fs.vs, NULL, 0);
+    ((PFN_SetShader)Vt(ctx)[9])(ctx, g_fs.ps, NULL, 0);
+    ((PFN_SetShader)Vt(ctx)[23])(ctx, NULL, NULL, 0); // GS
+    ((PFN_SetShader)Vt(ctx)[60])(ctx, NULL, NULL, 0); // HS
+    ((PFN_SetShader)Vt(ctx)[64])(ctx, NULL, NULL, 0); // DS
     ((PFN_SetPSResources)Vt(ctx)[8])(ctx, 0, 1, &g_fs.srv);
     ((PFN_SetPSSamplers)Vt(ctx)[10])(ctx, 0, 1, &g_fs.sampler);
     ((PFN_SetBlend)Vt(ctx)[35])(ctx, NULL, NULL, 0xFFFFFFFF);
     ((PFN_SetDepth)Vt(ctx)[36])(ctx, NULL, 0);
+    ((PFN_SetPredication)Vt(ctx)[30])(ctx, NULL, FALSE);
+    ((PFN_SOSetTargets)Vt(ctx)[37])(ctx, 0, NULL, NULL);
     ((PFN_Draw)Vt(ctx)[13])(ctx, 3, 0);
-    // Не оставляем scratch-текстуру привязанной как SRV между Present.
-    void* nullSrv = NULL;
-    ((PFN_SetPSResources)Vt(ctx)[8])(ctx, 0, 1, &nullSrv);
+
+    // Unbind scratch SRV before restoring the original RTV to avoid D3D11 hazards.
+    ((PFN_SetPSResources)Vt(ctx)[8])(ctx, 0, 128, nullSRVs);
+    ((PFN_OMSetRTs)Vt(ctx)[33])(ctx, 8, oldRT, oldDSV);
+    ((PFN_RSSetState2)Vt(ctx)[43])(ctx, oldRS);
+    if (oldVPN) ((PFN_RSSetVP)Vt(ctx)[44])(ctx, oldVPN, oldVP);
+    ((PFN_SetBlend)Vt(ctx)[35])(ctx, oldBlend, oldBlendFactor, oldSampleMask);
+    ((PFN_SetDepth)Vt(ctx)[36])(ctx, oldDepth, oldStencilRef);
+    ((PFN_SetShader)Vt(ctx)[11])(ctx, oldVS, NULL, 0);
+    ((PFN_SetShader)Vt(ctx)[9])(ctx, oldPS, NULL, 0);
+    ((PFN_SetShader)Vt(ctx)[23])(ctx, oldGS, NULL, 0);
+    ((PFN_SetShader)Vt(ctx)[60])(ctx, oldHS, NULL, 0);
+    ((PFN_SetShader)Vt(ctx)[64])(ctx, oldDS, NULL, 0);
+    ((PFN_SetInputLayout)Vt(ctx)[17])(ctx, oldLayout);
+    ((PFN_IASetTopo)Vt(ctx)[24])(ctx, oldTopo);
+    ((PFN_SetPSResources)Vt(ctx)[8])(ctx, 0, 128, oldSRV);
+    ((PFN_SetPSSamplers)Vt(ctx)[10])(ctx, 0, 16, oldSamplers);
+    ((PFN_SetPredication)Vt(ctx)[30])(ctx, oldPredication, oldPredicateValue);
+    UINT soOffsets[4] = { 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
+    ((PFN_SOSetTargets)Vt(ctx)[37])(ctx, 4, oldSO, soOffsets);
+
+    for (int i = 0; i < 8; ++i) ZmRelease(oldRT[i]);
+    ZmRelease(oldDSV); ZmRelease(oldRS); ZmRelease(oldBlend); ZmRelease(oldDepth);
+    ZmRelease(oldVS); ZmRelease(oldPS); ZmRelease(oldGS); ZmRelease(oldHS); ZmRelease(oldDS);
+    ZmRelease(oldLayout); ZmRelease(oldPredication);
+    for (int i = 0; i < 128; ++i) ZmRelease(oldSRV[i]);
+    for (int i = 0; i < 16; ++i) ZmRelease(oldSamplers[i]);
+    for (int i = 0; i < 4; ++i) ZmRelease(oldSO[i]);
+    ZmRelease(texture); ZmRelease(rtv); ZmRelease(dsv);
     g_fs.frames++;
+    return true;
 }
 
 // ───────────────────────── GPU-FLIP: переворот готового кадра на видеокарте ─────────────────────────
@@ -1168,10 +1299,7 @@ int GfFlip(zCRnd_D3D* rnd, IDirectDrawSurface7* rt, bool inScene) {
     }
     if (g_gf.state < 0) return 0;
 
-    // GD3D11 предоставляет target через свой D3D7-совместимый слой. Для него
-    // используем тот же GPU Blt + TL-quad, но не читаем render target обратно
-    // на CPU ради пиксельной калибровки: это добавляет синхронизацию GPU и
-    // не требуется для стандартной D3D7 screen-space UV-развёртки.
+    // Ванильный backend использует D3D7 render target и GPU Blt + TL-quad.
     if (IsScreenFlipActive() && g_gf.state == 0) {
         g_gf.state = 1;
         Log("GPUFLIP: GD3D11 compatibility path, CPU pixel calibration skipped");
@@ -1246,50 +1374,27 @@ void MirrorFrame(bool inScene) {
     else if (++g_failStreak >= 30) { g_mode = MODE_OFF; SyncMouseFlip(); Log("mirror auto-disabled: 30 failures in a row"); }
 }
 
-// GD3D11 FLIP11: тот же GPU-FLIP quad, что и в ванильном backend, но на
-// D3D7-совместимом render target GD3D11. Вызов из Hook_World_Render выполняется
-// после сцены и до HUD/интерфейса. При ошибке не переходим на CPU Lock/переворот:
-// лучше оставить кадр обычным, чем блокировать GPU или зеркалить UI.
+// GD3D11 FLIP11: прямой D3D11 pass по активному render target перед HUD/UI.
 void MirrorFrameFlip11Scene() {
-    zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
-    if (!rnd) return;
-    IDirectDrawSurface7* rt = AcquireTarget();
-    if (!rt) {
-        static bool warnedNoTarget = false;
-        if (!warnedNoTarget) { warnedNoTarget = true; Log("FLIP11: scene render target unavailable through D3D7 wrapper"); }
-        return;
-    }
-
     LARGE_INTEGER f, t0, t1;
     QueryPerformanceFrequency(&f);
     QueryPerformanceCounter(&t0);
-
     static bool announced = false;
     if (!announced) {
         announced = true;
-        Log("FLIP11: scene-boundary GPU-FLIP active (after zCWorld::Render, before HUD)");
+        Log("FLIP11: direct D3D11 active-RTV mirror at world/UI boundary (horizontal)");
     }
-
-    int r = GfFlip(rnd, rt, true);
-    bool ok = (r == 1 || r == 2);
-    rt->Release();
-
+    bool ok = ZmFlipSceneD3D11();
     QueryPerformanceCounter(&t1);
     g_perf.mirrorSum += (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)f.QuadPart;
     g_perf.mirrorN++;
-
-    if (ok) {
-        g_failStreak = 0;
-    } else {
-        static bool warnedFailure = false;
-        if (!warnedFailure) {
-            warnedFailure = true;
-            Log(SFmt("FLIP11: scene GPU-FLIP failed (state=%d); CPU fallback intentionally disabled", g_gf.state));
-        }
+    if (ok) g_failStreak = 0;
+    else {
+        static bool warned = false;
+        if (!warned) { warned = true; Log("FLIP11: direct scene RTV pass not ready; see preceding target diagnostic"); }
         if (++g_failStreak >= 30) {
-            g_mode = MODE_OFF;
-            SyncMouseFlip();
-            Log("FLIP11: mirror auto-disabled after 30 scene-target failures");
+            g_mode = MODE_OFF; SyncMouseFlip();
+            Log("FLIP11: mirror auto-disabled after 30 scene RTV failures");
         }
     }
 }
@@ -1661,7 +1766,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
                 devMirrorStarted = true;
                 SyncCull();
                 SyncProj();
-                if (g_polyTest != PT_OFF) RsReapply();
+                RsReapply();
             }
             else {
                 static bool w = false;
@@ -1684,7 +1789,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
             g_worldCullFlip = false;
             SyncCull();
             SyncProj();
-            if (g_polyTest != PT_OFF) RsReapply();
+            RsReapply();
         }
         if (useFlip) MirrorFrame(true);
         g_uiPhase = true;
@@ -1694,12 +1799,16 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
 // ───────────────────────── События Union ─────────────────────────
 void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.7.4 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.7.5 loaded\n", false);
 }
 
 void Game_Init() { }
 
-void Game_Exit() { GfRelease(); }
+void Game_Exit() {
+    GfRelease();
+    ZmRelease(g_fs.srv); ZmRelease(g_fs.tex); ZmRelease(g_fs.sampler);
+    ZmRelease(g_fs.vs); ZmRelease(g_fs.ps); ZmRelease(g_fs.rs);
+}
 
 void Game_PreLoop() { }
 
@@ -1750,31 +1859,7 @@ void Game_Loop() {
         Msg(SFmt("METHOD: %s", kMethodNames[g_method]));
     }
 
-    // ] — диагностический тест GD3D11 (PROJ): OFF <-> CULLNONE.
-    // FrontCCW не трогаем: D3D7 Hook_Dev_SetRenderState уже инвертирует CULLMODE.
-    static bool wasRB = false;
-    if (KeyEdge(VK_OEM_6, wasRB)) {
-        if (g_method != METH_PROJ) {
-            Msg("POLY TEST: applies to PROJ method only");
-        }
-        else {
-            // CULLNONE — диагностический режим без второй инверсии winding.
-            g_polyTest = (g_polyTest == PT_OFF) ? PT_CULLNONE : PT_OFF;
-            if (g_polyTest != PT_OFF) {
-                AcquireD3D11();
-                if (!g_d11.ok) { g_polyTest = PT_OFF; Msg("POLY TEST: D3D11 not available (see log)"); }
-                else {
-                    RsReapply();
-                    Log(SFmt("poly test: %s (D3D11 hook=%d backend=%s)", kPolyTestNames[g_polyTest], g_d11Ok ? 1 : 0, GpuUsesFlip() ? "FLIP" : "PROJ"));
-                    Msg(SFmt("POLY TEST: %s", kPolyTestNames[g_polyTest]));
-                }
-            }
-            else {
-                Log("poly test: OFF");
-                Msg("POLY TEST: OFF");
-            }
-        }
-    }
+
 }
 
 void Game_PostLoop() { }
