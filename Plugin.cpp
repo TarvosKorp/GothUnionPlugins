@@ -19,9 +19,8 @@
 //     для неба (DrawPrimitive ставит FrontCounterClockwise=true).
 //   - FLIP11 не работал, потому что свопчейн GD3D11 не был известен (устройство
 //     захватывалось ранним хуком D3D11CreateDevice, а свопчейн создаётся отдельно).
-//     Теперь: ранние хуки CreateDXGIFactory1/2 -> перехват настоящего свопчейна
-//     (CreateSwapChainForHwnd/CreateSwapChain) -> хук Present на его vtable;
-//     запасной вариант — «пробный» свопчейн на скрытом окне.
+//     Теперь: захват настоящего свопчейна через «пробный» свопчейн + хук Present
+//     (COM-уровень, без патча кода dxgi.dll).
 //
 // РАБОТАЕТ (проверено):
 //   - GPU-FLIP (ванилла): переворот готового кадра на GPU без потерь FPS.
@@ -385,11 +384,12 @@ bool EnsureDeviceHooks() {
 // ───────────────────────── GD3D11: доступ к устройству/контексту/свопчейну ─────────────────────────
 // V1.7.0 захватывал устройство ранним хуком D3D11CreateDevice, но свопчейн GD3D11
 // создаётся отдельно (CreateSwapChainForHwnd) — поэтому Present не перехватывался
-// и FLIP11 не работал. Теперь:
+// и FLIP11 не работал. V1.7.1 пробовал ранние хуки CreateDXGIFactory1/2, но
+// в dxgi.dll эти экспорты являются thunk-переходами — детур на них валил DXGI-
+// энумерацию на старте игры. Итоговая схема:
 //   1) ранние хуки D3D11CreateDevice / D3D11CreateDeviceAndSwapChain — устройство;
-//   2) ранние хуки CreateDXGIFactory1 / CreateDXGIFactory2 — перехват создания
-//      настоящего свопчейна (vtable-хуки CreateSwapChainForHwnd/CreateSwapChain);
-//   3) запасной вариант: «пробный» свопчейн на скрытом окне + хук Present.
+//   2) «пробный» свопчейн на скрытом окне -> хук IDXGISwapChain::Present (слот 8)
+//      -> захват настоящего свопчейна по первому чужому Present (COM-уровень).
 
 struct ZmD3D11 {
     bool ok;            // есть устройство+контекст
@@ -466,7 +466,10 @@ bool ZmInstallJump(void* site, void* hook, ZmNearJump& nj) {
     memset(&nj, 0, sizeof(nj));
     BYTE* s = (BYTE*)site;
     if (!s) return false;
-    if (s[0] == 0xC3 || s[0] == 0xEB) return false;
+    // Не трогаем thunk-переходы (jmp rel32 / jmp [mem]) — экспорты вроде
+    // CreateDXGIFactory1/2 в dxgi.dll часто являются короткими переходами.
+    if (s[0] == 0xC3 || s[0] == 0xEB || s[0] == 0xE9) return false;
+    if (s[0] == 0xFF && s[1] == 0x25) return false;
     int off = 0;
     while (off < 5) {
         unsigned L = ZmInsnLen(s + off);
@@ -491,19 +494,14 @@ bool ZmInstallJump(void* site, void* hook, ZmNearJump& nj) {
 // --- сигнатуры функций создания ---
 typedef HRESULT (WINAPI *PFN_CD_T)(void*, UINT, HMODULE, UINT, const UINT*, UINT, UINT, void**, UINT*, void**);
 typedef HRESULT (WINAPI *PFN_CDASC_T)(void*, UINT, HMODULE, UINT, const UINT*, UINT, UINT, const void*, void**, UINT*, void**, void**);
-typedef HRESULT (WINAPI *PFN_CGF_T)(const GUID*, void**);
 
 typedef HRESULT (STDMETHODCALLTYPE *PFN_GetBuffer)(void*, UINT, const GUID*, void**);
 typedef void (STDMETHODCALLTYPE *PFN_GetDev)(void*, void**);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_GetImmCtx)(void*, void**);
 typedef ULONG (STDMETHODCALLTYPE *PFN_Rel)(void*);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_Present_T)(void*, UINT, UINT);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_F2CSCFH)(void*, void*, HWND, const void*, const void*, void*, void**);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_F1CSC)(void*, void*, const void*, void**);
 
-ZmNearJump g_njCD, g_njCDASC, g_njCGF1, g_njCGF2;
-PFN_F2CSCFH g_oF2CSCFH = NULL;
-PFN_F1CSC g_oF1CSC = NULL;
+ZmNearJump g_njCD, g_njCDASC;
 PFN_Present_T g_oPresentProbeF = NULL, g_oPresentProbeL = NULL, g_oPresentReal = NULL;
 void* g_probeSC = NULL;
 void* g_probeDev = NULL;
@@ -560,39 +558,6 @@ void ZmAttachRealChain(void* sc) {
     }
 }
 
-HRESULT STDMETHODCALLTYPE Hook_F2CSCFH(void* f, void* dev, HWND hwnd, const void* d1, const void* fsd, void* ro, void** ppSC) {
-    HRESULT hr = g_oF2CSCFH(f, dev, hwnd, d1, fsd, ro, ppSC);
-    if (SUCCEEDED(hr) && ppSC && *ppSC && hwnd != g_probeWnd) ZmAttachRealChain(*ppSC);
-    return hr;
-}
-
-HRESULT STDMETHODCALLTYPE Hook_F1CSC(void* f, void* dev, const void* d, void** ppSC) {
-    HRESULT hr = g_oF1CSC(f, dev, d, ppSC);
-    if (SUCCEEDED(hr) && ppSC && *ppSC && dev != g_probeDev) ZmAttachRealChain(*ppSC);
-    return hr;
-}
-
-void ZmHookFactory(void* factory) {
-    static bool hooked = false;
-    if (hooked || !factory) return;
-    hooked = true;
-    PatchSlot(Vt(factory), 14, &Hook_F2CSCFH, g_oF2CSCFH);
-    PatchSlot(Vt(factory), 10, &Hook_F1CSC, g_oF1CSC);
-    Log("D3D11: DXGI factory hooked (CreateSwapChainForHwnd/CreateSwapChain)");
-}
-
-HRESULT WINAPI Hook_CGF1(const GUID* riid, void** ppFactory) {
-    HRESULT hr = ((PFN_CGF_T)g_njCGF1.tramp)(riid, ppFactory);
-    if (SUCCEEDED(hr) && ppFactory && *ppFactory) ZmHookFactory(*ppFactory);
-    return hr;
-}
-
-HRESULT WINAPI Hook_CGF2(const GUID* riid, void** ppFactory) {
-    HRESULT hr = ((PFN_CGF_T)g_njCGF2.tramp)(riid, ppFactory);
-    if (SUCCEEDED(hr) && ppFactory && *ppFactory) ZmHookFactory(*ppFactory);
-    return hr;
-}
-
 void ZmCaptureDevice(void** ppDev, void** ppCtx) {
     if (!ppDev || !ppCtx || g_d11.ok) return;
     if (g_probeDev && g_probeDev == *ppDev) return;
@@ -614,23 +579,18 @@ HRESULT WINAPI Hook_CDASC(void* a, UINT b, HMODULE c, UINT d, const UINT* e, UIN
 }
 
 void ZmInstallEarlyHooks() {
+    // Только D3D11CreateDevice/D3D11CreateDeviceAndSwapChain. Хуки на
+    // CreateDXGIFactory1/2 УБРАНЫ: в dxgi.dll это thunk-переходы, детур на них
+    // валил DXGI-энумерацию на старте игры. Свопчейн достаётся через пробный
+    // свопчейн + захват по чужому Present (COM-уровень, безопасно).
     HMODULE h11 = LoadLibraryA("d3d11.dll");
-    HMODULE hdx = LoadLibraryA("dxgi.dll");
     if (h11) {
         FARPROC cd = GetProcAddress(h11, "D3D11CreateDevice");
         FARPROC cdasc = GetProcAddress(h11, "D3D11CreateDeviceAndSwapChain");
         if (cd) ZmInstallJump((void*)cd, (void*)Hook_CD, g_njCD);
         if (cdasc) ZmInstallJump((void*)cdasc, (void*)Hook_CDASC, g_njCDASC);
+        Log(SFmt("D3D11: early hooks CD=%d CDASC=%d", g_njCD.installed ? 1 : 0, g_njCDASC.installed ? 1 : 0));
     }
-    if (hdx) {
-        FARPROC cgf1 = GetProcAddress(hdx, "CreateDXGIFactory1");
-        FARPROC cgf2 = GetProcAddress(hdx, "CreateDXGIFactory2");
-        if (cgf1) ZmInstallJump((void*)cgf1, (void*)Hook_CGF1, g_njCGF1);
-        if (cgf2) ZmInstallJump((void*)cgf2, (void*)Hook_CGF2, g_njCGF2);
-    }
-    Log(SFmt("D3D11: early hooks CD=%d CDASC=%d CGF1=%d CGF2=%d",
-        g_njCD.installed ? 1 : 0, g_njCDASC.installed ? 1 : 0,
-        g_njCGF1.installed ? 1 : 0, g_njCGF2.installed ? 1 : 0));
 }
 
 // --- пробный свопчейн (fallback) ---
@@ -1868,7 +1828,7 @@ CApplication* lpApplication = !CHECK_THIS_ENGINE ? Null : CApplication::CreateRe
     Enabled( AppDefault ) Game_ApplyOptions
 );
 
-// Ранние хуки D3D11CreateDevice/CreateDXGIFactory — ставим при загрузке DLL.
+// Ранние хуки D3D11CreateDevice/D3D11CreateDeviceAndSwapChain — ставим при загрузке DLL.
 struct ZmEarlyHooksInit {
     ZmEarlyHooksInit() { ZmInstallEarlyHooks(); }
 };
