@@ -596,7 +596,14 @@ void RsReapply() {   // переустановить текущий растер
 
 void STDMETHODCALLTYPE Hook_RSSetState(void* ctx, void* st) {
     g_rsCalls++;
-    g_rsLastOrig = st; g_rsHaveOrig = true;
+    // SetRasterizerState не даёт плагину права хранить входной COM-указатель
+    // после возврата. Удерживаем оригинал, который понадобится при смене режима.
+    if (st != g_rsLastOrig) {
+        if (st) ((ULONG (STDMETHODCALLTYPE *)(void*))Vt(st)[1])(st); // AddRef
+        if (g_rsLastOrig) ((PFN_Rel)Vt(g_rsLastOrig)[2])(g_rsLastOrig); // Release
+        g_rsLastOrig = st;
+    }
+    g_rsHaveOrig = true;
     if (RsSubstActive()) { st = RsVariant(st, g_polyTest == PT_CULLNONE ? 2 : 1); g_rsSubst++; }
     g_oRSSetState(ctx, st);
 }
