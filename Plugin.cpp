@@ -812,6 +812,14 @@ bool ZmCheckRsSig(BYTE* rs) {
     return cull == 3 && fccw == 0 && zbias == 0 && slope == 0.0f && sz == 28;
 }
 
+// Безопасный вызов кандидата GetRendererState (чистая функция: только SEH, без C++-объектов).
+static BYTE* ZmCallGetRS(void* fn, void* thisPtr) {
+    __try {
+        return ((BYTE* (__fastcall*)(void*))fn)(thisPtr);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return NULL; }
+}
+
 bool ZmFindEngineState() {
     if (g_es.ok) return true;
     if (!g_oSetRS) return false;
@@ -872,10 +880,7 @@ bool ZmFindEngineState() {
                 for (DWORD i = 0; i + 6 < textSize; i++) {
                     BYTE* q = text + i;
                     if ((q[0] == 0x8B || q[0] == 0x8D) && q[1] == 0x81 && q[6] == 0xC3) {
-                        typedef BYTE* (__fastcall *PFN_GetRS)(void*);
-                        __try {
-                            st = ((PFN_GetRS)q)(p);
-                        } __except (EXCEPTION_EXECUTE_HANDLER) { st = NULL; }
+                        st = ZmCallGetRS((void*)q, p);
                         if (st) break;
                     }
                 }
