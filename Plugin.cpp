@@ -6,25 +6,31 @@
 //   HOME   — зеркало OFF <-> GPU (бэкенд авто: ванилла = FLIP, GD3D11 = PROJ/FLIP11).
 //   END    — телеметрия ON/OFF (PERF-замеры в zMirror_log.txt).
 //   [      — метод зеркала на GD3D11: PROJ <-> FLIP11.
-//   ]      — тест намотки полигонов для GD3D11 (PROJ): OFF -> FLIPCCW -> CULLNONE.
+//              PROJ    — отражение проекции + TL-вершин (мир отражается, полигоны
+//                        вывернуты, лечатся тестом намотки "]").
+//              FLIP11  — аналог GPU-FLIP для GD3D11: переворот готового кадра при
+//                        Present (IDXGISwapChain::Present), как на ванилле.
+//   ]      — ТЕСТ намотки полигонов для GD3D11 (PROJ): OFF -> FLIPCCW -> CULLNONE
+//            -> FLIPCCW_VP -> OFF. Хук настоящего ID3D11DeviceContext::RSSetState
+//            (слот 23 vtable): во время рендера мира подменяет растеризатор.
 //
-// ЧТО ИЗМЕНИЛОСЬ ПО СРАВНЕНИЮ С V1.7.0:
-//   - Вылет «]»-тестов (V1.7.0) устранялся: подмена D3D11-растеризаторов через
-//     CreateRasterizerState посреди рендера убивала движок. Теперь флип делается
-//     на уровне ВНУТРЕННЕГО состояния GD3D11 (GothicRendererState.RasterizerState):
-//     инвертируется FrontCounterClockwise либо CullMode живого состояния, после чего
-//     проставляется StateDirty и пересчитывается Hash по алгоритму
-//     Toolbox::hash_combine (из исходников GD3D11). Обновление состояния замечает
-//     UpdateRenderStates и пересоздаёт растеризатор — как это делает сам движок
-//     для неба (DrawPrimitive ставит FrontCounterClockwise=true).
-//   - FLIP11 не работал, потому что свопчейн GD3D11 не был известен (устройство
-//     захватывалось ранним хуком D3D11CreateDevice, а свопчейн создаётся отдельно).
-//     Теперь: захват настоящего свопчейна через «пробный» свопчейн + хук Present
-//     (COM-уровень, без патча кода dxgi.dll).
+// ЧТО ИЗМЕНИЛОСЬ ПО СРАВНЕНИЮ С V1.6.0:
+//   - Карта: режим FINAL убран. Всегда SELECT (только квады карты в DrawPolySimple:
+//     картинка + маячок). HUD не затрагивается, доп. прохода нет, работает на обоих
+//     рендерах. Телеметрия карты и дамп PgUp убраны.
+//   - GD3D11: V1.6.0 хукал vtable «пробного» контекста со слотами 43/44 (что
+//     заведомо неверно: RSSetState = 23, RSSetViewports = 21, GetDesc = 4,
+//     CreateRasterizerState = 21). Теперь хукается НАСТОЯЩИЙ контекст:
+//       * ранний хук экспортов D3D11CreateDevice/D3D11CreateDeviceAndSwapChain
+//         (инлайн-патч) — если устройство создаётся после загрузки плагина;
+//       * fallback: «пробный» свопчейн на скрытом окне -> хук IDXGISwapChain::Present
+//         (слот 8) -> первый чужой Present выдаёт устройство/контекст GD3D11.
+//   - FLIP11: копирование бэкбуфера и зеркальный полноэкранный квад (шейдеры
+//     компилируются на лету d3dcompiler_47).
 //
 // РАБОТАЕТ (проверено):
 //   - GPU-FLIP (ванилла): переворот готового кадра на GPU без потерь FPS.
-//   - Карта SELECT на обоих рендерах (картинка + маячок, HUD не трогается).
+//   - Карта SELECT на обоих рендерах.
 //   - Своп LR-клавиш/мыши, надписи фокуса, анти-своп в модалках и взломе.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -139,12 +145,12 @@ float g_mapL = 0, g_mapR = 0;   // рамка картинки карты по X
 int   g_selCand = 0;            // кандидаты (квады карты) в этом кадре
 int   g_selApplied = 0;          // зеркалено квадов (для PERF)
 
-// Тест намотки GD3D11 ("]") — через внутреннее состояние движка (см. ниже)
-enum { PT_OFF = 0, PT_FLIPCCW = 1, PT_CULLNONE = 2, PT_COUNT = 3 };
-const char* const kPolyTestNames[PT_COUNT] = { "OFF", "FLIPCCW", "CULLNONE" };
-int g_polyTest = PT_OFF;
-bool g_polyOk = false;          // состояние движка найдено (флип возможен)
-int g_flipScFrames = 0;         // счётчик перевёрнутых кадров FLIP11
+// Тест намотки GD3D11 ("]")
+enum { PT_OFF = 0, PT_FLIPCCW = 1, PT_CULLNONE = 2, PT_FLIPCCW_VP = 3, PT_COUNT = 4 };
+const char* const kPolyTestNames[PT_COUNT] = { "OFF", "FLIPCCW", "CULLNONE", "FLIPCCW_VP" };
+int  g_polyTest = PT_OFF;
+int  g_rsCalls = 0, g_rsSubst = 0, g_rsInstances = 0;
+bool g_d11Ok = false;      // D3D11: хук контекста установлен (для PERF)
 
 void SyncMouseFlip();      // forward (определена ниже)
 
@@ -221,14 +227,14 @@ void PerfFrame() {
     if (g_perf.frames >= 300) {
         double avg = g_perf.frameSum / g_perf.frames;
         double am = g_perf.mirrorN ? g_perf.mirrorSum / g_perf.mirrorN : 0.0;
-        Log(SFmt("PERF mode=%s backend=%s method=%s frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms psMirrored=%d vbTlMirrored=%d gf(state=%d ok=%ld) poly(test=%s eng=%d flipSc(frames=%d)",
+        Log(SFmt("PERF mode=%s backend=%s method=%s frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms psMirrored=%d vbTlMirrored=%d gf(state=%d ok=%ld) poly(test=%s d11(hook=%d calls=%d subst=%d inst=%d)",
             kModeNames[g_mode], g_mode == MODE_GPU ? (GpuUsesFlip() ? "FLIP" : "PROJ") : "-",
             g_mode == MODE_GPU && !GpuUsesFlip() ? kMethodNames[g_method] : "-",
             g_perf.frames, avg, 1000.0 / avg, am,
             g_psMirrored, g_vbTlMirrored, g_gf.state, g_gf.framesOk,
-            kPolyTestNames[g_polyTest], g_polyOk ? 1 : 0, g_flipScFrames));
+            kPolyTestNames[g_polyTest], g_d11Ok ? 1 : 0, g_rsCalls, g_rsSubst, g_rsInstances));
         g_perf.frameSum = 0; g_perf.frames = 0; g_perf.mirrorSum = 0; g_perf.mirrorN = 0;
-        g_psMirrored = 0; g_vbTlMirrored = 0; g_selApplied = 0;
+        g_psMirrored = 0; g_vbTlMirrored = 0; g_selApplied = 0; g_rsCalls = 0; g_rsSubst = 0;
     }
 }
 
@@ -381,30 +387,31 @@ bool EnsureDeviceHooks() {
     return ok;
 }
 
-// ───────────────────────── GD3D11: доступ к устройству/контексту/свопчейну ─────────────────────────
-// V1.7.0 захватывал устройство ранним хуком D3D11CreateDevice, но свопчейн GD3D11
-// создаётся отдельно (CreateSwapChainForHwnd) — поэтому Present не перехватывался
-// и FLIP11 не работал. V1.7.1 пробовал ранние хуки CreateDXGIFactory1/2, но
-// в dxgi.dll эти экспорты являются thunk-переходами — детур на них валил DXGI-
-// энумерацию на старте игры. Итоговая схема:
-//   1) ранние хуки D3D11CreateDevice / D3D11CreateDeviceAndSwapChain — устройство;
-//   2) «пробный» свопчейн на скрытом окне -> хук IDXGISwapChain::Present (слот 8)
-//      -> захват настоящего свопчейна по первому чужому Present (COM-уровень).
+// ───────────────────────── GD3D11: доступ к настоящему контексту ─────────────────────────
+// V1.6.0 хукал vtable «пробного» контекста (слоты 43/44) — это не работало:
+//   - слоты неверные (RSSetState = 23, RSSetViewports = 21, GetDesc = 4,
+//     CreateRasterizerState = 21);
+//   - хук стоял на другом объекте, а не на контексте GD3D11.
+// Теперь получаем НАСТОЯЩИЙ контекст двумя путями:
+//   1) ранний инлайн-хук экспортов D3D11CreateDevice/D3D11CreateDeviceAndSwapChain
+//      (если устройство создаётся после загрузки плагина);
+//   2) fallback: «пробный» свопчейн на скрытом окне -> хук IDXGISwapChain::Present
+//      (слот 8) -> первый чужой Present принадлежит свопчейну GD3D11 -> через него
+//      достаём устройство/контекст.
 
 struct ZmD3D11 {
-    bool ok;            // есть устройство+контекст
-    bool scSet;         // есть настоящий свопчейн
-    bool hookedPresent;  // Present-хук стоит на настоящем свопчейне
-    void* dev;          // ID3D11Device*
-    void* ctx;          // ID3D11DeviceContext* (immediate)
-    void* sc;           // IDXGISwapChain* (GD3D11)
+    bool tried, ok;
+    bool hookedCtx;
+    void* dev;   // ID3D11Device*
+    void* ctx;   // ID3D11DeviceContext* (immediate)
+    void* sc;    // IDXGISwapChain* (GD3D11)
 };
 ZmD3D11 g_d11 = {};
-bool g_acqTried = false;
 
+// --- vtable-вспомогательные ---
 inline void** Vt(void* o) { return *(void***)o; }
 
-// --- инлайн-хук (детур) для экспортов d3d11/dxgi ---
+// --- инлайн-хук (детур) для экспортов d3d11.dll ---
 struct ZmNearJump {
     void* site; BYTE orig[24]; void* tramp; bool installed;
 };
@@ -426,6 +433,7 @@ BYTE* ZmAllocNear(void* site, DWORD size) {
     return NULL;
 }
 
+// Длина инструкции (только нужный минимум для прологов MSVC). 0 = неизвестно.
 unsigned ZmInsnLen(const BYTE* p) {
     const BYTE* s = p;
     while (*p == 0xF0 || *p == 0xF2 || *p == 0xF3 || *p == 0x2E || *p == 0x36 ||
@@ -442,9 +450,9 @@ unsigned ZmInsnLen(const BYTE* p) {
         else if ((modrm & 0xC0) == 0x00 && (modrm & 0x07) == 0x05) m += 4;
         return (unsigned)(p - s) + m;
     }
-    if (op >= 0x50 && op <= 0x5F) return (unsigned)(p - s) + 1;
-    if (op >= 0xB0 && op <= 0xB7) return (unsigned)(p - s) + 2;
-    if (op >= 0xB8 && op <= 0xBF) return (unsigned)(p - s) + 5;
+    if (op >= 0x50 && op <= 0x5F) return (unsigned)(p - s) + 1;      // push/pop
+    if (op >= 0xB0 && op <= 0xB7) return (unsigned)(p - s) + 2;      // mov reg8, imm8
+    if (op >= 0xB8 && op <= 0xBF) return (unsigned)(p - s) + 5;      // mov reg32, imm32
     if (op == 0x68 || op == 0xA1 || op == 0xA9 || op == 0x25 || op == 0x0D || op == 0x35 || op == 0x3D || op == 0xE8 || op == 0xE9) return (unsigned)(p - s) + 5;
     if (op == 0x6A || op == 0xEB || (op >= 0x70 && op <= 0x7F) || op == 0xCD) return (unsigned)(p - s) + 2;
     if (op == 0x9C || op == 0x9D || op == 0x9E || op == 0x9F || op == 0xCC || op == 0xC3 || op == 0xC9 || op == 0x90) return (unsigned)(p - s) + 1;
@@ -466,105 +474,35 @@ bool ZmInstallJump(void* site, void* hook, ZmNearJump& nj) {
     memset(&nj, 0, sizeof(nj));
     BYTE* s = (BYTE*)site;
     if (!s) return false;
-    // Не трогаем thunk-переходы (jmp rel32 / jmp [mem]) — экспорты вроде
-    // CreateDXGIFactory1/2 в dxgi.dll часто являются короткими переходами.
-    if (s[0] == 0xC3 || s[0] == 0xEB || s[0] == 0xE9) return false;
-    if (s[0] == 0xFF && s[1] == 0x25) return false;
+    if (s[0] == 0xC3 || s[0] == 0xEB) return false;   // ret/jmp — не трогаем
     int off = 0;
     while (off < 5) {
         unsigned L = ZmInsnLen(s + off);
-        if (!L || off + (int)L > 24) return false;
+        if (!L || off + (int)L > 24) return false;      // не смогли разобрать пролог
         off += (int)L;
     }
     BYTE* tr = ZmAllocNear(site, 40);
     if (!tr) return false;
     memcpy(nj.orig, s, off);
-    memcpy(tr, s, off);
-    tr[off] = 0xE9;
+    memcpy(tr, s, off);                    // трэмполин: оригинальные байты
+    tr[off] = 0xE9;                         // jmp обратно на site+off
     *(INT*)(tr + off + 1) = (INT)((BYTE*)s + off - (tr + off + 5));
     DWORD old = 0;
     VirtualProtect(s, 8, PAGE_EXECUTE_READWRITE, &old);
-    s[0] = 0xE9;
+    s[0] = 0xE9;                            // site: jmp hook
     *(INT*)(s + 1) = (INT)((BYTE*)hook - (s + 5));
     VirtualProtect(s, 8, old, &old);
     nj.site = site; nj.tramp = tr; nj.installed = true;
     return true;
 }
 
-// --- сигнатуры функций создания ---
 typedef HRESULT (WINAPI *PFN_CD_T)(void*, UINT, HMODULE, UINT, const UINT*, UINT, UINT, void**, UINT*, void**);
 typedef HRESULT (WINAPI *PFN_CDASC_T)(void*, UINT, HMODULE, UINT, const UINT*, UINT, UINT, const void*, void**, UINT*, void**, void**);
-
-typedef HRESULT (STDMETHODCALLTYPE *PFN_GetBuffer)(void*, UINT, const GUID*, void**);
-typedef void (STDMETHODCALLTYPE *PFN_GetDev)(void*, void**);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_GetImmCtx)(void*, void**);
-typedef ULONG (STDMETHODCALLTYPE *PFN_Rel)(void*);
-typedef HRESULT (STDMETHODCALLTYPE *PFN_Present_T)(void*, UINT, UINT);
-
 ZmNearJump g_njCD, g_njCDASC;
-PFN_Present_T g_oPresentProbeF = NULL, g_oPresentProbeL = NULL, g_oPresentReal = NULL;
-void* g_probeSC = NULL;
-void* g_probeDev = NULL;
-void* g_vtProbeF = NULL;
-void* g_vtProbeL = NULL;
-HWND g_probeWnd = NULL;
 
-static const GUID IID_T2D = { 0x6f15aaf2, 0xd208, 0x4e89, { 0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c } };
-
-void ZmAttachRealChain(void* sc);
-void ZmFlipScDo(void* sc);
-
-HRESULT STDMETHODCALLTYPE Hook_Present(void* sc, UINT sync, UINT flags) {
-    PFN_Present_T orig = g_oPresentProbeL ? g_oPresentProbeL : g_oPresentProbeF;
-    if (g_oPresentProbeF && g_oPresentProbeL) orig = (Vt(sc) == g_vtProbeF) ? g_oPresentProbeF : g_oPresentProbeL;
-
-    if (sc && sc != g_probeSC && sc != g_d11.sc) {
-        ZmAttachRealChain(sc);   // поздний захват (фабричные хуки/совпадение vtable)
-    }
-    if (sc == g_d11.sc && g_oPresentReal) orig = g_oPresentReal;
-    if (!orig) return E_FAIL;
-
-    if (IsScreenFlipActive() && g_d11.sc == sc && (g_oPresentReal || Vt(sc) == g_vtProbeF || Vt(sc) == g_vtProbeL)) {
-        ZmFlipScDo(sc);
-    }
-    return orig(sc, sync, flags);
-}
-
-void ZmAttachRealChain(void* sc) {
-    if (!sc || sc == g_probeSC || g_d11.sc == sc) return;
-    if (!g_d11.scSet) {
-        g_d11.scSet = true;
-        g_d11.sc = sc;
-        if (!g_d11.ok) {
-            void* tex = NULL;
-            if (SUCCEEDED(((PFN_GetBuffer)Vt(sc)[9])(sc, 0, &IID_T2D, &tex)) && tex) {
-                void* dev = NULL;
-                ((PFN_GetDev)Vt(tex)[3])(tex, &dev);
-                ((PFN_Rel)Vt(tex)[2])(tex);
-                if (dev) {
-                    void* ctx = NULL;
-                    ((PFN_GetImmCtx)Vt(dev)[37])(dev, &ctx);
-                    if (ctx) { g_d11.dev = dev; g_d11.ctx = ctx; g_d11.ok = true; }
-                }
-            }
-            Log(SFmt("D3D11: real swapchain captured (dev=%d ctx=%d)", g_d11.ok ? 1 : 0, g_d11.ctx ? 1 : 0));
-        }
-    }
-    if (!g_d11.hookedPresent && Vt(sc) != g_vtProbeF && Vt(sc) != g_vtProbeL) {
-        if (PatchSlot(Vt(sc), 8, &Hook_Present, g_oPresentReal)) {
-            g_d11.hookedPresent = true;
-            Log("D3D11: real swapchain Present hooked");
-        }
-    }
-}
-
-void ZmCaptureDevice(void** ppDev, void** ppCtx) {
-    if (!ppDev || !ppCtx || g_d11.ok) return;
-    if (g_probeDev && g_probeDev == *ppDev) return;
-    g_d11.dev = *ppDev; g_d11.ctx = *ppCtx;
-    g_d11.ok = true;
-    Log("D3D11: device captured via creation hook");
-}
+void ZmInstallCtxHooks();
+void ZmCaptureDevice(void** ppDev, void** ppCtx);
+void* g_probeDev = NULL;   // пробное устройство D3D11 (игнорируем в захвате)
 
 HRESULT WINAPI Hook_CD(void* a, UINT b, HMODULE c, UINT d, const UINT* e, UINT f, UINT g, void** h, UINT* i, void** j) {
     HRESULT hr = ((PFN_CD_T)g_njCD.tramp)(a, b, c, d, e, f, g, h, i, j);
@@ -579,37 +517,172 @@ HRESULT WINAPI Hook_CDASC(void* a, UINT b, HMODULE c, UINT d, const UINT* e, UIN
 }
 
 void ZmInstallEarlyHooks() {
-    // Только D3D11CreateDevice/D3D11CreateDeviceAndSwapChain. Хуки на
-    // CreateDXGIFactory1/2 УБРАНЫ: в dxgi.dll это thunk-переходы, детур на них
-    // валил DXGI-энумерацию на старте игры. Свопчейн достаётся через пробный
-    // свопчейн + захват по чужому Present (COM-уровень, безопасно).
-    HMODULE h11 = LoadLibraryA("d3d11.dll");
-    if (h11) {
-        FARPROC cd = GetProcAddress(h11, "D3D11CreateDevice");
-        FARPROC cdasc = GetProcAddress(h11, "D3D11CreateDeviceAndSwapChain");
-        if (cd) ZmInstallJump((void*)cd, (void*)Hook_CD, g_njCD);
-        if (cdasc) ZmInstallJump((void*)cdasc, (void*)Hook_CDASC, g_njCDASC);
-        Log(SFmt("D3D11: early hooks CD=%d CDASC=%d", g_njCD.installed ? 1 : 0, g_njCDASC.installed ? 1 : 0));
+    HMODULE h = LoadLibraryA("d3d11.dll");
+    if (!h) return;
+    FARPROC cd = GetProcAddress(h, "D3D11CreateDevice");
+    FARPROC cdasc = GetProcAddress(h, "D3D11CreateDeviceAndSwapChain");
+    if (cd) ZmInstallJump((void*)cd, (void*)Hook_CD, g_njCD);
+    if (cdasc) ZmInstallJump((void*)cdasc, (void*)Hook_CDASC, g_njCDASC);
+    Log(SFmt("D3D11: early export hooks %s/%s", cd ? "installed" : "absent", cdasc ? "installed" : "absent"));
+}
+
+// --- vtable ID3D11DeviceContext / ID3D11Device / IDXGISwapChain (номера слотов) ---
+// Слоты (после QI=0/AddRef=1/Release=2):
+//   ID3D11DeviceContext: GetDevice=3, RSSetViewports=21, RSSetState=23,
+//     OMSetRenderTargets=24, OMSetBlendState=26, OMSetDepthStencilState=27,
+//     Draw=29, CopyResource=38, PSSetShaderResources=8, PSSetSamplers=14,
+//     VSSetShader=10, PSSetShader=11, IASetPrimitiveTopology=83.
+//   ID3D11Device: CreateTexture2D=5, CreateShaderResourceView=7,
+//     CreateRenderTargetView=9, CreateRasterizerState=21, CreateSamplerState=22,
+//     GetImmediateContext=37.
+//   ID3D11RasterizerState: GetDevice=3, GetDesc=4.
+//   IDXGISwapChain: Present=8, GetBuffer=9.
+
+struct ZmRastDesc { int Fill, Cull, FrontCCW, DepthBias; float DepthBiasClamp, SlopeBias; int DepthClip, Scissor, Multisample, AALine; };
+typedef void (STDMETHODCALLTYPE *PFN_RSSetState)(void*, void*);
+typedef void (STDMETHODCALLTYPE *PFN_RSSetViewports)(void*, UINT, const float*);
+typedef void (STDMETHODCALLTYPE *PFN_RsGetDesc)(void*, ZmRastDesc*);
+typedef void (STDMETHODCALLTYPE *PFN_GetDev)(void*, void**);
+typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateRS)(void*, const ZmRastDesc*, void**);
+typedef HRESULT (STDMETHODCALLTYPE *PFN_GetImmCtx)(void*, void**);
+typedef ULONG (STDMETHODCALLTYPE *PFN_Rel)(void*);
+typedef HRESULT (STDMETHODCALLTYPE *PFN_Present_T)(void*, UINT, UINT);
+
+PFN_RSSetState     g_oRSSetState = NULL;
+PFN_RSSetViewports g_oRSSetVP = NULL;
+std::map<size_t, void*> g_rsCache;
+float g_rsVpW = 0.0f;
+void* g_rsLastOrig = NULL;
+
+bool g_rsHaveOrig = false;
+
+void* RsVariant(void* st, int kind) {   // kind 1 = инверт FrontCounterClockwise, 2 = CullMode NONE
+    if (!st) return st;
+    size_t key = ((size_t)st << 2) | (size_t)kind;
+    std::map<size_t, void*>::iterator it = g_rsCache.find(key);
+    if (it != g_rsCache.end()) return it->second;
+    void* res = st;
+    ZmRastDesc d; memset(&d, 0, sizeof(d));
+    ((PFN_RsGetDesc)Vt(st)[4])(st, &d);            // GetDesc = 4
+    if (kind == 1) d.FrontCCW = d.FrontCCW ? 0 : 1; else d.Cull = 1;   // D3D11_CULL_NONE = 1
+    void* dev = NULL;
+    ((PFN_GetDev)Vt(st)[3])(st, &dev);             // GetDevice = 3
+    if (dev) {
+        void* ns = NULL;
+        if (SUCCEEDED(((PFN_CreateRS)Vt(dev)[21])(dev, &d, &ns)) && ns) { res = ns; g_rsInstances++; }
+        ((PFN_Rel)Vt(dev)[2])(dev);
     }
+    g_rsCache[key] = res;
+    return res;
+}
+
+inline bool RsSubstActive() {
+    if (g_polyTest == PT_OFF || !g_devWorldMirror) return false;
+    if (g_polyTest == PT_FLIPCCW_VP) {
+        // только «экранный» вьюпорт (не теневые карты): ширина вьюпорта = ширина экрана
+        zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
+        float sw = rnd ? (float)rnd->xd3d_scrWidth : 0.0f;
+        return sw > 0.0f && g_rsVpW > 0.0f && fabsf(g_rsVpW - sw) < 2.0f;
+    }
+    return true;
+}
+
+void RsReapply() {   // переустановить текущий растеризатор (смена области действия)
+    if (!g_d11.ctx || !g_oRSSetState || !g_rsHaveOrig) return;
+    void* st = g_rsLastOrig;
+    if (RsSubstActive()) st = RsVariant(st, g_polyTest == PT_CULLNONE ? 2 : 1);
+    g_oRSSetState(g_d11.ctx, st);
+}
+
+void STDMETHODCALLTYPE Hook_RSSetState(void* ctx, void* st) {
+    g_rsCalls++;
+    g_rsLastOrig = st; g_rsHaveOrig = true;
+    if (RsSubstActive()) { st = RsVariant(st, g_polyTest == PT_CULLNONE ? 2 : 1); g_rsSubst++; }
+    g_oRSSetState(ctx, st);
+}
+
+void STDMETHODCALLTYPE Hook_RSSetViewports(void* ctx, UINT n, const float* vp) {
+    if (n && vp) g_rsVpW = vp[2];   // D3D11_VIEWPORT: TopLeftX, TopLeftY, Width, Height, MinDepth, MaxDepth
+    g_oRSSetVP(ctx, n, vp);
+    if (g_polyTest == PT_FLIPCCW_VP && g_devWorldMirror) RsReapply();
+}
+
+void ZmInstallCtxHooks() {
+    if (g_d11.hookedCtx || !g_d11.ctx) return;
+    void** vt = Vt(g_d11.ctx);
+    bool ok = PatchSlot(vt, 23, &Hook_RSSetState, g_oRSSetState);
+    ok = PatchSlot(vt, 21, &Hook_RSSetViewports, g_oRSSetVP) && ok;
+    g_d11.hookedCtx = ok;
+    g_d11Ok = ok;
+    Log(ok ? "D3D11: real context vtable hooked (RSSetState=23, RSSetViewports=21)"
+           : "D3D11: real context vtable hook FAILED");
+}
+
+void ZmCaptureDevice(void** ppDev, void** ppCtx) {
+    if (!ppDev || !ppCtx || g_d11.ok) return;
+    if (g_probeDev && g_probeDev == *ppDev) return;   // пробное устройство — не настоящее
+    g_d11.dev = *ppDev; g_d11.ctx = *ppCtx;
+    g_d11.ok = true;
+    Log("D3D11: device captured via creation hook");
+    ZmInstallCtxHooks();
 }
 
 // --- пробный свопчейн (fallback) ---
-bool ZmProbeSwapChain() {
-    if (g_probeSC) return false;
-    if (g_d11.scSet) return true;
+void* g_probeSC = NULL;
+void* g_vtProbeF = NULL;   // vtable FLIP-пробника
+void* g_vtProbeL = NULL;   // vtable legacy-пробника
+PFN_Present_T g_oPresentF = NULL;
+PFN_Present_T g_oPresentL = NULL;
 
-    void* dev = g_d11.dev;
-    if (!dev) {
-        PFN_CD_T cdReal = (PFN_CD_T)(g_njCD.installed ? (void*)g_njCD.tramp
-            : (void*)GetProcAddress(LoadLibraryA("d3d11.dll"), "D3D11CreateDevice"));
-        if (!cdReal) return false;
-        UINT fl = 0;
-        const UINT levels[3] = { 0xB000, 0xA100, 0xA000 };
-        HRESULT hr = cdReal(NULL, 1, NULL, 0, levels, 3, 7, &dev, &fl, NULL);
-        if (FAILED(hr) || !dev) hr = cdReal(NULL, 5, NULL, 0, levels, 3, 7, &dev, &fl, NULL);
-        if (FAILED(hr) || !dev) { Log("D3D11: probe device failed"); return false; }
-        g_probeDev = dev;
+void ZmFlipScDo(void* sc);   // forward (FLIP11, ниже)
+
+HRESULT STDMETHODCALLTYPE Hook_Present(void* sc, UINT sync, UINT flags) {
+    PFN_Present_T orig = g_oPresentL ? g_oPresentL : g_oPresentF;
+    if (g_oPresentF && g_oPresentL) orig = (Vt(sc) == g_vtProbeF) ? g_oPresentF : g_oPresentL;
+    if (sc && sc != g_probeSC && !g_d11.ok) {
+        // IDXGISwapChain не имеет GetDevice — достаём устройство через бэкбуфер:
+        // GetBuffer(0) -> ID3D11Texture2D (ID3D11DeviceChild::GetDevice = 3)
+        static const GUID IID_T2D = { 0x6f15aaf2, 0xd208, 0x4e89, { 0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c } };
+        typedef HRESULT (STDMETHODCALLTYPE *PFN_GetBuffer)(void*, UINT, const GUID*, void**);
+        void* tex = NULL;
+        if (SUCCEEDED(((PFN_GetBuffer)Vt(sc)[9])(sc, 0, &IID_T2D, &tex)) && tex) {
+            void* dev = NULL;
+            ((PFN_GetDev)Vt(tex)[3])(tex, &dev);   // ID3D11DeviceChild::GetDevice = 3
+            ((PFN_Rel)Vt(tex)[2])(tex);
+            if (dev) {
+                void* ctx = NULL;
+                ((PFN_GetImmCtx)Vt(dev)[37])(dev, &ctx);   // ID3D11Device::GetImmediateContext = 37
+                if (ctx) {
+                    g_d11.sc = sc; g_d11.dev = dev; g_d11.ctx = ctx; g_d11.ok = true;
+                    Log("D3D11: real context captured via SwapChain::Present");
+                    ZmInstallCtxHooks();
+                }
+            }
+        }
     }
+    if (IsScreenFlipActive() && g_d11.ok && g_d11.sc == sc) {
+        ZmFlipScDo(sc);
+    }
+    return orig(sc, sync, flags);
+}
+
+// Создаёт пробный свопчейн и вешает хук Present на его vtable.
+bool ZmProbeSwapChain() {
+    if (g_d11.ok) return true;
+    if (g_probeSC) return false;
+
+    typedef HRESULT (WINAPI *PFN_CD)(void*, UINT, HMODULE, UINT, const UINT*, UINT, UINT, void**, UINT*, void**);
+    PFN_CD cd = (PFN_CD)GetProcAddress(LoadLibraryA("d3d11.dll"), "D3D11CreateDevice");
+    if (!cd) return false;
+    // Если ранний хук установлен — создаём пробное устройство через оригинал (трэмполин),
+    // иначе наше же Hook_CD захватит пробное устройство как «настоящее».
+    PFN_CD cdReal = (PFN_CD)(g_njCD.installed ? (void*)g_njCD.tramp : (void*)cd);
+    void* dev = NULL; void* ctx = NULL; UINT fl = 0;
+    const UINT levels[3] = { 0xB000, 0xA100, 0xA000 };
+    HRESULT hr = cdReal(NULL, 1 /*HARDWARE*/, NULL, 0, levels, 3, 7, &dev, &fl, &ctx);
+    if (FAILED(hr) || !ctx) hr = cdReal(NULL, 5 /*WARP*/, NULL, 0, levels, 3, 7, &dev, &fl, &ctx);
+    if (FAILED(hr) || !ctx) { Log("D3D11: probe device failed"); return false; }
+    g_probeDev = dev;
 
     static bool clsRegistered = false;
     if (!clsRegistered) {
@@ -622,267 +695,88 @@ bool ZmProbeSwapChain() {
     }
     HWND hwnd = CreateWindowExA(0, "ZmProbeWnd", "ZmProbe", WS_POPUP, 0, 0, 32, 32, NULL, NULL, GetModuleHandleA(NULL), NULL);
     if (!hwnd) { Log("D3D11: probe window failed"); return false; }
-    g_probeWnd = hwnd;
 
     HMODULE hdxgi = LoadLibraryA("dxgi.dll");
     if (!hdxgi) return false;
 
+    // IID_IDXGIFactory1 = 770aae78-f26f-4dba-a829-253c83d1b387
+    // IID_IDXGIFactory2 = 50c83a1c-e072-4c48-87b0-3630fa36a6d0
     static const GUID IID_F1 = { 0x770aae78, 0xf26f, 0x4dba, { 0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87 } };
     static const GUID IID_F2 = { 0x50c83a1c, 0xe072, 0x4c48, { 0x87, 0xb0, 0x36, 0x30, 0xfa, 0x36, 0xa6, 0xd0 } };
-    typedef HRESULT (WINAPI *PFN_CGF1)(const GUID*, void**);
-    PFN_CGF1 cgf1 = (PFN_CGF1)GetProcAddress(hdxgi, "CreateDXGIFactory1");
-    if (!cgf1) return false;
 
     // Попытка 1: IDXGIFactory2::CreateSwapChainForHwnd (FLIP_DISCARD), слот 14
-    void* factory = NULL;
-    if (SUCCEEDED(cgf1(&IID_F2, &factory)) && factory) {
-        struct SCDesc1 { UINT Width, Height, Format, Stereo; UINT SampleDesc_Count, SampleDesc_Quality; UINT BufferUsage, BufferCount; UINT Scaling, SwapEffect, AlphaMode, Flags; };
-        struct FSD { UINT RefreshRate_Numer, RefreshRate_Denom, ScanlineOrdering, Scaling, Windowed; };
-        typedef HRESULT (STDMETHODCALLTYPE *PFN_CSCFH)(void*, void*, void*, const SCDesc1*, const FSD*, void*, void**);
-        typedef ULONG (STDMETHODCALLTYPE *PFN_RelF)(void*);
-        SCDesc1 d1; ZeroMemory(&d1, sizeof(d1));
-        d1.Width = 64; d1.Height = 64;
-        d1.Format = 28;
-        d1.SampleDesc_Count = 1;
-        d1.BufferUsage = 0x20;
-        d1.BufferCount = 2;
-        d1.Scaling = 2;
-        d1.SwapEffect = 4;
-        d1.AlphaMode = 2;
-        void* sc = NULL;
-        if (SUCCEEDED(((PFN_CSCFH)Vt(factory)[14])(factory, dev, hwnd, &d1, NULL, NULL, &sc)) && sc) {
-            g_probeSC = sc;
-            g_vtProbeF = Vt(sc);
-            PatchSlot(Vt(sc), 8, &Hook_Present, g_oPresentProbeF);
-            Log("D3D11: probe swapchain FLIP_DISCARD installed (Present hooked)");
+    typedef HRESULT (WINAPI *PFN_CGF1)(const GUID*, void**);
+    PFN_CGF1 cgf1 = (PFN_CGF1)GetProcAddress(hdxgi, "CreateDXGIFactory1");
+    if (cgf1) {
+        void* factory = NULL;
+        if (SUCCEEDED(cgf1(&IID_F2, &factory))) {
+            // DXGI_SWAP_CHAIN_DESC1
+            struct SCDesc1 { UINT Width, Height, Format, Stereo; UINT SampleDesc_Count, SampleDesc_Quality; UINT BufferUsage, BufferCount; UINT Scaling, SwapEffect, AlphaMode, Flags; };
+            struct FSD { UINT RefreshRate_Numer, RefreshRate_Denom, ScanlineOrdering, Scaling, Windowed; };
+            typedef HRESULT (STDMETHODCALLTYPE *PFN_CSCFH)(void*, void*, void*, const SCDesc1*, const FSD*, void*, void**);
+            typedef ULONG (STDMETHODCALLTYPE *PFN_RelF)(void*);
+            SCDesc1 d1; ZeroMemory(&d1, sizeof(d1));
+            d1.Width = 64; d1.Height = 64;
+            d1.Format = 28;                 // DXGI_FORMAT_R8G8B8A8_UNORM
+            d1.SampleDesc_Count = 1;
+            d1.BufferUsage = 0x20;          // DXGI_USAGE_RENDER_TARGET_OUTPUT
+            d1.BufferCount = 2;
+            d1.Scaling = 2;                 // DXGI_SCALING_STRETCH
+            d1.SwapEffect = 4;              // DXGI_SWAP_EFFECT_FLIP_DISCARD
+            d1.AlphaMode = 2;               // DXGI_SWAP_CHAIN_ALPHA_MODE_IGNORE
+            void* sc = NULL;
+            if (SUCCEEDED(((PFN_CSCFH)Vt(factory)[14])(factory, dev, hwnd, &d1, NULL, NULL, &sc)) && sc) {
+                g_probeSC = sc;
+                g_vtProbeF = Vt(sc);
+                PatchSlot(Vt(sc), 8, &Hook_Present, g_oPresentF);
+                Log("D3D11: probe swapchain FLIP_DISCARD installed (Present hooked)");
+                ((PFN_RelF)Vt(factory)[2])(factory);
+                return true;
+            }
             ((PFN_RelF)Vt(factory)[2])(factory);
-            return true;
         }
-        ((PFN_RelF)Vt(factory)[2])(factory);
     }
 
     // Попытка 2: IDXGIFactory1::CreateSwapChain (legacy DISCARD), слот 10
-    factory = NULL;
-    if (SUCCEEDED(cgf1(&IID_F1, &factory)) && factory) {
-        struct SCD { UINT BufferDesc_Width, BufferDesc_Height, BufferDesc_Format, BufferDesc_RefreshRate_Numer, BufferDesc_RefreshRate_Denom, BufferDesc_ScanlineOrdering, BufferDesc_Scaling; UINT SampleDesc_Count, SampleDesc_Quality; UINT BufferUsage, BufferCount; void* OutputWindow; int Windowed; UINT SwapEffect, Flags; };
-        typedef HRESULT (STDMETHODCALLTYPE *PFN_CSC)(void*, void*, const SCD*, void**);
-        typedef ULONG (STDMETHODCALLTYPE *PFN_RelF)(void*);
-        SCD d; ZeroMemory(&d, sizeof(d));
-        d.BufferDesc_Width = 64; d.BufferDesc_Height = 64;
-        d.BufferDesc_Format = 87;
-        d.SampleDesc_Count = 1;
-        d.BufferUsage = 0x20;
-        d.BufferCount = 1;
-        d.OutputWindow = hwnd;
-        d.Windowed = TRUE;
-        d.SwapEffect = 1;
-        void* sc = NULL;
-        if (SUCCEEDED(((PFN_CSC)Vt(factory)[10])(factory, dev, &d, &sc)) && sc) {
-            g_probeSC = sc;
-            g_vtProbeL = Vt(sc);
-            PatchSlot(Vt(sc), 8, &Hook_Present, g_oPresentProbeL);
-            Log("D3D11: probe swapchain DISCARD installed (Present hooked)");
+    if (cgf1) {
+        void* factory = NULL;
+        if (SUCCEEDED(cgf1(&IID_F1, &factory))) {
+            // DXGI_SWAP_CHAIN_DESC (без Stereo: ModeDesc = 7 UINT)
+            struct SCD { UINT BufferDesc_Width, BufferDesc_Height, BufferDesc_Format, BufferDesc_RefreshRate_Numer, BufferDesc_RefreshRate_Denom, BufferDesc_ScanlineOrdering, BufferDesc_Scaling; UINT SampleDesc_Count, SampleDesc_Quality; UINT BufferUsage, BufferCount; void* OutputWindow; int Windowed; UINT SwapEffect, Flags; };
+            typedef HRESULT (STDMETHODCALLTYPE *PFN_CSC)(void*, void*, const SCD*, void**);
+            typedef ULONG (STDMETHODCALLTYPE *PFN_RelF)(void*);
+            SCD d; ZeroMemory(&d, sizeof(d));
+            d.BufferDesc_Width = 64; d.BufferDesc_Height = 64;
+            d.BufferDesc_Format = 87;       // DXGI_FORMAT_B8G8R8A8_UNORM
+            d.SampleDesc_Count = 1;
+            d.BufferUsage = 0x20;
+            d.BufferCount = 1;
+            d.OutputWindow = hwnd;
+            d.Windowed = TRUE;
+            d.SwapEffect = 1;               // DXGI_SWAP_EFFECT_DISCARD
+            void* sc = NULL;
+            if (SUCCEEDED(((PFN_CSC)Vt(factory)[10])(factory, dev, &d, &sc)) && sc) {
+                g_probeSC = sc;
+                g_vtProbeL = Vt(sc);
+                PatchSlot(Vt(sc), 8, &Hook_Present, g_oPresentL);
+                Log("D3D11: probe swapchain DISCARD installed (Present hooked)");
+                ((PFN_RelF)Vt(factory)[2])(factory);
+                return true;
+            }
             ((PFN_RelF)Vt(factory)[2])(factory);
-            return true;
         }
-        ((PFN_RelF)Vt(factory)[2])(factory);
     }
     Log("D3D11: probe swapchain failed (both effects)");
     return false;
 }
 
 void AcquireD3D11() {
-    if (g_d11.ok && g_d11.scSet) return;
-    if (g_acqTried) return;
-    g_acqTried = true;
-    if (GpuUsesFlip()) return;
-    if (!g_d11.scSet) ZmProbeSwapChain();
-}
-
-// ───────────────────────── GD3D11: флип полигонов через состояние движка ─────────────────────────
-// V1.7.0 пробовал подменять D3D11-растеризаторы на лету (CreateRasterizerState) —
-// это роняло движок. Теперь работаем с ЖИВЫМ внутренним состоянием GD3D11:
-//   GothicRendererState.RasterizerState (CullMode + FrontCounterClockwise) +
-//   SetDirty-эквивалент (StateDirty=true и пересчёт Hash по Toolbox::hash_combine).
-// UpdateRenderStates увидит dirty-состояние и пересоздаст D3D11-растеризатор.
-//
-// Поиск адресов (без ребилда):
-//   - Engine::GAPI -> GetRendererState(): сканируем код MyDirect3DDevice7::SetRenderState
-//     (адрес уже есть — g_oSetRS) на mov eax,[gapi] + add/lea (смещение RendererState)
-//     либо на call к короткой функции «mov eax,[ecx+imm]; ret».
-//   - смещение RasterizerState внутри GothicRendererState: паттерн из DrawPrimitive
-//     (небо): C6 80 <imm> 01  (mov byte [eax+imm],1 = FrontCounterClockwise=true)
-//     с последующим 8D 88 <imm> (lea ecx,[eax+imm] = SetDirty на RasterizerState).
-//   - Валидация: по найденному адресу st+rsOff проверяем сигнатуру
-//     RasterizerState (CullMode=3, FCCW=false, ZBias=0, slope=0, StructSize=28).
-
-struct ZmEngineState {
-    bool ok;
-    BYTE* st;      // GothicRendererState*
-    int rsOff;     // смещение RasterizerState
-};
-ZmEngineState g_es = {};
-
-bool ZmReadSafe(BYTE* p, void* out, int n) {
-    if (!p) return false;
-    MEMORY_BASIC_INFORMATION mi;
-    __try {
-        if (!VirtualQuery(p, &mi, sizeof(mi))) return false;
-        if (mi.State != MEM_COMMIT) return false;
-        if ((mi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) == 0) return false;
-        memcpy(out, p, n);
-        return true;
+    if (g_d11.ok) return;
+    if (g_d11.tried) return;
+    g_d11.tried = true;
+    if (!GpuUsesFlip()) {
+        if (!g_d11.ok) ZmProbeSwapChain();
     }
-    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
-}
-
-BYTE* ZmModuleBase() { return (BYTE*)GetModuleHandleA("ddraw.dll"); }
-
-bool ZmInModule(BYTE* p) {
-    BYTE* base = ZmModuleBase();
-    if (!base) return false;
-    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
-    IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
-    DWORD size = nt->OptionalHeader.SizeOfImage;
-    return p >= base && p < base + size;
-}
-
-void ZmGetTextRange(BYTE*& text, DWORD& textSize) {
-    BYTE* base = ZmModuleBase();
-    text = NULL; textSize = 0;
-    if (!base) return;
-    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
-    IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) return;
-    text = base + nt->OptionalHeader.BaseOfCode;
-    textSize = nt->OptionalHeader.SizeOfCode;
-}
-
-// Проверка сигнатуры RasterizerState по адресу rs.
-bool ZmCheckRsSig(BYTE* rs) {
-    int cull = -1; BYTE fccw = 0xFF; int zbias = 0x7FFFFFFF; float slope = 1e30f; DWORD sz = 0;
-    if (!ZmReadSafe(rs + 12, &cull, 4)) return false;
-    if (!ZmReadSafe(rs + 16, &fccw, 1)) return false;
-    if (!ZmReadSafe(rs + 20, &zbias, 4)) return false;
-    if (!ZmReadSafe(rs + 24, &slope, 4)) return false;
-    if (!ZmReadSafe(rs + 8, &sz, 4)) return false;
-    return cull == 3 && fccw == 0 && zbias == 0 && slope == 0.0f && sz == 28;
-}
-
-// Безопасный вызов кандидата GetRendererState (чистая функция: только SEH, без C++-объектов).
-static BYTE* ZmCallGetRS(void* fn, void* thisPtr) {
-    __try {
-        return ((BYTE* (__fastcall*)(void*))fn)(thisPtr);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) { return NULL; }
-}
-
-bool ZmFindEngineState() {
-    if (g_es.ok) return true;
-    if (!g_oSetRS) return false;
-
-    // 1) Ищем смещение RasterizerState паттерном из DrawPrimitive (C6 80 imm 01 / 8D 88 imm)
-    BYTE* text = NULL; DWORD textSize = 0;
-    ZmGetTextRange(text, textSize);
-    int rsOff = -1;
-    if (text && textSize > 32) {
-        for (DWORD i = 0; i + 13 < textSize; i++) {
-            BYTE* q = text + i;
-            if (q[0] == 0xC6 && q[1] == 0x80 && q[6] == 0x01) {
-                DWORD imm = *(DWORD*)(q + 2);
-                if ((imm & 3) == 0 && imm >= 12 && imm < 8192) {
-                    if (q[7] == 0x8D && q[8] == 0x88 && *(DWORD*)(q + 9) == imm) {
-                        rsOff = (int)imm - 16;   // FCCW на смещении rsOff+16
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    if (rsOff < 0) { Log("ENGSTATE: rsOff not found"); return false; }
-
-    // 2) Ищем slot Engine::GAPI + (возможно) смещение RendererState в SetRenderState
-    DWORD slots[16]; DWORD offs[16]; int nCand = 0;
-    for (int ip = 0; ip + 5 < 512 && nCand < 16; ) {
-        BYTE* s = (BYTE*)g_oSetRS + ip;
-        BYTE op = s[0];
-        DWORD slot = 0; DWORD off = 0;
-        bool gotSlot = false;
-        if (op == 0xA1) { slot = *(DWORD*)(s + 1); gotSlot = true; }
-        else if (op == 0x8B && (s[1] == 0x05 || s[1] == 0x0D || s[1] == 0x15 || s[1] == 0x1D)) { slot = *(DWORD*)(s + 2); gotSlot = true; }
-        if (gotSlot) {
-            BYTE* n = s + (op == 0xA1 ? 5 : 6);
-            for (int k = 0; k < 8; k++) {
-                if (n[k] == 0x05) { off = *(DWORD*)(n + k + 1); break; }
-                if (n[k] == 0x8D && (n[k + 1] == 0x80 || n[k + 1] == 0x81 || n[k + 1] == 0x82 || n[k + 1] == 0x83)) { off = *(DWORD*)(n + k + 2); break; }
-            }
-            slots[nCand] = slot; offs[nCand] = off; nCand++;
-        }
-        unsigned L = ZmInsnLen(s);
-        if (!L) break;
-        ip += (int)L;
-    }
-    if (!nCand) { Log("ENGSTATE: GAPI slot not found"); return false; }
-
-    // 3) Для каждого кандидата пробуем получить st = &RendererState и валидируем
-    for (int c = 0; c < nCand; c++) {
-        void* p = NULL;
-        if (!ZmReadSafe((BYTE*)slots[c], &p, 4) || !p) continue;
-        BYTE* st = NULL;
-        if (offs[c]) {
-            st = (BYTE*)p + offs[c];
-        } else {
-            // fallback: функция GetRendererState: 8B 81 imm C3 / 8D 81 imm C3
-            if (text && textSize > 8) {
-                for (DWORD i = 0; i + 6 < textSize; i++) {
-                    BYTE* q = text + i;
-                    if ((q[0] == 0x8B || q[0] == 0x8D) && q[1] == 0x81 && q[6] == 0xC3) {
-                        st = ZmCallGetRS((void*)q, p);
-                        if (st) break;
-                    }
-                }
-            }
-        }
-        if (!st) continue;
-        if (ZmCheckRsSig(st + rsOff)) {
-            g_es.ok = true;
-            g_es.st = st;
-            g_es.rsOff = rsOff;
-            Log(SFmt("ENGSTATE: ok (st=%p rsOff=%d slot=%p)", st, rsOff, (void*)slots[c]));
-            return true;
-        }
-    }
-
-    Log("ENGSTATE: no valid candidate");
-    return false;
-}
-
-void PolyFixApply(int variant) {
-    if (!g_es.ok || !g_devWorldMirror || variant == PT_OFF) return;
-    BYTE* rs = g_es.st + g_es.rsOff;
-    DWORD sz = 0;
-    if (!ZmReadSafe(rs + 8, &sz, 4)) return;
-    if (sz < 28 || sz > 64) return;
-
-    __try {
-        if (variant == PT_FLIPCCW) {
-            *(BYTE*)(rs + 16) = 1;            // FrontCounterClockwise = true
-        } else if (variant == PT_CULLNONE) {
-            *(int*)(rs + 12) = 1;             // CullMode = D3D11_CULL_NONE
-        }
-        *(BYTE*)(rs) = 1;                     // StateDirty
-        DWORD h = 0;
-        DWORD* p = (DWORD*)(rs + 12);
-        for (int i = 12; i < (int)sz; i += 4) {
-            DWORD v = *p++;
-            h ^= v + 0x9e3779b9 + (h << 6) + (h >> 2);
-        }
-        *(DWORD*)(rs + 4) = h;                // Hash
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) { }
 }
 
 // ───────────────────────── FLIP11: переворот кадра на GD3D11 ─────────────────────────
@@ -891,13 +785,14 @@ void PolyFixApply(int variant) {
 
 struct ZmFlipSc {
     bool initTried;
-    void* tex;
-    void* srv;
-    void* sampler;
-    void* vs;
-    void* ps;
-    void* rtv;
+    void* tex;    // ID3D11Texture2D (scratch)
+    void* srv;    // ID3D11ShaderResourceView
+    void* sampler; // ID3D11SamplerState
+    void* vs;     // ID3D11VertexShader
+    void* ps;     // ID3D11PixelShader
+    void* rtv;    // ID3D11RenderTargetView (бэкбуфер)
     UINT w, h;
+    int frames;
 };
 ZmFlipSc g_fs = {};
 
@@ -918,7 +813,7 @@ void ZmCompileShaders() {
         "  VSOut o;\n"
         "  float2 p=float2((id<<1)&2,id&2);\n"
         "  o.p=float4(p*2.0-1.0,0,1);\n"
-        "  o.uv=p*0.5;\n"
+        "  o.uv=p;\n"
         "  return o;\n"
         "}\n";
     const char* pssrc =
@@ -934,6 +829,7 @@ void ZmCompileShaders() {
     hr = compile(pssrc, strlen(pssrc), "ps.hlsl", NULL, NULL, "main", "ps_4_0", 0, 0, &psCode, &err);
     if (FAILED(hr) || !psCode) { Log(SFmt("FLIP11: PS compile failed hr=0x%08lX", (unsigned long)hr)); return; }
 
+    // ID3DBlob: GetBufferPointer = 3, GetBufferSize = 4
     typedef void* (STDMETHODCALLTYPE *PFN_GetBufPtr)(void*);
     typedef SIZE_T (STDMETHODCALLTYPE *PFN_GetBufSize)(void*);
     const void* vptr = ((PFN_GetBufPtr)Vt(vsCode)[3])(vsCode);
@@ -953,6 +849,7 @@ void ZmFlipScDo(void* sc) {
 
     if (!g_fs.initTried) {
         g_fs.initTried = true;
+        static const GUID IID_T2D = { 0x6f15aaf2, 0xd208, 0x4e89, { 0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c } };
         typedef HRESULT (STDMETHODCALLTYPE *PFN_GetBuffer)(void*, UINT, const GUID*, void**);
         typedef void (STDMETHODCALLTYPE *PFN_GetDescTex)(void*, void*);
         typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateTex)(void*, const void*, const void*, void**);
@@ -963,18 +860,20 @@ void ZmFlipScDo(void* sc) {
         void* bb = NULL;
         if (FAILED(((PFN_GetBuffer)Vt(sc)[9])(sc, 0, &IID_T2D, &bb)) || !bb) { Log("FLIP11: GetBuffer failed"); return; }
 
+        // D3D11_TEXTURE2D_DESC
         struct T2DDesc { UINT Width, Height, MipLevels, ArraySize; UINT Format; UINT SampleDesc_Count, SampleDesc_Quality; UINT Usage, BindFlags, CPUAccessFlags, MiscFlags; };
         T2DDesc d; ZeroMemory(&d, sizeof(d));
-        ((PFN_GetDescTex)Vt(bb)[4])(bb, &d);
+        ((PFN_GetDescTex)Vt(bb)[4])(bb, &d);          // ID3D11Texture2D::GetDesc = 4
         g_fs.w = d.Width; g_fs.h = d.Height;
 
         T2DDesc sd = d;
-        sd.BindFlags = 0x8;
+        sd.BindFlags = 0x8;                            // D3D11_BIND_SHADER_RESOURCE
         if (FAILED(((PFN_CreateTex)Vt(dev)[5])(dev, &sd, NULL, &g_fs.tex))) { Log("FLIP11: CreateTexture2D failed"); return; }
         if (FAILED(((PFN_CreateSRV)Vt(dev)[7])(dev, g_fs.tex, NULL, &g_fs.srv))) { Log("FLIP11: CreateShaderResourceView failed"); return; }
         if (FAILED(((PFN_CreateRTV)Vt(dev)[9])(dev, bb, NULL, &g_fs.rtv))) { Log("FLIP11: CreateRenderTargetView failed"); return; }
         ((PFN_Rel)Vt(bb)[2])(bb);
 
+        // D3D11_SAMPLER_DESC: FILTER_MIN_MAG_MIP_POINT=0, CLAMP=3
         struct SmpDesc { UINT Filter, AddressU, AddressV, AddressW; float MipLODBias; UINT MaxAnisotropy, ComparisonFunc; float BorderColor[4]; float MinLOD, MaxLOD; };
         SmpDesc sm; ZeroMemory(&sm, sizeof(sm));
         sm.AddressU = sm.AddressV = sm.AddressW = 3;
@@ -1001,11 +900,13 @@ void ZmFlipScDo(void* sc) {
     typedef void (STDMETHODCALLTYPE *PFN_Draw)(void*, UINT, UINT);
     typedef HRESULT (STDMETHODCALLTYPE *PFN_GetBuffer)(void*, UINT, const GUID*, void**);
 
+    static const GUID IID_T2D = { 0x6f15aaf2, 0xd208, 0x4e89, { 0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c } };
     void* bb = NULL;
     if (FAILED(((PFN_GetBuffer)Vt(sc)[9])(sc, 0, &IID_T2D, &bb)) || !bb) return;
     struct T2DDesc { UINT Width, Height, MipLevels, ArraySize; UINT Format; UINT SampleDesc_Count, SampleDesc_Quality; UINT Usage, BindFlags, CPUAccessFlags, MiscFlags; };
     T2DDesc d; ((void (STDMETHODCALLTYPE *)(void*, void*))Vt(bb)[4])(bb, &d);
     if (d.Width != g_fs.w || d.Height != g_fs.h) {
+        // размер сменился — освободить и пересоздать при следующем Present
         ((PFN_Rel)Vt(bb)[2])(bb);
         if (g_fs.rtv) { ((PFN_Rel)Vt(g_fs.rtv)[2])(g_fs.rtv); g_fs.rtv = NULL; }
         if (g_fs.srv) { ((PFN_Rel)Vt(g_fs.srv)[2])(g_fs.srv); g_fs.srv = NULL; }
@@ -1021,7 +922,7 @@ void ZmFlipScDo(void* sc) {
     float vp[6] = { 0, 0, (float)g_fs.w, (float)g_fs.h, 0, 1 };
     ((PFN_RSSetVP2)Vt(ctx)[21])(ctx, 1, vp);
     ((PFN_OMSetRTs)Vt(ctx)[24])(ctx, 1, &g_fs.rtv, NULL);
-    ((PFN_IASetTopo)Vt(ctx)[83])(ctx, 4);
+    ((PFN_IASetTopo)Vt(ctx)[83])(ctx, 4);                 // D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
     ((PFN_SetVS)Vt(ctx)[10])(ctx, g_fs.vs, NULL, 0);
     ((PFN_SetPS)Vt(ctx)[11])(ctx, g_fs.ps, NULL, 0);
     ((PFN_SetPSResources)Vt(ctx)[8])(ctx, 0, 1, &g_fs.srv);
@@ -1029,7 +930,10 @@ void ZmFlipScDo(void* sc) {
     ((PFN_SetBlend)Vt(ctx)[26])(ctx, NULL, NULL, 0xFFFFFFFF);
     ((PFN_SetDepth)Vt(ctx)[27])(ctx, NULL, 0);
     ((PFN_Draw)Vt(ctx)[29])(ctx, 3, 0);
-    g_flipScFrames++;
+    // Не оставляем scratch-текстуру привязанной как SRV между Present.
+    void* nullSrv = NULL;
+    ((PFN_SetPSResources)Vt(ctx)[8])(ctx, 0, 1, &nullSrv);
+    g_fs.frames++;
 }
 
 // ───────────────────────── GPU-FLIP: переворот готового кадра на видеокарте ─────────────────────────
@@ -1300,6 +1204,7 @@ void MirrorFrame(bool inScene) {
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
 CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(0x0064AC30, &Hook_Rnd_DrawPolySimple);
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
+    // Карта (SELECT): зеркалим ТОЛЬКО квады карты — картинку и всё, что нарисовано после неё в её рамке (маячок).
     if (g_frameMapOpen && verts && count > 0 && count <= 64) {
         float mn = 1e30f, mx = -1e30f, my0 = 1e30f, my1 = -1e30f;
         for (int i = 0; i < count; i++) {
@@ -1313,7 +1218,7 @@ void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, z
             const char* c = zn.ToChar();
             nm = c ? c : "";
             isPage = (c && _strnicmp(c, "MAP", 3) == 0);
-            if (!isPage && !g_mapPageSeen) {
+            if (!isPage && !g_mapPageSeen) {   // запасной признак: крупный текстурный квад
                 zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
                 if (rnd && rnd->xd3d_scrWidth > 0 && rnd->xd3d_scrHeight > 0 &&
                     (mx - mn) >= 0.3f * (float)rnd->xd3d_scrWidth && (my1 - my0) >= 0.4f * (float)rnd->xd3d_scrHeight) isPage = true;
@@ -1449,6 +1354,7 @@ void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
     if (g_docShowDepth > 0) g_mapUpdInShow = true;
 }
 
+// zCRnd_D3D::Vid_Blit — конец кадра (сброс флагов карты)
 void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagRECT* r2);
 CInvoke<void(__fastcall*)(void*, void*, int, tagRECT*, tagRECT*)> Ivk_Rnd_VidBlit(0x00657670, &Hook_Rnd_VidBlit);
 void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagRECT* r2) {
@@ -1640,9 +1546,9 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
     bool prevUi = g_uiPhase;
     bool prevInMain = g_inMainWorld;
     bool devMirrorStarted = false;
-    bool useFlip = FlipModeActive();
+    bool useFlip = FlipModeActive();                        // GPU-FLIP (ванилла)
     bool useProj = (g_mode == MODE_GPU) && !GpuUsesFlip() && g_method == METH_PROJ;
-    bool useScFlip = IsScreenFlipActive();
+    bool useScFlip = IsScreenFlipActive();                  // FLIP11 (GD3D11)
 
     if (useScFlip) AcquireD3D11();
 
@@ -1661,10 +1567,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
                 devMirrorStarted = true;
                 SyncCull();
                 SyncProj();
-                if (g_polyTest != PT_OFF) {
-                    if (!g_polyOk) g_polyOk = ZmFindEngineState();
-                    PolyFixApply(g_polyTest);
-                }
+                if (g_polyTest != PT_OFF) RsReapply();
             }
             else {
                 static bool w = false;
@@ -1683,6 +1586,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
             g_worldCullFlip = false;
             SyncCull();
             SyncProj();
+            if (g_polyTest != PT_OFF) RsReapply();
         }
         if (useFlip) MirrorFrame(true);
         g_uiPhase = true;
@@ -1742,25 +1646,29 @@ void Game_Loop() {
         g_method = (g_method + 1) % METH_COUNT;
         if (g_method == METH_SCFLIP) {
             AcquireD3D11();
-            if (!g_d11.scSet) Msg("FLIP11: D3D11 swapchain not available (see log)");
+            if (!g_d11.ok) Msg("FLIP11: D3D11 not available (see log)");
         }
         Log(SFmt("method: %s (backend=%s)", kMethodNames[g_method], GpuUsesFlip() ? "FLIP" : "PROJ"));
         Msg(SFmt("METHOD: %s", kMethodNames[g_method]));
     }
 
-    // ] — тест намотки полигонов GD3D11 (PROJ): OFF -> FLIPCCW -> CULLNONE
+    // ] — тест намотки полигонов GD3D11 (PROJ): OFF -> FLIPCCW -> CULLNONE -> FLIPCCW_VP
     static bool wasRB = false;
     if (KeyEdge(VK_OEM_6, wasRB)) {
         if (g_method != METH_PROJ) {
             Msg("POLY TEST: applies to PROJ method only");
         }
         else {
-            g_polyTest = (g_polyTest + 1) % PT_COUNT;
+            // Только безопасное переключение OFF <-> FLIPCCW.
+            // CULLNONE и FLIPCCW_VP исключены: не нужны для обычного отражения
+            // и приводили к нестабильному переустановлению состояний GD3D11.
+            g_polyTest = (g_polyTest == PT_OFF) ? PT_FLIPCCW : PT_OFF;
             if (g_polyTest != PT_OFF) {
-                if (!g_polyOk) g_polyOk = ZmFindEngineState();
-                if (!g_polyOk) { g_polyTest = PT_OFF; Msg("POLY TEST: engine state not found (see log)"); }
+                AcquireD3D11();
+                if (!g_d11.ok) { g_polyTest = PT_OFF; Msg("POLY TEST: D3D11 not available (see log)"); }
                 else {
-                    Log(SFmt("poly test: %s (eng=%d)", kPolyTestNames[g_polyTest], g_polyOk ? 1 : 0));
+                    RsReapply();
+                    Log(SFmt("poly test: %s (D3D11 hook=%d backend=%s)", kPolyTestNames[g_polyTest], g_d11Ok ? 1 : 0, GpuUsesFlip() ? "FLIP" : "PROJ"));
                     Msg(SFmt("POLY TEST: %s", kPolyTestNames[g_polyTest]));
                 }
             }
@@ -1828,7 +1736,8 @@ CApplication* lpApplication = !CHECK_THIS_ENGINE ? Null : CApplication::CreateRe
     Enabled( AppDefault ) Game_ApplyOptions
 );
 
-// Ранние хуки D3D11CreateDevice/D3D11CreateDeviceAndSwapChain — ставим при загрузке DLL.
+// Ранние хуки D3D11CreateDevice — ставим при загрузке DLL (до Game_Entry),
+// чтобы поймать создание устройства, если GD3D11 создаёт его позже плагина.
 struct ZmEarlyHooksInit {
     ZmEarlyHooksInit() { ZmInstallEarlyHooks(); }
 };
