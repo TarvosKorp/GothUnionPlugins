@@ -1,24 +1,36 @@
 // ═══════════════════════════════════════════════════════════════════
-// zMirrorTest V1.6.0
+// zMirrorTest V1.7.0
 // Плагин зеркального режима для Gothic 2 NotR (Union SDK, G2A).
 //
 // УПРАВЛЕНИЕ:
-//   HOME   — зеркало OFF <-> GPU (бэкенд авто: ванилла = FLIP, GD3D11/ddraw-враппер = PROJ).
+//   HOME   — зеркало OFF <-> GPU (бэкенд авто: ванилла = FLIP, GD3D11 = PROJ/FLIP11).
 //   END    — телеметрия ON/OFF (PERF-замеры в zMirror_log.txt).
-//   PAGEUP — метка MARK в логе + ДАМП карты: при открытой карте пишет в лог список
-//            DrawPolySimple-квадов кадра (текстура/рамка/попадание) — строки "MAPDUMP".
-//   [      — метод зеркалирования КАРТЫ: AUTO -> FINAL -> SELECT -> AUTO.
-//              SELECT — зеркалятся только квады карты (картинка + маячок) в DrawPolySimple:
-//                       HUD не трогается, нет доп. прохода, работает и на GD3D11.
-//              FINAL  — старый метод: переворот всего кадра в Vid_Blit (только ванилла).
-//              AUTO   — SELECT, а если квады карты не найдены — FINAL (ванилла).
-//   ]      — ТЕСТ намотки полигонов для GD3D11 (PROJ): OFF -> FLIPCCW -> CULLNONE -> FLIPCCW_VP -> OFF.
-//              Хук ID3D11DeviceContext::RSSetState: во время рендера мира подменяет
-//              растеризатор GD3D11 (инверт FrontCounterClockwise / CullMode=NONE).
+//   [      — метод зеркала на GD3D11: PROJ <-> FLIP11.
+//              PROJ    — отражение проекции + TL-вершин (мир отражается, полигоны
+//                        вывернуты, лечатся тестом намотки "]").
+//              FLIP11  — аналог GPU-FLIP для GD3D11: переворот готового кадра при
+//                        Present (IDXGISwapChain::Present), как на ванилле.
+//   ]      — ТЕСТ намотки полигонов для GD3D11 (PROJ): OFF -> FLIPCCW -> CULLNONE
+//            -> FLIPCCW_VP -> OFF. Хук настоящего ID3D11DeviceContext::RSSetState
+//            (слот 23 vtable): во время рендера мира подменяет растеризатор.
 //
-// ЧТО РАБОТАЕТ (см. Instructions.md/Ideas.txt):
+// ЧТО ИЗМЕНИЛОСЬ ПО СРАВНЕНИЮ С V1.6.0:
+//   - Карта: режим FINAL убран. Всегда SELECT (только квады карты в DrawPolySimple:
+//     картинка + маячок). HUD не затрагивается, доп. прохода нет, работает на обоих
+//     рендерах. Телеметрия карты и дамп PgUp убраны.
+//   - GD3D11: V1.6.0 хукал vtable «пробного» контекста со слотами 43/44 (что
+//     заведомо неверно: RSSetState = 23, RSSetViewports = 21, GetDesc = 4,
+//     CreateRasterizerState = 21). Теперь хукается НАСТОЯЩИЙ контекст:
+//       * ранний хук экспортов D3D11CreateDevice/D3D11CreateDeviceAndSwapChain
+//         (инлайн-патч) — если устройство создаётся после загрузки плагина;
+//       * fallback: «пробный» свопчейн на скрытом окне -> хук IDXGISwapChain::Present
+//         (слот 8) -> первый чужой Present выдаёт устройство/контекст GD3D11.
+//   - FLIP11: копирование бэкбуфера и зеркальный полноэкранный квад (шейдеры
+//     компилируются на лету d3dcompiler_47).
+//
+// РАБОТАЕТ (проверено):
 //   - GPU-FLIP (ванилла): переворот готового кадра на GPU без потерь FPS.
-//   - GPU-PROJ (GD3D11): отражение проекции + TL-вершин; намотка — тест на "]".
+//   - Карта SELECT на обоих рендерах.
 //   - Своп LR-клавиш/мыши, надписи фокуса, анти-своп в модалках и взломе.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -109,40 +121,37 @@ void DetectWrapper() {
     Log(SFmt("DETECT ddraw.dll path='%s' windowsDir='%s' wrapper=%d", path, win, g_wrapperDetected ? 1 : 0));
 }
 
-// true: GPU работает как FLIP (переворот кадра), false: как PROJ
+// true: GPU работает как FLIP (переворот кадра), false: как PROJ/FLIP11
 inline bool GpuUsesFlip() {
     DetectWrapper();
     return g_backendPref == BK_FLIP || (g_backendPref == BK_AUTO && !g_wrapperDetected);
 }
-// true: активный режим переворачивает готовый кадр (GPU-FLIP)
+// true: активный режим переворачивает готовый кадр (GPU-FLIP, ванилла)
 inline bool FlipModeActive() { return g_mode == MODE_GPU && GpuUsesFlip(); }
 
-// Состояние финального переворота кадра (карта открыта)
-bool g_frameFinalFlip = false;
-bool g_worldRenderedThisFrame = false;
+// Метод зеркала на GD3D11 ("[")
+enum { METH_PROJ = 0, METH_SCFLIP = 1, METH_COUNT = 2 };
+const char* const kMethodNames[METH_COUNT] = { "PROJ", "FLIP11" };
+int g_method = METH_PROJ;
 
-// Карта: способ зеркалирования ("[") и выборочный режим (квады карты в DrawPolySimple)
-enum { MAPM_AUTO = 0, MAPM_FINAL = 1, MAPM_SELECT = 2, MAPM_COUNT = 3 };
-const char* const kMapModeNames[MAPM_COUNT] = { "AUTO", "FINAL", "SELECT" };
-int   g_mapMode = MAPM_AUTO;
-bool  g_frameMapOpen = false;    // карта открыта в этом кадре (решено при рендере мира)
-bool  g_mapSelOk = false;        // выборочный путь найден (квады карты реально проходят через DrawPolySimple)
-bool  g_mapPageSeen = false;     // картинка карты уже встречена в этом кадре
-float g_mapL = 0, g_mapR = 0;    // рамка картинки карты по X (пиксели)
-int   g_selCand = 0;             // кандидаты (квады карты) в этом кадре
+inline bool IsScreenFlipActive() {
+    return g_mode == MODE_GPU && !GpuUsesFlip() && g_method == METH_SCFLIP;
+}
+
+// Карта: выборочный режим (квады карты в DrawPolySimple) — всегда включён
+bool g_frameMapOpen = false;    // карта открыта в этом кадре
+bool g_mapPageSeen = false;     // картинка карты уже встречена в этом кадре
+float g_mapL = 0, g_mapR = 0;   // рамка картинки карты по X (пиксели)
+int   g_selCand = 0;            // кандидаты (квады карты) в этом кадре
 int   g_selApplied = 0;          // зеркалено квадов (для PERF)
-bool  g_mapDumpArm = false;      // PAGEUP: дамп квадов при открытой карте
-struct MapQuadRec { std::string tex; int n; float x0, x1, y0, y1; int hit; };
-std::vector<MapQuadRec> g_mapDump;
 
 // Тест намотки GD3D11 ("]")
 enum { PT_OFF = 0, PT_FLIPCCW = 1, PT_CULLNONE = 2, PT_FLIPCCW_VP = 3, PT_COUNT = 4 };
 const char* const kPolyTestNames[PT_COUNT] = { "OFF", "FLIPCCW", "CULLNONE", "FLIPCCW_VP" };
 int  g_polyTest = PT_OFF;
-bool g_d11Tried = false, g_d11Ok = false;
 int  g_rsCalls = 0, g_rsSubst = 0, g_rsInstances = 0;
+bool g_d11Ok = false;      // D3D11: хук контекста установлен (для PERF)
 
-int g_mark = 0;            // счётчик меток сценария (PAGEUP)
 void SyncMouseFlip();      // forward (определена ниже)
 
 // ───────────────────────── Карта: ранние глобалы детекта ─────────────────────────
@@ -218,9 +227,11 @@ void PerfFrame() {
     if (g_perf.frames >= 300) {
         double avg = g_perf.frameSum / g_perf.frames;
         double am = g_perf.mirrorN ? g_perf.mirrorSum / g_perf.mirrorN : 0.0;
-        Log(SFmt("PERF mode=%s backend=%s frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms psMirrored=%d vbTlMirrored=%d gf(state=%d ok=%ld) map(mode=%s selOk=%d applied=%d) poly(test=%s hook=%d calls=%d subst=%d inst=%d)",
-            kModeNames[g_mode], g_mode == MODE_GPU ? (GpuUsesFlip() ? "FLIP" : "PROJ") : "-", g_perf.frames, avg, 1000.0 / avg, am,
-            g_psMirrored, g_vbTlMirrored, g_gf.state, g_gf.framesOk, kMapModeNames[g_mapMode], g_mapSelOk ? 1 : 0, g_selApplied,
+        Log(SFmt("PERF mode=%s backend=%s method=%s frames=%d avgFrame=%.2f ms (%.1f fps) avgMirrorCall=%.2f ms psMirrored=%d vbTlMirrored=%d gf(state=%d ok=%ld) poly(test=%s d11(hook=%d calls=%d subst=%d inst=%d)",
+            kModeNames[g_mode], g_mode == MODE_GPU ? (GpuUsesFlip() ? "FLIP" : "PROJ") : "-",
+            g_mode == MODE_GPU && !GpuUsesFlip() ? kMethodNames[g_method] : "-",
+            g_perf.frames, avg, 1000.0 / avg, am,
+            g_psMirrored, g_vbTlMirrored, g_gf.state, g_gf.framesOk,
             kPolyTestNames[g_polyTest], g_d11Ok ? 1 : 0, g_rsCalls, g_rsSubst, g_rsInstances));
         g_perf.frameSum = 0; g_perf.frames = 0; g_perf.mirrorSum = 0; g_perf.mirrorN = 0;
         g_psMirrored = 0; g_vbTlMirrored = 0; g_selApplied = 0; g_rsCalls = 0; g_rsSubst = 0;
@@ -367,7 +378,7 @@ bool EnsureDeviceHooks() {
     bool ok = true;
     ok = PatchSlot(vt, 11, &Hook_Dev_SetTransform,          g_oSetTransform) && ok;
     ok = PatchSlot(vt, 13, &Hook_Dev_SetViewport,           g_oSetViewport) && ok;
-    ok = PatchSlot(vt, 20, &Hook_Dev_SetRenderState,        g_oSetRS) && ok;   // SDK-порядок: SetRenderState = 20
+    ok = PatchSlot(vt, 20, &Hook_Dev_SetRenderState,        g_oSetRS) && ok;
 
     g_devHooked = ok;
     Log(ok ? SFmt("device hooks installed (cull=%lu, viewport %lux%lu, slots SetTransform11/SetViewport13/SetRenderState20)",
@@ -376,26 +387,173 @@ bool EnsureDeviceHooks() {
     return ok;
 }
 
-// ───────────────────────── GD3D11: тест намотки (хук ID3D11DeviceContext::RSSetState) ─────────────────────────
-// Без заголовков d3d11.h: vtable-слоты и структура описаны вручную.
-// Контекст берём из «пробного» устройства: vtable класса контекста общая для всех контекстов d3d11.dll.
+// ───────────────────────── GD3D11: доступ к настоящему контексту ─────────────────────────
+// V1.6.0 хукал vtable «пробного» контекста (слоты 43/44) — это не работало:
+//   - слоты неверные (RSSetState = 23, RSSetViewports = 21, GetDesc = 4,
+//     CreateRasterizerState = 21);
+//   - хук стоял на другом объекте, а не на контексте GD3D11.
+// Теперь получаем НАСТОЯЩИЙ контекст двумя путями:
+//   1) ранний инлайн-хук экспортов D3D11CreateDevice/D3D11CreateDeviceAndSwapChain
+//      (если устройство создаётся после загрузки плагина);
+//   2) fallback: «пробный» свопчейн на скрытом окне -> хук IDXGISwapChain::Present
+//      (слот 8) -> первый чужой Present принадлежит свопчейну GD3D11 -> через него
+//      достаём устройство/контекст.
+
+struct ZmD3D11 {
+    bool tried, ok;
+    bool hookedCtx;
+    void* dev;   // ID3D11Device*
+    void* ctx;   // ID3D11DeviceContext* (immediate)
+    void* sc;    // IDXGISwapChain* (GD3D11)
+};
+ZmD3D11 g_d11 = {};
+
+// --- vtable-вспомогательные ---
+inline void** Vt(void* o) { return *(void***)o; }
+
+// --- инлайн-хук (детур) для экспортов d3d11.dll ---
+struct ZmNearJump {
+    void* site; BYTE orig[24]; void* tramp; bool installed;
+};
+
+BYTE* ZmAllocNear(void* site, DWORD size) {
+    BYTE* base = (BYTE*)((DWORD_PTR)site & ~(DWORD_PTR)0xFFFFF);
+    long best = 0;
+    for (long pass = 0; pass < 4000; pass++) {
+        BYTE* cand = (pass & 1) ? base - ((pass >> 1) + 1) * 0x10000
+                                : base + ((pass >> 1) + 1) * 0x10000;
+        void* p = VirtualAlloc(cand, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+        if (p) {
+            INT64 delta = (INT64)((BYTE*)p - (BYTE*)site);
+            if (delta > -0x7FF00000LL && delta < 0x7FF00000LL) return (BYTE*)p;
+            VirtualFree(p, 0, MEM_RELEASE);
+            if (++best > 64) break;
+        }
+    }
+    return NULL;
+}
+
+// Длина инструкции (только нужный минимум для прологов MSVC). 0 = неизвестно.
+unsigned ZmInsnLen(const BYTE* p) {
+    const BYTE* s = p;
+    while (*p == 0xF0 || *p == 0xF2 || *p == 0xF3 || *p == 0x2E || *p == 0x36 ||
+           *p == 0x3E || *p == 0x26 || *p == 0x64 || *p == 0x65 || *p == 0x66 || *p == 0x67) p++;
+    BYTE op = *p;
+    if (op == 0x0F) {
+        BYTE op2 = p[1];
+        if ((op2 >= 0x80 && op2 <= 0x8F)) return (unsigned)(p - s) + 6;
+        if (op2 == 0x05 || op2 == 0x31 || op2 == 0x34 || op2 == 0x35 || op2 == 0x3F || op2 == 0xAE || op2 == 0xB0) return (unsigned)(p - s) + 3;
+        unsigned m = 3;
+        BYTE modrm = p[2];
+        if ((modrm & 0xC0) == 0x40) m += 1;
+        else if ((modrm & 0xC0) == 0x80) m += 4;
+        else if ((modrm & 0xC0) == 0x00 && (modrm & 0x07) == 0x05) m += 4;
+        return (unsigned)(p - s) + m;
+    }
+    if (op >= 0x50 && op <= 0x5F) return (unsigned)(p - s) + 1;      // push/pop
+    if (op >= 0xB0 && op <= 0xB7) return (unsigned)(p - s) + 2;      // mov reg8, imm8
+    if (op >= 0xB8 && op <= 0xBF) return (unsigned)(p - s) + 5;      // mov reg32, imm32
+    if (op == 0x68 || op == 0xA1 || op == 0xA9 || op == 0x25 || op == 0x0D || op == 0x35 || op == 0x3D || op == 0xE8 || op == 0xE9) return (unsigned)(p - s) + 5;
+    if (op == 0x6A || op == 0xEB || (op >= 0x70 && op <= 0x7F) || op == 0xCD) return (unsigned)(p - s) + 2;
+    if (op == 0x9C || op == 0x9D || op == 0x9E || op == 0x9F || op == 0xCC || op == 0xC3 || op == 0xC9 || op == 0x90) return (unsigned)(p - s) + 1;
+    if (op == 0x8B || op == 0x89 || op == 0x88 || op == 0x8A || op == 0x8D || op == 0x8F ||
+        op == 0xC7 || op == 0xC6 || op == 0x80 || op == 0x81 || op == 0x83 || op == 0xFF ||
+        op == 0xF6 || op == 0xF7 || op == 0xFE || (op & 0xC7) == 0x84 || (op & 0xC7) == 0x85) {
+        unsigned m = 2;
+        BYTE modrm = p[1];
+        if ((modrm & 0xC0) == 0x40) m += 1;
+        else if ((modrm & 0xC0) == 0x80) m += 4;
+        else if ((modrm & 0xC0) == 0x00 && (modrm & 0x07) == 0x05) m += 4;
+        if (op == 0xC7 || op == 0xC6 || op == 0x80 || op == 0x81 || op == 0x83) m += (op == 0xC6 || op == 0x80 || op == 0x83) ? 1 : 4;
+        return (unsigned)(p - s) + m;
+    }
+    return 0;
+}
+
+bool ZmInstallJump(void* site, void* hook, ZmNearJump& nj) {
+    memset(&nj, 0, sizeof(nj));
+    BYTE* s = (BYTE*)site;
+    if (!s) return false;
+    if (s[0] == 0xC3 || s[0] == 0xEB) return false;   // ret/jmp — не трогаем
+    int off = 0;
+    while (off < 5) {
+        unsigned L = ZmInsnLen(s + off);
+        if (!L || off + (int)L > 24) return false;      // не смогли разобрать пролог
+        off += (int)L;
+    }
+    BYTE* tr = ZmAllocNear(site, 40);
+    if (!tr) return false;
+    memcpy(nj.orig, s, off);
+    memcpy(tr, s, off);                    // трэмполин: оригинальные байты
+    tr[off] = 0xE9;                         // jmp обратно на site+off
+    *(INT*)(tr + off + 1) = (INT)((BYTE*)s + off - (tr + off + 5));
+    DWORD old = 0;
+    VirtualProtect(s, 8, PAGE_EXECUTE_READWRITE, &old);
+    s[0] = 0xE9;                            // site: jmp hook
+    *(INT*)(s + 1) = (INT)((BYTE*)hook - (s + 5));
+    VirtualProtect(s, 8, old, &old);
+    nj.site = site; nj.tramp = tr; nj.installed = true;
+    return true;
+}
+
+typedef HRESULT (WINAPI *PFN_CD_T)(void*, UINT, HMODULE, UINT, const UINT*, UINT, UINT, void**, UINT*, void**);
+typedef HRESULT (WINAPI *PFN_CDASC_T)(void*, UINT, HMODULE, UINT, const UINT*, UINT, UINT, const void*, void**, UINT*, void**, void**);
+ZmNearJump g_njCD, g_njCDASC;
+
+void ZmInstallCtxHooks();
+void ZmCaptureDevice(void** ppDev, void** ppCtx);
+
+HRESULT WINAPI Hook_CD(void* a, UINT b, HMODULE c, UINT d, const UINT* e, UINT f, UINT g, void** h, UINT* i, void** j) {
+    HRESULT hr = ((PFN_CD_T)g_njCD.tramp)(a, b, c, d, e, f, g, h, i, j);
+    if (SUCCEEDED(hr) && h && j) ZmCaptureDevice(h, j);
+    return hr;
+}
+
+HRESULT WINAPI Hook_CDASC(void* a, UINT b, HMODULE c, UINT d, const UINT* e, UINT f, UINT g, const void* h, void** i, UINT* j, void** k, void** l) {
+    HRESULT hr = ((PFN_CDASC_T)g_njCDASC.tramp)(a, b, c, d, e, f, g, h, i, j, k, l);
+    if (SUCCEEDED(hr) && i && k) ZmCaptureDevice(i, k);
+    return hr;
+}
+
+void ZmInstallEarlyHooks() {
+    HMODULE h = LoadLibraryA("d3d11.dll");
+    if (!h) return;
+    FARPROC cd = GetProcAddress(h, "D3D11CreateDevice");
+    FARPROC cdasc = GetProcAddress(h, "D3D11CreateDeviceAndSwapChain");
+    if (cd) ZmInstallJump((void*)cd, (void*)Hook_CD, g_njCD);
+    if (cdasc) ZmInstallJump((void*)cdasc, (void*)Hook_CDASC, g_njCDASC);
+    Log(SFmt("D3D11: early export hooks %s/%s", cd ? "installed" : "absent", cdasc ? "installed" : "absent"));
+}
+
+// --- vtable ID3D11DeviceContext / ID3D11Device / IDXGISwapChain (номера слотов) ---
+// Слоты (после QI=0/AddRef=1/Release=2):
+//   ID3D11DeviceContext: GetDevice=3, RSSetViewports=21, RSSetState=23,
+//     OMSetRenderTargets=24, OMSetBlendState=26, OMSetDepthStencilState=27,
+//     Draw=29, CopyResource=38, PSSetShaderResources=8, PSSetSamplers=14,
+//     VSSetShader=10, PSSetShader=11, IASetPrimitiveTopology=83.
+//   ID3D11Device: CreateTexture2D=5, CreateShaderResourceView=7,
+//     CreateRenderTargetView=9, CreateRasterizerState=21, CreateSamplerState=22,
+//     GetImmediateContext=37.
+//   ID3D11RasterizerState: GetDevice=3, GetDesc=4.
+//   IDXGISwapChain: Present=8, GetBuffer=9.
+
 struct ZmRastDesc { int Fill, Cull, FrontCCW, DepthBias; float DepthBiasClamp, SlopeBias; int DepthClip, Scissor, Multisample, AALine; };
 typedef void (STDMETHODCALLTYPE *PFN_RSSetState)(void*, void*);
 typedef void (STDMETHODCALLTYPE *PFN_RSSetViewports)(void*, UINT, const float*);
 typedef void (STDMETHODCALLTYPE *PFN_RsGetDesc)(void*, ZmRastDesc*);
 typedef void (STDMETHODCALLTYPE *PFN_GetDev)(void*, void**);
 typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateRS)(void*, const ZmRastDesc*, void**);
+typedef HRESULT (STDMETHODCALLTYPE *PFN_GetImmCtx)(void*, void**);
 typedef ULONG (STDMETHODCALLTYPE *PFN_Rel)(void*);
+typedef HRESULT (STDMETHODCALLTYPE *PFN_Present_T)(void*, UINT, UINT);
 
 PFN_RSSetState     g_oRSSetState = NULL;
 PFN_RSSetViewports g_oRSSetVP = NULL;
-void* g_rsCtx = NULL;
-void* g_rsLastOrig = NULL;
-bool  g_rsHaveOrig = false;
-float g_rsVpW = 0.0f;
 std::map<size_t, void*> g_rsCache;
+float g_rsVpW = 0.0f;
+void* g_rsLastOrig = NULL;
 
-inline void** Vt(void* o) { return *(void***)o; }
+bool g_rsHaveOrig = false;
 
 void* RsVariant(void* st, int kind) {   // kind 1 = инверт FrontCounterClockwise, 2 = CullMode NONE
     if (!st) return st;
@@ -404,13 +562,13 @@ void* RsVariant(void* st, int kind) {   // kind 1 = инверт FrontCounterClo
     if (it != g_rsCache.end()) return it->second;
     void* res = st;
     ZmRastDesc d; memset(&d, 0, sizeof(d));
-    ((PFN_RsGetDesc)Vt(st)[7])(st, &d);
+    ((PFN_RsGetDesc)Vt(st)[4])(st, &d);            // GetDesc = 4
     if (kind == 1) d.FrontCCW = d.FrontCCW ? 0 : 1; else d.Cull = 1;   // D3D11_CULL_NONE = 1
     void* dev = NULL;
-    ((PFN_GetDev)Vt(st)[3])(st, &dev);
+    ((PFN_GetDev)Vt(st)[3])(st, &dev);             // GetDevice = 3
     if (dev) {
         void* ns = NULL;
-        if (SUCCEEDED(((PFN_CreateRS)Vt(dev)[22])(dev, &d, &ns)) && ns) { res = ns; g_rsInstances++; }
+        if (SUCCEEDED(((PFN_CreateRS)Vt(dev)[21])(dev, &d, &ns)) && ns) { res = ns; g_rsInstances++; }
         ((PFN_Rel)Vt(dev)[2])(dev);
     }
     g_rsCache[key] = res;
@@ -419,19 +577,25 @@ void* RsVariant(void* st, int kind) {   // kind 1 = инверт FrontCounterClo
 
 inline bool RsSubstActive() {
     if (g_polyTest == PT_OFF || !g_devWorldMirror) return false;
-    if (g_polyTest == PT_FLIPCCW_VP) return g_rsVpW > 0.0f && g_haveVp && fabsf(g_rsVpW - (float)g_vp.dwWidth) < 2.0f;
+    if (g_polyTest == PT_FLIPCCW_VP) {
+        // только «экранный» вьюпорт (не теневые карты): ширина вьюпорта = ширина экрана
+        zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
+        float sw = rnd ? (float)rnd->xd3d_scrWidth : 0.0f;
+        return sw > 0.0f && g_rsVpW > 0.0f && fabsf(g_rsVpW - sw) < 2.0f;
+    }
     return true;
 }
 
 void RsReapply() {   // переустановить текущий растеризатор (смена области действия)
-    if (!g_rsCtx || !g_oRSSetState || !g_rsHaveOrig) return;
+    if (!g_d11.ctx || !g_oRSSetState || !g_rsHaveOrig) return;
     void* st = g_rsLastOrig;
     if (RsSubstActive()) st = RsVariant(st, g_polyTest == PT_CULLNONE ? 2 : 1);
-    g_oRSSetState(g_rsCtx, st);
+    g_oRSSetState(g_d11.ctx, st);
 }
 
 void STDMETHODCALLTYPE Hook_RSSetState(void* ctx, void* st) {
-    g_rsCtx = ctx; g_rsLastOrig = st; g_rsHaveOrig = true; g_rsCalls++;
+    g_rsCalls++;
+    g_rsLastOrig = st; g_rsHaveOrig = true;
     if (RsSubstActive()) { st = RsVariant(st, g_polyTest == PT_CULLNONE ? 2 : 1); g_rsSubst++; }
     g_oRSSetState(ctx, st);
 }
@@ -442,27 +606,331 @@ void STDMETHODCALLTYPE Hook_RSSetViewports(void* ctx, UINT n, const float* vp) {
     if (g_polyTest == PT_FLIPCCW_VP && g_devWorldMirror) RsReapply();
 }
 
-bool InstallD3D11Hooks() {
-    if (g_d11Tried) return g_d11Ok;
-    g_d11Tried = true;
-    HMODULE h = LoadLibraryA("d3d11.dll");
-    if (!h) { Log("D3D11 hook: d3d11.dll not found"); return false; }
-    typedef HRESULT (WINAPI *PFN_CD)(void*, UINT, HMODULE, UINT, const UINT*, UINT, UINT, void**, UINT*, void**);
-    PFN_CD cd = (PFN_CD)GetProcAddress(h, "D3D11CreateDevice");
-    if (!cd) { Log("D3D11 hook: D3D11CreateDevice missing"); return false; }
-    const UINT levels[3] = { 0xB000, 0xA100, 0xA000 };
-    void* dev = NULL; void* ctx = NULL; UINT fl = 0;
-    HRESULT hr = cd(NULL, 1 /*HARDWARE*/, NULL, 0, levels, 3, 7, &dev, &fl, &ctx);
-    if (FAILED(hr) || !ctx) hr = cd(NULL, 5 /*WARP*/, NULL, 0, levels, 3, 7, &dev, &fl, &ctx);
-    if (FAILED(hr) || !ctx) { Log(SFmt("D3D11 hook: probe device failed hr=0x%08lX", (unsigned long)hr)); return false; }
-    void** vt = Vt(ctx);
-    bool ok = PatchSlot(vt, 43, &Hook_RSSetState, g_oRSSetState);
-    ok = PatchSlot(vt, 44, &Hook_RSSetViewports, g_oRSSetVP) && ok;
-    ((PFN_Rel)Vt(ctx)[2])(ctx);
-    if (dev) ((PFN_Rel)Vt(dev)[2])(dev);
+void ZmInstallCtxHooks() {
+    if (g_d11.hookedCtx || !g_d11.ctx) return;
+    void** vt = Vt(g_d11.ctx);
+    bool ok = PatchSlot(vt, 23, &Hook_RSSetState, g_oRSSetState);
+    ok = PatchSlot(vt, 21, &Hook_RSSetViewports, g_oRSSetVP) && ok;
+    g_d11.hookedCtx = ok;
     g_d11Ok = ok;
-    Log(SFmt("D3D11 hook: RSSetState/RSSetViewports vtable patch %s (featureLevel=0x%X)", ok ? "OK" : "FAILED", fl));
-    return ok;
+    Log(ok ? "D3D11: real context vtable hooked (RSSetState=23, RSSetViewports=21)"
+           : "D3D11: real context vtable hook FAILED");
+}
+
+void ZmCaptureDevice(void** ppDev, void** ppCtx) {
+    if (!ppDev || !ppCtx || g_d11.ok) return;
+    if (g_probeDev && g_probeDev == *ppDev) return;   // пробное устройство — не настоящее
+    g_d11.dev = *ppDev; g_d11.ctx = *ppCtx;
+    g_d11.ok = true;
+    Log("D3D11: device captured via creation hook");
+    ZmInstallCtxHooks();
+}
+
+// --- пробный свопчейн (fallback) ---
+void* g_probeSC = NULL;
+void* g_probeDev = NULL;
+void* g_vtProbeF = NULL;   // vtable FLIP-пробника
+void* g_vtProbeL = NULL;   // vtable legacy-пробника
+PFN_Present_T g_oPresentF = NULL;
+PFN_Present_T g_oPresentL = NULL;
+
+void ZmFlipScDo(void* sc);   // forward (FLIP11, ниже)
+
+HRESULT STDMETHODCALLTYPE Hook_Present(void* sc, UINT sync, UINT flags) {
+    PFN_Present_T orig = g_oPresentL ? g_oPresentL : g_oPresentF;
+    if (g_oPresentF && g_oPresentL) orig = (Vt(sc) == g_vtProbeF) ? g_oPresentF : g_oPresentL;
+    if (sc && sc != g_probeSC && !g_d11.ok) {
+        // IDXGISwapChain не имеет GetDevice — достаём устройство через бэкбуфер:
+        // GetBuffer(0) -> ID3D11Texture2D (ID3D11DeviceChild::GetDevice = 3)
+        static const GUID IID_T2D = { 0x6f15aaf2, 0xd208, 0x4e89, { 0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c } };
+        typedef HRESULT (STDMETHODCALLTYPE *PFN_GetBuffer)(void*, UINT, const GUID*, void**);
+        void* tex = NULL;
+        if (SUCCEEDED(((PFN_GetBuffer)Vt(sc)[9])(sc, 0, &IID_T2D, &tex)) && tex) {
+            void* dev = NULL;
+            ((PFN_GetDev)Vt(tex)[3])(tex, &dev);   // ID3D11DeviceChild::GetDevice = 3
+            ((PFN_Rel)Vt(tex)[2])(tex);
+            if (dev) {
+                void* ctx = NULL;
+                ((PFN_GetImmCtx)Vt(dev)[37])(dev, &ctx);   // ID3D11Device::GetImmediateContext = 37
+                if (ctx) {
+                    g_d11.sc = sc; g_d11.dev = dev; g_d11.ctx = ctx; g_d11.ok = true;
+                    Log("D3D11: real context captured via SwapChain::Present");
+                    ZmInstallCtxHooks();
+                }
+            }
+        }
+    }
+    if (IsScreenFlipActive() && g_d11.ok && g_d11.sc == sc) {
+        ZmFlipScDo(sc);
+    }
+    return orig(sc, sync, flags);
+}
+
+// Создаёт пробный свопчейн и вешает хук Present на его vtable.
+bool ZmProbeSwapChain() {
+    if (g_d11.ok) return true;
+    if (g_probeSC) return false;
+
+    typedef HRESULT (WINAPI *PFN_CD)(void*, UINT, HMODULE, UINT, const UINT*, UINT, UINT, void**, UINT*, void**);
+    PFN_CD cd = (PFN_CD)GetProcAddress(LoadLibraryA("d3d11.dll"), "D3D11CreateDevice");
+    if (!cd) return false;
+    // Если ранний хук установлен — создаём пробное устройство через оригинал (трэмполин),
+    // иначе наше же Hook_CD захватит пробное устройство как «настоящее».
+    PFN_CD cdReal = (PFN_CD)(g_njCD.installed ? (void*)g_njCD.tramp : (void*)cd);
+    void* dev = NULL; void* ctx = NULL; UINT fl = 0;
+    const UINT levels[3] = { 0xB000, 0xA100, 0xA000 };
+    HRESULT hr = cdReal(NULL, 1 /*HARDWARE*/, NULL, 0, levels, 3, 7, &dev, &fl, &ctx);
+    if (FAILED(hr) || !ctx) hr = cdReal(NULL, 5 /*WARP*/, NULL, 0, levels, 3, 7, &dev, &fl, &ctx);
+    if (FAILED(hr) || !ctx) { Log("D3D11: probe device failed"); return false; }
+    g_probeDev = dev;
+
+    static bool clsRegistered = false;
+    if (!clsRegistered) {
+        WNDCLASS wc; ZeroMemory(&wc, sizeof(wc));
+        wc.lpfnWndProc = DefWindowProcA;
+        wc.hInstance = GetModuleHandleA(NULL);
+        wc.lpszClassName = "ZmProbeWnd";
+        RegisterClassA(&wc);
+        clsRegistered = true;
+    }
+    HWND hwnd = CreateWindowExA(0, "ZmProbeWnd", "ZmProbe", WS_POPUP, 0, 0, 32, 32, NULL, NULL, GetModuleHandleA(NULL), NULL);
+    if (!hwnd) { Log("D3D11: probe window failed"); return false; }
+
+    HMODULE hdxgi = LoadLibraryA("dxgi.dll");
+    if (!hdxgi) return false;
+
+    // IID_IDXGIFactory1 = 770aae78-f26f-4dba-a829-253c83d1b387
+    // IID_IDXGIFactory2 = 50c83a1c-e072-4c48-87b0-3630fa36a6d0
+    static const GUID IID_F1 = { 0x770aae78, 0xf26f, 0x4dba, { 0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87 } };
+    static const GUID IID_F2 = { 0x50c83a1c, 0xe072, 0x4c48, { 0x87, 0xb0, 0x36, 0x30, 0xfa, 0x36, 0xa6, 0xd0 } };
+
+    // Попытка 1: IDXGIFactory2::CreateSwapChainForHwnd (FLIP_DISCARD), слот 14
+    typedef HRESULT (WINAPI *PFN_CGF1)(const GUID*, void**);
+    PFN_CGF1 cgf1 = (PFN_CGF1)GetProcAddress(hdxgi, "CreateDXGIFactory1");
+    if (cgf1) {
+        void* factory = NULL;
+        if (SUCCEEDED(cgf1(&IID_F2, &factory))) {
+            // DXGI_SWAP_CHAIN_DESC1
+            struct SCDesc1 { UINT Width, Height, Format, Stereo; UINT SampleDesc_Count, SampleDesc_Quality; UINT BufferUsage, BufferCount; UINT Scaling, SwapEffect, AlphaMode, Flags; };
+            struct FSD { UINT RefreshRate_Numer, RefreshRate_Denom, ScanlineOrdering, Scaling, Windowed; };
+            typedef HRESULT (STDMETHODCALLTYPE *PFN_CSCFH)(void*, void*, void*, const SCDesc1*, const FSD*, void*, void**);
+            typedef ULONG (STDMETHODCALLTYPE *PFN_RelF)(void*);
+            SCDesc1 d1; ZeroMemory(&d1, sizeof(d1));
+            d1.Width = 64; d1.Height = 64;
+            d1.Format = 28;                 // DXGI_FORMAT_R8G8B8A8_UNORM
+            d1.SampleDesc_Count = 1;
+            d1.BufferUsage = 0x20;          // DXGI_USAGE_RENDER_TARGET_OUTPUT
+            d1.BufferCount = 2;
+            d1.Scaling = 2;                 // DXGI_SCALING_STRETCH
+            d1.SwapEffect = 4;              // DXGI_SWAP_EFFECT_FLIP_DISCARD
+            d1.AlphaMode = 2;               // DXGI_SWAP_CHAIN_ALPHA_MODE_IGNORE
+            void* sc = NULL;
+            if (SUCCEEDED(((PFN_CSCFH)Vt(factory)[14])(factory, dev, hwnd, &d1, NULL, NULL, &sc)) && sc) {
+                g_probeSC = sc;
+                g_vtProbeF = Vt(sc);
+                PatchSlot(Vt(sc), 8, &Hook_Present, g_oPresentF);
+                Log("D3D11: probe swapchain FLIP_DISCARD installed (Present hooked)");
+                ((PFN_RelF)Vt(factory)[2])(factory);
+                return true;
+            }
+            ((PFN_RelF)Vt(factory)[2])(factory);
+        }
+    }
+
+    // Попытка 2: IDXGIFactory1::CreateSwapChain (legacy DISCARD), слот 10
+    if (cgf1) {
+        void* factory = NULL;
+        if (SUCCEEDED(cgf1(&IID_F1, &factory))) {
+            // DXGI_SWAP_CHAIN_DESC (без Stereo: ModeDesc = 7 UINT)
+            struct SCD { UINT BufferDesc_Width, BufferDesc_Height, BufferDesc_Format, BufferDesc_RefreshRate_Numer, BufferDesc_RefreshRate_Denom, BufferDesc_ScanlineOrdering, BufferDesc_Scaling; UINT SampleDesc_Count, SampleDesc_Quality; UINT BufferUsage, BufferCount; void* OutputWindow; int Windowed; UINT SwapEffect, Flags; };
+            typedef HRESULT (STDMETHODCALLTYPE *PFN_CSC)(void*, void*, const SCD*, void**);
+            typedef ULONG (STDMETHODCALLTYPE *PFN_RelF)(void*);
+            SCD d; ZeroMemory(&d, sizeof(d));
+            d.BufferDesc_Width = 64; d.BufferDesc_Height = 64;
+            d.BufferDesc_Format = 87;       // DXGI_FORMAT_B8G8R8A8_UNORM
+            d.SampleDesc_Count = 1;
+            d.BufferUsage = 0x20;
+            d.BufferCount = 1;
+            d.OutputWindow = hwnd;
+            d.Windowed = TRUE;
+            d.SwapEffect = 1;               // DXGI_SWAP_EFFECT_DISCARD
+            void* sc = NULL;
+            if (SUCCEEDED(((PFN_CSC)Vt(factory)[10])(factory, dev, &d, &sc)) && sc) {
+                g_probeSC = sc;
+                g_vtProbeL = Vt(sc);
+                PatchSlot(Vt(sc), 8, &Hook_Present, g_oPresentL);
+                Log("D3D11: probe swapchain DISCARD installed (Present hooked)");
+                ((PFN_RelF)Vt(factory)[2])(factory);
+                return true;
+            }
+            ((PFN_RelF)Vt(factory)[2])(factory);
+        }
+    }
+    Log("D3D11: probe swapchain failed (both effects)");
+    return false;
+}
+
+void AcquireD3D11() {
+    if (g_d11.ok) return;
+    if (g_d11.tried) return;
+    g_d11.tried = true;
+    if (!GpuUsesFlip()) {
+        if (!g_d11.ok) ZmProbeSwapChain();
+    }
+}
+
+// ───────────────────────── FLIP11: переворот кадра на GD3D11 ─────────────────────────
+// Аналог GPU-FLIP: при Present копируем бэкбуфер в scratch-текстуру и рисуем
+// полноэкранный квад с зеркальными UV (шейдеры компилируются d3dcompiler_47).
+
+struct ZmFlipSc {
+    bool initTried;
+    void* tex;    // ID3D11Texture2D (scratch)
+    void* srv;    // ID3D11ShaderResourceView
+    void* sampler; // ID3D11SamplerState
+    void* vs;     // ID3D11VertexShader
+    void* ps;     // ID3D11PixelShader
+    void* rtv;    // ID3D11RenderTargetView (бэкбуфер)
+    UINT w, h;
+    int frames;
+};
+ZmFlipSc g_fs = {};
+
+typedef HRESULT (WINAPI *PFN_D3DCompile)(LPCVOID, SIZE_T, LPCSTR, const void*, void*, LPCSTR, LPCSTR, UINT, UINT, void**, void**);
+
+void ZmCompileShaders() {
+    typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateVS)(void*, const void*, SIZE_T, void*, void**);
+    typedef HRESULT (STDMETHODCALLTYPE *PFN_CreatePS)(void*, const void*, SIZE_T, void*, void**);
+    HMODULE hc = LoadLibraryA("d3dcompiler_47.dll");
+    if (!hc) hc = LoadLibraryA("d3dcompiler_46.dll");
+    if (!hc) { Log("FLIP11: d3dcompiler not found"); return; }
+    PFN_D3DCompile compile = (PFN_D3DCompile)GetProcAddress(hc, "D3DCompile");
+    if (!compile) { Log("FLIP11: D3DCompile not found"); return; }
+
+    const char* vssrc =
+        "struct VSOut{float4 p:SV_Position;float2 uv:TEXCOORD0;};\n"
+        "VSOut main(uint id:SV_VertexID){\n"
+        "  VSOut o;\n"
+        "  float2 p=float2((id<<1)&2,id&2);\n"
+        "  o.p=float4(p*2.0-1.0,0,1);\n"
+        "  o.uv=p*0.5;\n"
+        "  return o;\n"
+        "}\n";
+    const char* pssrc =
+        "Texture2D t:register(t0);\n"
+        "SamplerState s:register(s0);\n"
+        "float4 main(float4 p:SV_Position,float2 uv:TEXCOORD0):SV_Target{\n"
+        "  return t.Sample(s,float2(1.0-uv.x,uv.y));\n"
+        "}\n";
+
+    void* vsCode = NULL, *psCode = NULL, *err = NULL;
+    HRESULT hr = compile(vssrc, strlen(vssrc), "vs.hlsl", NULL, NULL, "main", "vs_4_0", 0, 0, &vsCode, &err);
+    if (FAILED(hr) || !vsCode) { Log(SFmt("FLIP11: VS compile failed hr=0x%08lX", (unsigned long)hr)); return; }
+    hr = compile(pssrc, strlen(pssrc), "ps.hlsl", NULL, NULL, "main", "ps_4_0", 0, 0, &psCode, &err);
+    if (FAILED(hr) || !psCode) { Log(SFmt("FLIP11: PS compile failed hr=0x%08lX", (unsigned long)hr)); return; }
+
+    // ID3DBlob: GetBufferPointer = 3, GetBufferSize = 4
+    typedef void* (STDMETHODCALLTYPE *PFN_GetBufPtr)(void*);
+    typedef SIZE_T (STDMETHODCALLTYPE *PFN_GetBufSize)(void*);
+    const void* vptr = ((PFN_GetBufPtr)Vt(vsCode)[3])(vsCode);
+    SIZE_T vsize = ((PFN_GetBufSize)Vt(vsCode)[4])(vsCode);
+    const void* pptr = ((PFN_GetBufPtr)Vt(psCode)[3])(psCode);
+    SIZE_T psize = ((PFN_GetBufSize)Vt(psCode)[4])(psCode);
+    ((PFN_CreateVS)Vt(g_d11.dev)[12])(g_d11.dev, vptr, vsize, NULL, &g_fs.vs);
+    ((PFN_CreatePS)Vt(g_d11.dev)[14])(g_d11.dev, pptr, psize, NULL, &g_fs.ps);
+    ((PFN_Rel)Vt(vsCode)[2])(vsCode);
+    ((PFN_Rel)Vt(psCode)[2])(psCode);
+    Log("FLIP11: shaders compiled");
+}
+
+void ZmFlipScDo(void* sc) {
+    void* ctx = g_d11.ctx, *dev = g_d11.dev;
+    if (!ctx || !dev) return;
+
+    if (!g_fs.initTried) {
+        g_fs.initTried = true;
+        static const GUID IID_T2D = { 0x6f15aaf2, 0xd208, 0x4e89, { 0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c } };
+        typedef HRESULT (STDMETHODCALLTYPE *PFN_GetBuffer)(void*, UINT, const GUID*, void**);
+        typedef void (STDMETHODCALLTYPE *PFN_GetDescTex)(void*, void*);
+        typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateTex)(void*, const void*, const void*, void**);
+        typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateSRV)(void*, void*, const void*, void**);
+        typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateRTV)(void*, void*, const void*, void**);
+        typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateSampler)(void*, const void*, void**);
+
+        void* bb = NULL;
+        if (FAILED(((PFN_GetBuffer)Vt(sc)[9])(sc, 0, &IID_T2D, &bb)) || !bb) { Log("FLIP11: GetBuffer failed"); return; }
+
+        // D3D11_TEXTURE2D_DESC
+        struct T2DDesc { UINT Width, Height, MipLevels, ArraySize; UINT Format; UINT SampleDesc_Count, SampleDesc_Quality; UINT Usage, BindFlags, CPUAccessFlags, MiscFlags; };
+        T2DDesc d; ZeroMemory(&d, sizeof(d));
+        ((PFN_GetDescTex)Vt(bb)[4])(bb, &d);          // ID3D11Texture2D::GetDesc = 4
+        g_fs.w = d.Width; g_fs.h = d.Height;
+
+        T2DDesc sd = d;
+        sd.BindFlags = 0x8;                            // D3D11_BIND_SHADER_RESOURCE
+        if (FAILED(((PFN_CreateTex)Vt(dev)[5])(dev, &sd, NULL, &g_fs.tex))) { Log("FLIP11: CreateTexture2D failed"); return; }
+        if (FAILED(((PFN_CreateSRV)Vt(dev)[7])(dev, g_fs.tex, NULL, &g_fs.srv))) { Log("FLIP11: CreateShaderResourceView failed"); return; }
+        if (FAILED(((PFN_CreateRTV)Vt(dev)[9])(dev, bb, NULL, &g_fs.rtv))) { Log("FLIP11: CreateRenderTargetView failed"); return; }
+        ((PFN_Rel)Vt(bb)[2])(bb);
+
+        // D3D11_SAMPLER_DESC: FILTER_MIN_MAG_MIP_POINT=0, CLAMP=3
+        struct SmpDesc { UINT Filter, AddressU, AddressV, AddressW; float MipLODBias; UINT MaxAnisotropy, ComparisonFunc; float BorderColor[4]; float MinLOD, MaxLOD; };
+        SmpDesc sm; ZeroMemory(&sm, sizeof(sm));
+        sm.AddressU = sm.AddressV = sm.AddressW = 3;
+        sm.MaxLOD = 3.402823466e+38F;
+        if (FAILED(((PFN_CreateSampler)Vt(dev)[22])(dev, &sm, &g_fs.sampler))) { Log("FLIP11: CreateSamplerState failed"); return; }
+
+        ZmCompileShaders();
+        if (!g_fs.vs || !g_fs.ps) { Log("FLIP11: shader creation failed"); return; }
+        Log(SFmt("FLIP11: resources ready (%lux%lu)", (unsigned long)g_fs.w, (unsigned long)g_fs.h));
+    }
+
+    if (!g_fs.tex || !g_fs.srv || !g_fs.rtv || !g_fs.vs || !g_fs.ps) return;
+
+    typedef void (STDMETHODCALLTYPE *PFN_CopyResource)(void*, void*, void*);
+    typedef void (STDMETHODCALLTYPE *PFN_OMSetRTs)(void*, UINT, void**, void*);
+    typedef void (STDMETHODCALLTYPE *PFN_RSSetVP2)(void*, UINT, const float*);
+    typedef void (STDMETHODCALLTYPE *PFN_IASetTopo)(void*, UINT);
+    typedef void (STDMETHODCALLTYPE *PFN_SetVS)(void*, void*, void*, UINT);
+    typedef void (STDMETHODCALLTYPE *PFN_SetPS)(void*, void*, void*, UINT);
+    typedef void (STDMETHODCALLTYPE *PFN_SetPSResources)(void*, UINT, UINT, void**);
+    typedef void (STDMETHODCALLTYPE *PFN_SetPSSamplers)(void*, UINT, UINT, void**);
+    typedef void (STDMETHODCALLTYPE *PFN_SetBlend)(void*, void*, const float*, UINT);
+    typedef void (STDMETHODCALLTYPE *PFN_SetDepth)(void*, void*, UINT);
+    typedef void (STDMETHODCALLTYPE *PFN_Draw)(void*, UINT, UINT);
+    typedef HRESULT (STDMETHODCALLTYPE *PFN_GetBuffer)(void*, UINT, const GUID*, void**);
+
+    static const GUID IID_T2D = { 0x6f15aaf2, 0xd208, 0x4e89, { 0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c } };
+    void* bb = NULL;
+    if (FAILED(((PFN_GetBuffer)Vt(sc)[9])(sc, 0, &IID_T2D, &bb)) || !bb) return;
+    struct T2DDesc { UINT Width, Height, MipLevels, ArraySize; UINT Format; UINT SampleDesc_Count, SampleDesc_Quality; UINT Usage, BindFlags, CPUAccessFlags, MiscFlags; };
+    T2DDesc d; ((void (STDMETHODCALLTYPE *)(void*, void*))Vt(bb)[4])(bb, &d);
+    if (d.Width != g_fs.w || d.Height != g_fs.h) {
+        // размер сменился — освободить и пересоздать при следующем Present
+        ((PFN_Rel)Vt(bb)[2])(bb);
+        if (g_fs.rtv) { ((PFN_Rel)Vt(g_fs.rtv)[2])(g_fs.rtv); g_fs.rtv = NULL; }
+        if (g_fs.srv) { ((PFN_Rel)Vt(g_fs.srv)[2])(g_fs.srv); g_fs.srv = NULL; }
+        if (g_fs.tex) { ((PFN_Rel)Vt(g_fs.tex)[2])(g_fs.tex); g_fs.tex = NULL; }
+        g_fs.w = d.Width; g_fs.h = d.Height;
+        g_fs.initTried = false;
+        return;
+    }
+
+    ((PFN_CopyResource)Vt(ctx)[38])(ctx, g_fs.tex, bb);
+    ((PFN_Rel)Vt(bb)[2])(bb);
+
+    float vp[6] = { 0, 0, (float)g_fs.w, (float)g_fs.h, 0, 1 };
+    ((PFN_RSSetVP2)Vt(ctx)[21])(ctx, 1, vp);
+    ((PFN_OMSetRTs)Vt(ctx)[24])(ctx, 1, &g_fs.rtv, NULL);
+    ((PFN_IASetTopo)Vt(ctx)[83])(ctx, 4);                 // D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+    ((PFN_SetVS)Vt(ctx)[10])(ctx, g_fs.vs, NULL, 0);
+    ((PFN_SetPS)Vt(ctx)[11])(ctx, g_fs.ps, NULL, 0);
+    ((PFN_SetPSResources)Vt(ctx)[8])(ctx, 0, 1, &g_fs.srv);
+    ((PFN_SetPSSamplers)Vt(ctx)[14])(ctx, 0, 1, &g_fs.sampler);
+    ((PFN_SetBlend)Vt(ctx)[26])(ctx, NULL, NULL, 0xFFFFFFFF);
+    ((PFN_SetDepth)Vt(ctx)[27])(ctx, NULL, 0);
+    ((PFN_Draw)Vt(ctx)[29])(ctx, 3, 0);
+    g_fs.frames++;
 }
 
 // ───────────────────────── GPU-FLIP: переворот готового кадра на видеокарте ─────────────────────────
@@ -535,7 +1003,6 @@ inline DWORD PixAt(const LockedRT& L, int x, int y) {
     return *(WORD*)(L.base + (size_t)y * L.pitch + (size_t)x * 2);
 }
 
-// Перед переворотом: читаем 3x3 окрестность ЗЕРКАЛЬНОЙ позиции для каждой контрольной точки.
 bool GfReadOld(IDirectDrawSurface7* rt) {
     LockedRT L;
     if (!LockRT(rt, L)) return false;
@@ -552,7 +1019,6 @@ bool GfReadOld(IDirectDrawSurface7* rt) {
     return true;
 }
 
-// После переворота: 1 = ок, 0 = неубедительно/подстроили, 2 = провал.
 int GfEvaluate(IDirectDrawSurface7* rt) {
     LockedRT L;
     if (!LockRT(rt, L)) return 0;
@@ -570,7 +1036,7 @@ int GfEvaluate(IDirectDrawSurface7* rt) {
     if (inf < 6) return 0;
     int best = 4;
     for (int k = 0; k < 9; k++) if (tally[k] > tally[best]) best = k;
-    if (tally[4] * 100 >= tally[best] * 95) best = 4;   // при ничьей предпочитаем «без сдвига»
+    if (tally[4] * 100 >= tally[best] * 95) best = 4;
     Log(SFmt("GPUFLIP calibrate: informative=%d center=%d best=%d(sx=%d sy=%d) tally=[%d %d %d|%d %d %d|%d %d %d]",
         inf, tally[4], tally[best], best % 3 - 1, best / 3 - 1,
         tally[0], tally[1], tally[2], tally[3], tally[4], tally[5], tally[6], tally[7], tally[8]));
@@ -631,7 +1097,7 @@ bool GfDrawQuad(IDirect3DDevice7* dev) {
 
     float W = (float)g_gf.rtW, H = (float)g_gf.rtH;
     float tw = (float)g_gf.texW, th = (float)g_gf.texH;
-    float uL = ((float)g_gf.rtW - (float)g_gf.adjX) / tw;   // левая вершина экрана показывает ПРАВЫЙ край источника
+    float uL = ((float)g_gf.rtW - (float)g_gf.adjX) / tw;
     float uR = (-(float)g_gf.adjX) / tw;
     float vT = ((float)g_gf.adjY) / th;
     float vB = (H + (float)g_gf.adjY) / th;
@@ -643,7 +1109,6 @@ bool GfDrawQuad(IDirect3DDevice7* dev) {
     };
     HRESULT hr = dev->DrawPrimitive(D3DPT_TRIANGLESTRIP, D3DFVF_XYZRHW | D3DFVF_TEX1, q, 4, 0);
 
-    // восстановление состояния (движок кэширует состояния — они обязаны остаться прежними)
     dev->SetTexture(0, oldTex);
     if (oldTex) oldTex->Release();
     for (int i = 0; i < nTss; i++) if (tssHave[i]) dev->SetTextureStageState(kTss[i].stage, kTss[i].t, tssOld[i]);
@@ -654,7 +1119,6 @@ bool GfDrawQuad(IDirect3DDevice7* dev) {
     return SUCCEEDED(hr);
 }
 
-// Результат: 1 = кадр перевёрнут, 0 = не удалось ДО отрисовки (кадр не тронут), 2 = нарисовано, но калибровка провалена.
 int GfFlip(zCRnd_D3D* rnd, IDirectDrawSurface7* rt, bool inScene) {
     IDirect3DDevice7* dev = zCRnd_D3D::xd3d_pd3dDevice7;
     if (!dev || !rnd) return 0;
@@ -684,7 +1148,7 @@ int GfFlip(zCRnd_D3D* rnd, IDirectDrawSurface7* rt, bool inScene) {
 
     int result = drew ? 1 : 0;
     if (cal && drew && haveOld) {
-        rnd->EndFrame();                       // Lock возможен только вне сцены
+        rnd->EndFrame();
         int ev = GfEvaluate(rt);
         if (inScene) rnd->BeginFrame();
         if (ev == 1) { g_gf.state = 1; Log(SFmt("GPUFLIP verified OK (adjX=%d adjY=%d)", g_gf.adjX, g_gf.adjY)); }
@@ -703,7 +1167,6 @@ int GfFlip(zCRnd_D3D* rnd, IDirectDrawSurface7* rt, bool inScene) {
     return result;
 }
 
-// ───────────────────────── Переворот кадра (GPU-FLIP / CPU-фолбэк) ─────────────────────────
 void MirrorFrame(bool inScene) {
     zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
     if (!rnd) return;
@@ -717,7 +1180,7 @@ void MirrorFrame(bool inScene) {
     bool ok = false;
     if (g_mode == MODE_GPU && GpuUsesFlip() && g_gf.state >= 0) {
         int r = GfFlip(rnd, rt, inScene);
-        if (r == 1 || r == 2) ok = true;   // 2: кадр уже нарисован, дальше CPU
+        if (r == 1 || r == 2) ok = true;
     }
     if (!ok) {
         if (inScene) rnd->EndFrame();
@@ -738,8 +1201,8 @@ void MirrorFrame(bool inScene) {
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
 CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(0x0064AC30, &Hook_Rnd_DrawPolySimple);
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
-    // Карта (SELECT/AUTO): зеркалим ТОЛЬКО квады карты — картинку и всё, что нарисовано после неё в её рамке (маячок).
-    if (g_frameMapOpen && g_mapMode != MAPM_FINAL && verts && count > 0 && count <= 64) {
+    // Карта (SELECT): зеркалим ТОЛЬКО квады карты — картинку и всё, что нарисовано после неё в её рамке (маячок).
+    if (g_frameMapOpen && verts && count > 0 && count <= 64) {
         float mn = 1e30f, mx = -1e30f, my0 = 1e30f, my1 = -1e30f;
         for (int i = 0; i < count; i++) {
             float x = verts[i].pos.n[0], y = verts[i].pos.n[1];
@@ -752,7 +1215,7 @@ void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, z
             const char* c = zn.ToChar();
             nm = c ? c : "";
             isPage = (c && _strnicmp(c, "MAP", 3) == 0);
-            if (!isPage && !g_mapPageSeen) {   // запасной признак: крупный текстурный квад (карта с нестандартным именем)
+            if (!isPage && !g_mapPageSeen) {   // запасной признак: крупный текстурный квад
                 zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
                 if (rnd && rnd->xd3d_scrWidth > 0 && rnd->xd3d_scrHeight > 0 &&
                     (mx - mn) >= 0.3f * (float)rnd->xd3d_scrWidth && (my1 - my0) >= 0.4f * (float)rnd->xd3d_scrHeight) isPage = true;
@@ -761,19 +1224,16 @@ void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, z
         bool hit = false;
         if (isPage) { g_mapL = mn; g_mapR = mx; g_mapPageSeen = true; hit = true; }
         else if (g_mapPageSeen && mn >= g_mapL - 1.0f && mx <= g_mapR + 1.0f) hit = true;
-        if (g_mapDumpArm && g_mapDump.size() < 64) { MapQuadRec r = { nm, count, mn, mx, my0, my1, hit ? 1 : 0 }; g_mapDump.push_back(r); }
         if (hit) {
             g_selCand++;
-            if (!g_frameFinalFlip) {
-                static std::vector<zTRndSimpleVertex> mcopy;
-                if (mcopy.size() < (size_t)count) mcopy.resize(count);
-                memcpy(&mcopy[0], verts, sizeof(zTRndSimpleVertex) * (size_t)count);
-                float cx = g_mapL + g_mapR;
-                for (int i = 0; i < count; i++) mcopy[i].pos.n[0] = cx - mcopy[i].pos.n[0];
-                g_selApplied++;
-                Ivk_Rnd_DrawPolySimple(self, edx, tex, &mcopy[0], count);
-                return;
-            }
+            static std::vector<zTRndSimpleVertex> mcopy;
+            if (mcopy.size() < (size_t)count) mcopy.resize(count);
+            memcpy(&mcopy[0], verts, sizeof(zTRndSimpleVertex) * (size_t)count);
+            float cx = g_mapL + g_mapR;
+            for (int i = 0; i < count; i++) mcopy[i].pos.n[0] = cx - mcopy[i].pos.n[0];
+            g_selApplied++;
+            Ivk_Rnd_DrawPolySimple(self, edx, tex, &mcopy[0], count);
+            return;
         }
     }
     if (g_devWorldMirror && g_haveVp && verts && count > 0 && count <= 200000) {
@@ -806,16 +1266,12 @@ int __fastcall Hook_Rnd_DrawVertexBuffer(void* self, void* edx, zCVertexBuffer* 
     if (mirrored) {
         float cx = (float)(2 * g_vp.dwX + g_vp.dwWidth);
         zVEC4* p = vb->array.XYZRHWPtr + start;
-        for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];   // откат
+        for (int i = 0; i < count; i++) p[i].n[0] = cx - p[i].n[0];
     }
     return r;
 }
 
-// ───────────────────────── Карта: детект + переворот в конце кадра ─────────────────────────
-// Пока карта открыта, кадр зеркалится ЦЕЛИКОМ в Hook_Rnd_VidBlit (после интерфейса);
-// сразу после мира переворот в этом кадре пропускается (иначе мир перевернулся бы дважды).
-// Признаки MapSignals: бит0 — известен oCViewDocumentMap; бит1 — последний документ карта;
-// бит2 — окно документов в screen->childs; бит3 — oCDocumentManager принимает ввод.
+// ───────────────────────── Карта: детект ─────────────────────────
 #if ZM_HOOK_MAP
 bool DocDlgOnScreen() {
     if (!screen) return false;
@@ -845,14 +1301,12 @@ int MapSignals() {
 }
 
 bool MapOnScreenNow() {
-    // Фиксированный LENIENT: карта = mapView + последний документ карта + mgrEnabled.
     if (!ogame || !screen) return false;
     int s = MapSignals();
     if (!(s & 1) || !(s & 2)) return false;
     return (s & 8) != 0;
 }
 
-// ~oCViewDocumentMap — очистка указателя карты при закрытии/удалении
 void __fastcall Hook_MapView_Dtor(zCView* self, void* edx);
 CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_Dtor(0x0068D470, &Hook_MapView_Dtor);
 void __fastcall Hook_MapView_Dtor(zCView* self, void* edx) {
@@ -860,7 +1314,6 @@ void __fastcall Hook_MapView_Dtor(zCView* self, void* edx) {
     Ivk_MapView_Dtor(self, edx);
 }
 
-// oCMapScreen::Show(int) — M-карта
 int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a);
 CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_MapScreen_Show(0x0047F9C0, &Hook_MapScreen_Show);
 int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a) {
@@ -873,7 +1326,6 @@ int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a) {
     return r;
 }
 
-// oCDocumentManager::Show(int) — документы (в т.ч. карта-предмет). id в EDX (__fastcall).
 void __fastcall Hook_DocMan_Show(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_DocMan_Show(0x0065F300, &Hook_DocMan_Show);
 void __fastcall Hook_DocMan_Show(void* self, void* edx) {
@@ -883,14 +1335,13 @@ void __fastcall Hook_DocMan_Show(void* self, void* edx) {
     g_docShowDepth++;
     Ivk_DocMan_Show(self, edx);
     g_docShowDepth--;
-    if (!outer) return;   // вложенный вызов из oCMapScreen::Show — решает внешний хук
+    if (!outer) return;
     bool isMap = g_mapUpdInShow || (g_frame - g_mapUpdFrame <= 2);
     oCViewDocument* d = ((oCDocumentManager*)self)->GetDocumentView(id);
     if (!isMap && d && g_mapView && (void*)d == (void*)g_mapView) isMap = true;
     g_mapDocIsMap = isMap;
 }
 
-// oCViewDocumentMap::UpdatePosition()
 void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx);
 CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_UpdatePosition(0x0068D7B0, &Hook_MapView_UpdatePosition);
 void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
@@ -900,31 +1351,13 @@ void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
     if (g_docShowDepth > 0) g_mapUpdInShow = true;
 }
 
-// zCRnd_D3D::Vid_Blit — конец кадра (после интерфейса)
+// zCRnd_D3D::Vid_Blit — конец кадра (сброс флагов карты)
 void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagRECT* r2);
 CInvoke<void(__fastcall*)(void*, void*, int, tagRECT*, tagRECT*)> Ivk_Rnd_VidBlit(0x00657670, &Hook_Rnd_VidBlit);
 void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagRECT* r2) {
-    bool doFlip = FlipModeActive() && g_frameFinalFlip;
-    if (g_frameMapOpen && g_selCand > 0 && !g_mapSelOk) { g_mapSelOk = true; Log(SFmt("MAP select path found: %d quad(s), page L=%.0f R=%.0f", g_selCand, g_mapL, g_mapR)); }
-    if (g_mapDumpArm && g_frameMapOpen) {
-        for (size_t i = 0; i < g_mapDump.size(); i++) {
-            const MapQuadRec& r = g_mapDump[i];
-            Log(SFmt("MAPDUMP #%d tex='%s' n=%d x=[%.0f..%.0f] y=[%.0f..%.0f] hit=%d", (int)i, r.tex.c_str(), r.n, r.x0, r.x1, r.y0, r.y1, r.hit));
-        }
-        Log(SFmt("MAPDUMP summary: quads=%d cand=%d pageSeen=%d L=%.0f R=%.0f mode=%s selOk=%d finalFlip=%d sig=0x%X", (int)g_mapDump.size(), g_selCand,
-            g_mapPageSeen ? 1 : 0, g_mapL, g_mapR, kMapModeNames[g_mapMode], g_mapSelOk ? 1 : 0, g_frameFinalFlip ? 1 : 0, MapSignals()));
-        g_mapDump.clear(); g_mapDumpArm = false;
-    }
-    g_frameFinalFlip = false;
     g_frameMapOpen = false;
     g_mapPageSeen = false;
     g_selCand = 0;
-    g_worldRenderedThisFrame = false;
-    if (doFlip) {
-        zCRnd_D3D* rnd = (zCRnd_D3D*)zrenderer;
-        bool inScene = rnd && rnd->xd3d_inScene != 0;
-        MirrorFrame(inScene);
-    }
     Ivk_Rnd_VidBlit(self, edx, a, r1, r2);
 }
 #else
@@ -969,7 +1402,6 @@ bool IsFocusLockableNow() {
     return ClassChainHas(fv, "oCMobContainer") || ClassChainHas(fv, "oCMobDoor") || ClassChainHas(fv, "oCMobLockable");
 }
 
-// ───────────────────────── Кандидаты имени фокуса (кэш на кадр) ─────────────────────────
 const std::vector<std::string>& FocusNamesCached() {
     static std::vector<std::string> cached;
     static int cachedFrame = -1;
@@ -1015,7 +1447,6 @@ std::string TrimStr(const std::string& s) {
     return s.substr(a, b - a + 1);
 }
 
-// Зеркалирование X в виртуальных координатах view с учётом ширины текста.
 int GoMirrorXVirtual(zCView* v, int x, int w) {
     if (!v) return x;
     int vsiz = v->vsizex;
@@ -1026,7 +1457,7 @@ int GoMirrorXVirtual(zCView* v, int x, int w) {
 }
 
 inline bool ShouldMirrorLabel() {
-    return MirrorOn() && g_uiPhase && g_worldDepth == 0 && !g_frameFinalFlip;
+    return MirrorOn() && g_uiPhase && g_worldDepth == 0;
 }
 
 void MaybeMirrorLabel(zCView* self, int& x, const zSTRING& s) {
@@ -1053,7 +1484,6 @@ void MaybeMirrorLabel(zCView* self, int& x, const zSTRING& s) {
     x = GoMirrorXVirtual(self, x, w);
 }
 
-// ───────────────────────── Хуки печати (только зеркалирование надписей) ─────────────────────────
 void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s);
 CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_Print(0x007A9A40, &Hook_View_Print);
 void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s) {
@@ -1076,8 +1506,8 @@ inline bool IsLockpickCaller(DWORD c) {
 
 inline unsigned short SwapLR(unsigned short key, DWORD caller) {
     if (!MirrorOn() || !ogame || ogame->IsOnPause()) return key;
-    if (zCView::modal) return key;   // инвентарь, торговля и т.п.
-    if (IsFocusLockableNow() && IsLockpickCaller(caller)) return key;   // взлом замков — без свопа
+    if (zCView::modal) return key;
+    if (IsFocusLockableNow() && IsLockpickCaller(caller)) return key;
     switch (key) {
     case GAME_LEFT:        return GAME_RIGHT;
     case GAME_RIGHT:       return GAME_LEFT;
@@ -1113,8 +1543,11 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
     bool prevUi = g_uiPhase;
     bool prevInMain = g_inMainWorld;
     bool devMirrorStarted = false;
-    bool useFlip = FlipModeActive();                        // GPU-FLIP: переворот готового кадра
-    bool useProj = (g_mode == MODE_GPU) && !GpuUsesFlip();  // GPU-PROJ: проекция + cull + TL
+    bool useFlip = FlipModeActive();                        // GPU-FLIP (ванилла)
+    bool useProj = (g_mode == MODE_GPU) && !GpuUsesFlip() && g_method == METH_PROJ;
+    bool useScFlip = IsScreenFlipActive();                  // FLIP11 (GD3D11)
+
+    if (useScFlip) AcquireD3D11();
 
     g_uiPhase = false;
     g_worldDepth++;
@@ -1122,9 +1555,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
         g_frame++;
         g_inMainWorld = true;
         if (g_teleOn) PerfFrame();
-        g_worldRenderedThisFrame = true;
         g_frameMapOpen = MirrorOn() && MapOnScreenNow();
-        g_frameFinalFlip = useFlip && g_frameMapOpen && (g_mapMode == MAPM_FINAL || (g_mapMode == MAPM_AUTO && !g_mapSelOk));
 
         if (useProj) {
             if (EnsureDeviceHooks()) {
@@ -1154,7 +1585,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
             SyncProj();
             if (g_polyTest != PT_OFF) RsReapply();
         }
-        if (useFlip && !g_frameFinalFlip) MirrorFrame(true);   // карта открыта → переворот будет в конце кадра
+        if (useFlip) MirrorFrame(true);
         g_uiPhase = true;
     }
     else g_uiPhase = prevUi;
@@ -1162,7 +1593,7 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
 // ───────────────────────── События Union ─────────────────────────
 void Game_Entry() {
-    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.6.0 loaded\n", false);
+    WriteText("zMirror_log.txt", "Game_Entry: zMirrorTest V1.7.0 loaded\n", false);
 }
 
 void Game_Init() { }
@@ -1191,7 +1622,10 @@ void Game_Loop() {
         PerfReset();
         SyncMouseFlip();
         Log(std::string("mirror mode: ") + kModeNames[g_mode]);
-        if (g_mode == MODE_GPU) Msg(SFmt("MIRROR MODE: GPU [%s]", GpuUsesFlip() ? "FLIP" : "PROJ"));
+        if (g_mode == MODE_GPU) {
+            if (GpuUsesFlip()) Msg("MIRROR MODE: GPU [FLIP]");
+            else { AcquireD3D11(); Msg(SFmt("MIRROR MODE: GPU [%s]", kMethodNames[g_method])); }
+        }
         else Msg("MIRROR MODE: OFF");
     }
 
@@ -1203,33 +1637,39 @@ void Game_Loop() {
         Msg(g_teleOn ? "TELEMETRY: ON" : "TELEMETRY: OFF");
     }
 
-    // PAGEUP — метка сценария
-    static bool wasPgUp = false;
-    if (KeyEdge(VK_PRIOR, wasPgUp)) {
-        g_mark++;
-        Log(SFmt("=== MARK %d === frame=%d mode=%s mapMode=%s polyTest=%s", g_mark, g_frame, kModeNames[g_mode], kMapModeNames[g_mapMode], kPolyTestNames[g_polyTest]));
-        g_mapDumpArm = true; g_mapDump.clear();
-        Msg(SFmt("MARK %d (map dump armed)", g_mark));
-    }
-
-    // [ — метод зеркалирования карты: AUTO -> FINAL -> SELECT
+    // [ — метод зеркала на GD3D11: PROJ <-> FLIP11
     static bool wasLB = false;
     if (KeyEdge(VK_OEM_4, wasLB)) {
-        g_mapMode = (g_mapMode + 1) % MAPM_COUNT;
-        g_mapSelOk = false;
-        Log(SFmt("map mode: %s", kMapModeNames[g_mapMode]));
-        Msg(SFmt("MAP MODE: %s", kMapModeNames[g_mapMode]));
+        g_method = (g_method + 1) % METH_COUNT;
+        if (g_method == METH_SCFLIP) {
+            AcquireD3D11();
+            if (!g_d11.ok) Msg("FLIP11: D3D11 not available (see log)");
+        }
+        Log(SFmt("method: %s (backend=%s)", kMethodNames[g_method], GpuUsesFlip() ? "FLIP" : "PROJ"));
+        Msg(SFmt("METHOD: %s", kMethodNames[g_method]));
     }
 
-    // ] — тест намотки полигонов GD3D11: OFF -> FLIPCCW -> CULLNONE -> FLIPCCW_VP
+    // ] — тест намотки полигонов GD3D11 (PROJ): OFF -> FLIPCCW -> CULLNONE -> FLIPCCW_VP
     static bool wasRB = false;
     if (KeyEdge(VK_OEM_6, wasRB)) {
-        g_polyTest = (g_polyTest + 1) % PT_COUNT;
-        if (g_polyTest != PT_OFF && !InstallD3D11Hooks()) { g_polyTest = PT_OFF; Msg("POLY TEST: D3D11 hook FAILED (see log)"); }
+        if (g_method != METH_PROJ) {
+            Msg("POLY TEST: applies to PROJ method only");
+        }
         else {
-            RsReapply();
-            Log(SFmt("poly test: %s (D3D11 hook=%d backend=%s)", kPolyTestNames[g_polyTest], g_d11Ok ? 1 : 0, GpuUsesFlip() ? "FLIP" : "PROJ"));
-            Msg(SFmt("POLY TEST: %s", kPolyTestNames[g_polyTest]));
+            g_polyTest = (g_polyTest + 1) % PT_COUNT;
+            if (g_polyTest != PT_OFF) {
+                AcquireD3D11();
+                if (!g_d11.ok) { g_polyTest = PT_OFF; Msg("POLY TEST: D3D11 not available (see log)"); }
+                else {
+                    RsReapply();
+                    Log(SFmt("poly test: %s (D3D11 hook=%d backend=%s)", kPolyTestNames[g_polyTest], g_d11Ok ? 1 : 0, GpuUsesFlip() ? "FLIP" : "PROJ"));
+                    Msg(SFmt("POLY TEST: %s", kPolyTestNames[g_polyTest]));
+                }
+            }
+            else {
+                Log("poly test: OFF");
+                Msg("POLY TEST: OFF");
+            }
         }
     }
 }
@@ -1290,4 +1730,11 @@ CApplication* lpApplication = !CHECK_THIS_ENGINE ? Null : CApplication::CreateRe
     Enabled( AppDefault ) Game_ApplyOptions
 );
 
-}
+// Ранние хуки D3D11CreateDevice — ставим при загрузке DLL (до Game_Entry),
+// чтобы поймать создание устройства, если GD3D11 создаёт его позже плагина.
+struct ZmEarlyHooksInit {
+    ZmEarlyHooksInit() { ZmInstallEarlyHooks(); }
+};
+static ZmEarlyHooksInit g_earlyHooks;
+
+} // namespace GOTHIC_ENGINE
