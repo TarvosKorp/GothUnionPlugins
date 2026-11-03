@@ -502,6 +502,7 @@ ZmNearJump g_njCD, g_njCDASC;
 
 void ZmInstallCtxHooks();
 void ZmCaptureDevice(void** ppDev, void** ppCtx);
+void* g_probeDev = NULL;   // пробное устройство D3D11 (игнорируем в захвате)
 
 HRESULT WINAPI Hook_CD(void* a, UINT b, HMODULE c, UINT d, const UINT* e, UINT f, UINT g, void** h, UINT* i, void** j) {
     HRESULT hr = ((PFN_CD_T)g_njCD.tramp)(a, b, c, d, e, f, g, h, i, j);
@@ -628,7 +629,6 @@ void ZmCaptureDevice(void** ppDev, void** ppCtx) {
 
 // --- пробный свопчейн (fallback) ---
 void* g_probeSC = NULL;
-void* g_probeDev = NULL;
 void* g_vtProbeF = NULL;   // vtable FLIP-пробника
 void* g_vtProbeL = NULL;   // vtable legacy-пробника
 PFN_Present_T g_oPresentF = NULL;
