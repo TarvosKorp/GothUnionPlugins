@@ -1,13 +1,13 @@
-name: Build Union plugin
+name: Build G1 plugin
 
 on:
   workflow_dispatch:      # ручной запуск кнопкой «Run workflow»
 
 env:
-  PLUGIN_NAME: zMirrorWorld   # <-- имя итогового DLL. Меняйте только здесь.
+  PLUGIN_NAME: zMirrorWorldG1   # <-- имя итогового DLL (G1). Меняйте только здесь.
 
 jobs:
-  build:
+  build-g1:
     runs-on: windows-2022
     steps:
       - name: Checkout
@@ -25,12 +25,12 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build G2A (Win32)
+      - name: Build G1 (Win32)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path Bin, PDB | Out-Null
           msbuild GothPlugin.vcxproj /m `
-            "/p:Configuration=G2A MT Release" `
+            "/p:Configuration=G1 MT Release" `
             /p:Platform=Win32 `
             /p:PlatformToolset=v143 `
             "/p:TargetName=$env:PLUGIN_NAME" `
