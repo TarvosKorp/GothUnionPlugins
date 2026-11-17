@@ -262,7 +262,7 @@ bool ZmInstallJump(void* site, void* hook, ZmNearJump& nj) {
     memset(&nj, 0, sizeof(nj));
     BYTE* s = (BYTE*)site;
     if (!s) return false;
-    if (s[0] == 0xC3 || s[0] == 0xEB) return false;   // ret/jmp — не трогаем
+    if (s[0] == 0xC3 || s[0] == 0xEB || s[0] == 0xE9) return false;   // ret/jmp — не трогаем
     int off = 0;
     while (off < 5) {
         unsigned L = ZmInsnLen(s + off);
@@ -1086,7 +1086,7 @@ void MirrorFrameFlip11Scene() {
 
 // ───────────────────────── Хук отрисовки карты ─────────────────────────
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
-CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(0x0075F690, &Hook_Rnd_DrawPolySimple);
+CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(IvkTargetVer(0x0075F690, Engine_G2), &Hook_Rnd_DrawPolySimple);
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
     // Карта (SELECT): зеркалим ТОЛЬКО квады карты — картинку и всё, что нарисовано после неё в её рамке (маячок).
     if (g_frameMapOpen && verts && count > 0 && count <= 64) {
@@ -1161,14 +1161,14 @@ bool MapOnScreenNow() {
 }
 
 void __fastcall Hook_MapView_Dtor(zCView* self, void* edx);
-CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_Dtor(0x00772440, &Hook_MapView_Dtor);
+CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_Dtor(IvkTargetVer(0x00772440, Engine_G2), &Hook_MapView_Dtor);
 void __fastcall Hook_MapView_Dtor(zCView* self, void* edx) {
     if (g_mapView == self) { g_mapView = NULL; g_mapDocIsMap = false; }
     Ivk_MapView_Dtor(self, edx);
 }
 
 void __fastcall Hook_MapScreen_Show(void* self, void* edx);
-CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapScreen_Show(0x0047E4F0, &Hook_MapScreen_Show);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapScreen_Show(IvkTargetVer(0x0047E4F0, Engine_G2), &Hook_MapScreen_Show);
 void __fastcall Hook_MapScreen_Show(void* self, void* edx) {
     bool outer = (g_docShowDepth == 0);
     if (outer) g_mapUpdInShow = false;
@@ -1179,7 +1179,7 @@ void __fastcall Hook_MapScreen_Show(void* self, void* edx) {
 }
 
 void __fastcall Hook_DocMan_Show(void* self, void* edx);
-CInvoke<void(__fastcall*)(void*, void*)> Ivk_DocMan_Show(0x00770DB0, &Hook_DocMan_Show);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_DocMan_Show(IvkTargetVer(0x00770DB0, Engine_G2), &Hook_DocMan_Show);
 void __fastcall Hook_DocMan_Show(void* self, void* edx) {
     int id = (int)(INT_PTR)edx;
     bool outer = (g_docShowDepth == 0);
@@ -1195,7 +1195,7 @@ void __fastcall Hook_DocMan_Show(void* self, void* edx) {
 }
 
 void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx);
-CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_UpdatePosition(0x00772780, &Hook_MapView_UpdatePosition);
+CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_UpdatePosition(IvkTargetVer(0x00772780, Engine_G2), &Hook_MapView_UpdatePosition);
 void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
     Ivk_MapView_UpdatePosition(self, edx);
     g_mapView = self;
@@ -1205,7 +1205,7 @@ void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
 
 // zCRnd_D3D::Vid_Blit — конец кадра (сброс флагов карты)
 void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagRECT* r2);
-CInvoke<void(__fastcall*)(void*, void*, int, tagRECT*, tagRECT*)> Ivk_Rnd_VidBlit(0x0076AB40, &Hook_Rnd_VidBlit);
+CInvoke<void(__fastcall*)(void*, void*, int, tagRECT*, tagRECT*)> Ivk_Rnd_VidBlit(IvkTargetVer(0x0076AB40, Engine_G2), &Hook_Rnd_VidBlit);
 void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagRECT* r2) {
     g_frameMapOpen = false;
     g_mapPageSeen = false;
@@ -1334,14 +1334,14 @@ void MaybeMirrorLabel(zCView* self, int& x, const zSTRING& s) {
 }
 
 void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s);
-CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_Print(0x00749F40, &Hook_View_Print);
+CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_Print(IvkTargetVer(0x00749F40, Engine_G2), &Hook_View_Print);
 void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s) {
     MaybeMirrorLabel(self, x, s);
     Ivk_View_Print(self, edx, x, y, s);
 }
 
 zCViewText* __fastcall Hook_View_CreateText3(zCView* self, void* edx, int x, int y, zSTRING const& s);
-CInvoke<zCViewText*(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_CreateText3(0x0074A7B0, &Hook_View_CreateText3);
+CInvoke<zCViewText*(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_CreateText3(IvkTargetVer(0x0074A7B0, Engine_G2), &Hook_View_CreateText3);
 zCViewText* __fastcall Hook_View_CreateText3(zCView* self, void* edx, int x, int y, zSTRING const& s) {
     MaybeMirrorLabel(self, x, s);
     return Ivk_View_CreateText3(self, edx, x, y, s);
@@ -1369,13 +1369,13 @@ inline unsigned short SwapLR(unsigned short key, DWORD caller) {
 }
 
 float __fastcall Hook_Input_GetState(zCInput_Win32* self, void* edx, unsigned short key);
-CInvoke<float(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetState(0x004D2770, &Hook_Input_GetState);
+CInvoke<float(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetState(IvkTargetVer(0x004D2770, Engine_G2), &Hook_Input_GetState);
 float __fastcall Hook_Input_GetState(zCInput_Win32* self, void* edx, unsigned short key) {
     return Ivk_Input_GetState(self, edx, SwapLR(key, (DWORD)_ReturnAddress()));
 }
 
 int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned short key);
-CInvoke<int(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetToggled(0x004D2A60, &Hook_Input_GetToggled);
+CInvoke<int(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetToggled(IvkTargetVer(0x004D2A60, Engine_G2), &Hook_Input_GetToggled);
 int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned short key) {
     return Ivk_Input_GetToggled(self, edx, SwapLR(key, (DWORD)_ReturnAddress()));
 }
@@ -1386,7 +1386,7 @@ inline bool IsMainWorld(zCWorld* w) {
 }
 
 void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam);
-CInvoke<void(__fastcall*)(zCWorld*, void*, zCCamera&)> Ivk_World_Render(0x00619FB0, &Hook_World_Render);
+CInvoke<void(__fastcall*)(zCWorld*, void*, zCCamera&)> Ivk_World_Render(IvkTargetVer(0x00619FB0, Engine_G2), &Hook_World_Render);
 void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
     bool main = IsMainWorld(self);
     bool prevUi = g_uiPhase;
