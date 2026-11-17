@@ -1276,7 +1276,6 @@ const std::vector<std::string>& FocusNamesCached() {
                 const char* c2 = ((oCMOB*)fv)->name.ToChar();
                 if (c2 && c2[0] && strcmp(c2, c) != 0) cached.push_back(c2);
             }
-            }
         }
         if (ogame) {
             zSTRING n = oCNpcFocus::GetFocusName();
