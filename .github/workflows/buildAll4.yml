@@ -1,0 +1,47 @@
+name: Build all four DLLs (G1/G1A/G2/G2A, one archive)
+
+on:
+  workflow_dispatch:      # ручной запуск кнопкой «Run workflow»
+
+jobs:
+  build-all:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Union SDK
+        shell: pwsh
+        run: |
+          $dst = Join-Path $env:ALLUSERSPROFILE 'Union\SDK'
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item -Recurse -Force 'UnionSDK\*' $dst
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build all four DLLs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path Bin, PDB | Out-Null
+          $variants = @(
+            @{ cfg = 'G1 MT Release';  dll = 'zMirrorWorldG1' },
+            @{ cfg = 'G1A MT Release'; dll = 'zMirrorWorldG1A' },
+            @{ cfg = 'G2 MT Release';  dll = 'zMirrorWorldG2' },
+            @{ cfg = 'G2A MT Release'; dll = 'zMirrorWorldG2A' }
+          )
+          foreach ($v in $variants) {
+            msbuild GothPlugin.vcxproj /m `
+              "/p:Configuration=$($v.cfg)" `
+              /p:Platform=Win32 `
+              /p:PlatformToolset=v143 `
+              "/p:TargetName=$($v.dll)" `
+              "/p:SolutionDir=$($PWD.Path)\"
+          }
+
+      - name: Upload DLLs (one archive)
+        uses: actions/upload-artifact@v4
+        with:
+          name: zMirrorWorld-all-dlls
+          path: Bin/*.dll
+          if-no-files-found: error

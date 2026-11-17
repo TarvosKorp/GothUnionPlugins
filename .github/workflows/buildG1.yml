@@ -1,29 +1,10 @@
-name: Build zMirrorWorld plugins (G1/G1A/G2/G2A/M4)
+name: Build G1 plugin
 
 on:
   workflow_dispatch:      # ручной запуск кнопкой «Run workflow»
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: G1
-            cfg: G1 MT Release
-            dll: zMirrorWorldG1
-          - id: G1A
-            cfg: G1A MT Release
-            dll: zMirrorWorldG1A
-          - id: G2
-            cfg: G2 MT Release
-            dll: zMirrorWorldG2
-          - id: G2A
-            cfg: G2A MT Release
-            dll: zMirrorWorldG2A
-          - id: M4
-            cfg: MP x4 MT Release
-            dll: zMirrorWorldM4
     runs-on: windows-2022
     steps:
       - name: Checkout
@@ -41,20 +22,20 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build ${{ matrix.id }} (Win32)
+      - name: Build G1 (Win32)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path Bin, PDB | Out-Null
           msbuild GothPlugin.vcxproj /m `
-            "/p:Configuration=${{ matrix.cfg }}" `
+            "/p:Configuration=G1 MT Release" `
             /p:Platform=Win32 `
             /p:PlatformToolset=v143 `
-            "/p:TargetName=${{ matrix.dll }}" `
+            "/p:TargetName=zMirrorWorldG1" `
             "/p:SolutionDir=$($PWD.Path)\"
 
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
-          name: zMirrorWorld-${{ matrix.id }}-dll
+          name: zMirrorWorld-G1-dll
           path: Bin/*.dll
           if-no-files-found: error

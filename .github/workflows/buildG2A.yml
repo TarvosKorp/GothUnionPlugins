@@ -1,0 +1,39 @@
+name: Build G2A plugin
+
+on:
+  workflow_dispatch:      # ручной запуск кнопкой «Run workflow»
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Union SDK
+        shell: pwsh
+        run: |
+          $dst = Join-Path $env:ALLUSERSPROFILE 'Union\SDK'
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item -Recurse -Force 'UnionSDK\*' $dst
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build G2A (Win32)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path Bin, PDB | Out-Null
+          msbuild GothPlugin.vcxproj /m `
+            "/p:Configuration=G2A MT Release" `
+            /p:Platform=Win32 `
+            /p:PlatformToolset=v143 `
+            "/p:TargetName=zMirrorWorldG2A" `
+            "/p:SolutionDir=$($PWD.Path)\"
+
+      - name: Upload DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: zMirrorWorld-G2A-dll
+          path: Bin/*.dll
+          if-no-files-found: error
