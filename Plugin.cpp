@@ -1,21 +1,15 @@
 // ═══════════════════════════════════════════════════════════════════
 // zMirrorWorld V1.7.6
 // Зеркальный режим Gothic II NotR (Union SDK).
-// HOME — включить/выключить зеркалирование.
+// Включение: конфиг INI [zMirrorWorld] Mirror=0/1 (через .d-меню Union).
 // Рендер: GPU-FLIP для штатного D3D7, FLIP11 для GD3D11.
-//
-// M4 (мульти-DLL, 4 движка): все CInvoke-адреса — G2A и обёрнуты в
-// IvkTargetVer(…, Engine_G2A), поэтому на G1/G1A/G2 хуки не ставятся
-// (плагин грузится, но зеркало неактивно). Для полной поддержки всех
-// версий нужны адреса под каждую (см. M4_BUILD.md).
+// FLIP11 зеркалит 3D-сцену до HUD/UI; проверено в игре.
 // ═══════════════════════════════════════════════════════════════════
 
 #include "resource.h"
 #include <string>
 #include <vector>
-#include <fstream>
 #include <algorithm>
-#include <cmath>
 #include <cstring>
 #include <cstdio>
 #include <cstdarg>
@@ -24,26 +18,7 @@
 
 namespace GOTHIC_ENGINE {
 
-// ───────────────────────── Запись логов ─────────────────────────
-std::string ExeDirPath(const char* name) {
-    char buf[MAX_PATH] = {0};
-    GetModuleFileNameA(NULL, buf, MAX_PATH);
-    std::string p = buf;
-    size_t pos = p.find_last_of("\\/");
-    return (pos == std::string::npos ? std::string() : p.substr(0, pos + 1)) + name;
-}
-
-void WriteText(const char* name, const std::string& text, bool append) {
-    std::ios_base::openmode mode = std::ios::out | (append ? std::ios::app : std::ios::trunc);
-    std::ofstream f(ExeDirPath(name).c_str(), mode);
-    if (!f.is_open()) {
-        char tmp[MAX_PATH] = {0};
-        GetTempPathA(MAX_PATH, tmp);
-        f.open((std::string(tmp) + name).c_str(), mode);
-    }
-    if (f.is_open()) f << text;
-}
-
+// ───────────────────────── Форматирование строк (для экранных сообщений) ─────────────────────────
 std::string SFmt(const char* fmt, ...) {
     char b[1024];
     va_list ap;
@@ -53,18 +28,11 @@ std::string SFmt(const char* fmt, ...) {
     return std::string(b);
 }
 
-int g_logLines = 0;
-void Log(const std::string& s) {
-    if (g_logLines++ < 8000) WriteText("zMirror_log.txt", s + "\n", true);
-}
-
-std::string Hex(unsigned long v) {
-    char b[32]; sprintf_s(b, sizeof(b), "0x%08lX", v); return b;
-}
+// Логирование отключено: zMirror_log.txt больше не создаётся.
+inline void Log(const std::string&) { }
 
 // ───────────────────────── Состояние ─────────────────────────
-enum { MODE_OFF = 0, MODE_GPU = 1, MODE_COUNT = 2 };
-const char* const kModeNames[MODE_COUNT] = { "OFF", "GPU" };
+enum { MODE_OFF = 0, MODE_GPU = 1 };
 
 int  g_mode = MODE_OFF;
 int  g_failStreak = 0;
@@ -180,7 +148,7 @@ void DoFlipRows(const FlipJob& j) {
 bool MirrorByLock(IDirectDrawSurface7* s) {
     DDSURFACEDESC2 d; ZeroMemory(&d, sizeof(d)); d.dwSize = sizeof(d);
     HRESULT hr = s->Lock(NULL, &d, DDLOCK_WAIT | DDLOCK_SURFACEMEMORYPTR, NULL);
-    if (FAILED(hr)) { Log("Mirror: Lock failed " + Hex(hr)); return false; }
+    if (FAILED(hr)) { Log("Mirror: Lock failed"); return false; }
     DWORD bpp = d.ddpfPixelFormat.dwRGBBitCount;
     bool ok = true;
     BYTE* base = (BYTE*)d.lpSurface;
@@ -294,7 +262,7 @@ bool ZmInstallJump(void* site, void* hook, ZmNearJump& nj) {
     memset(&nj, 0, sizeof(nj));
     BYTE* s = (BYTE*)site;
     if (!s) return false;
-    if (s[0] == 0xC3 || s[0] == 0xEB || s[0] == 0xE9) return false;   // ret/jmp/already-hooked — не трогаем
+    if (s[0] == 0xC3 || s[0] == 0xEB) return false;   // ret/jmp — не трогаем
     int off = 0;
     while (off < 5) {
         unsigned L = ZmInsnLen(s + off);
@@ -1118,7 +1086,7 @@ void MirrorFrameFlip11Scene() {
 
 // ───────────────────────── Хук отрисовки карты ─────────────────────────
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
-CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(IvkTargetVer(0x0064AC30, Engine_G2A), &Hook_Rnd_DrawPolySimple);
+CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_Rnd_DrawPolySimple(0x0064AC30, &Hook_Rnd_DrawPolySimple);
 void __fastcall Hook_Rnd_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
     // Карта (SELECT): зеркалим ТОЛЬКО квады карты — картинку и всё, что нарисовано после неё в её рамке (маячок).
     if (g_frameMapOpen && verts && count > 0 && count <= 64) {
@@ -1193,14 +1161,14 @@ bool MapOnScreenNow() {
 }
 
 void __fastcall Hook_MapView_Dtor(zCView* self, void* edx);
-CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_Dtor(IvkTargetVer(0x0068D470, Engine_G2A), &Hook_MapView_Dtor);
+CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_Dtor(0x0068D470, &Hook_MapView_Dtor);
 void __fastcall Hook_MapView_Dtor(zCView* self, void* edx) {
     if (g_mapView == self) { g_mapView = NULL; g_mapDocIsMap = false; }
     Ivk_MapView_Dtor(self, edx);
 }
 
 int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a);
-CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_MapScreen_Show(IvkTargetVer(0x0047F9C0, Engine_G2A), &Hook_MapScreen_Show);
+CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_MapScreen_Show(0x0047F9C0, &Hook_MapScreen_Show);
 int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a) {
     bool outer = (g_docShowDepth == 0);
     if (outer) g_mapUpdInShow = false;
@@ -1212,7 +1180,7 @@ int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a) {
 }
 
 void __fastcall Hook_DocMan_Show(void* self, void* edx);
-CInvoke<void(__fastcall*)(void*, void*)> Ivk_DocMan_Show(IvkTargetVer(0x0065F300, Engine_G2A), &Hook_DocMan_Show);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_DocMan_Show(0x0065F300, &Hook_DocMan_Show);
 void __fastcall Hook_DocMan_Show(void* self, void* edx) {
     int id = (int)(INT_PTR)edx;
     bool outer = (g_docShowDepth == 0);
@@ -1228,7 +1196,7 @@ void __fastcall Hook_DocMan_Show(void* self, void* edx) {
 }
 
 void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx);
-CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_UpdatePosition(IvkTargetVer(0x0068D7B0, Engine_G2A), &Hook_MapView_UpdatePosition);
+CInvoke<void(__fastcall*)(zCView*, void*)> Ivk_MapView_UpdatePosition(0x0068D7B0, &Hook_MapView_UpdatePosition);
 void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
     Ivk_MapView_UpdatePosition(self, edx);
     g_mapView = self;
@@ -1238,7 +1206,7 @@ void __fastcall Hook_MapView_UpdatePosition(zCView* self, void* edx) {
 
 // zCRnd_D3D::Vid_Blit — конец кадра (сброс флагов карты)
 void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagRECT* r2);
-CInvoke<void(__fastcall*)(void*, void*, int, tagRECT*, tagRECT*)> Ivk_Rnd_VidBlit(IvkTargetVer(0x00657670, Engine_G2A), &Hook_Rnd_VidBlit);
+CInvoke<void(__fastcall*)(void*, void*, int, tagRECT*, tagRECT*)> Ivk_Rnd_VidBlit(0x00657670, &Hook_Rnd_VidBlit);
 void __fastcall Hook_Rnd_VidBlit(void* self, void* edx, int a, tagRECT* r1, tagRECT* r2) {
     g_frameMapOpen = false;
     g_mapPageSeen = false;
@@ -1368,14 +1336,14 @@ void MaybeMirrorLabel(zCView* self, int& x, const zSTRING& s) {
 }
 
 void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s);
-CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_Print(IvkTargetVer(0x007A9A40, Engine_G2A), &Hook_View_Print);
+CInvoke<void(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_Print(0x007A9A40, &Hook_View_Print);
 void __fastcall Hook_View_Print(zCView* self, void* edx, int x, int y, zSTRING const& s) {
     MaybeMirrorLabel(self, x, s);
     Ivk_View_Print(self, edx, x, y, s);
 }
 
 zCViewText* __fastcall Hook_View_CreateText3(zCView* self, void* edx, int x, int y, zSTRING const& s);
-CInvoke<zCViewText*(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_CreateText3(IvkTargetVer(0x007AA2B0, Engine_G2A), &Hook_View_CreateText3);
+CInvoke<zCViewText*(__fastcall*)(zCView*, void*, int, int, zSTRING const&)> Ivk_View_CreateText3(0x007AA2B0, &Hook_View_CreateText3);
 zCViewText* __fastcall Hook_View_CreateText3(zCView* self, void* edx, int x, int y, zSTRING const& s) {
     MaybeMirrorLabel(self, x, s);
     return Ivk_View_CreateText3(self, edx, x, y, s);
@@ -1403,13 +1371,13 @@ inline unsigned short SwapLR(unsigned short key, DWORD caller) {
 }
 
 float __fastcall Hook_Input_GetState(zCInput_Win32* self, void* edx, unsigned short key);
-CInvoke<float(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetState(IvkTargetVer(0x004D4D30, Engine_G2A), &Hook_Input_GetState);
+CInvoke<float(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetState(0x004D4D30, &Hook_Input_GetState);
 float __fastcall Hook_Input_GetState(zCInput_Win32* self, void* edx, unsigned short key) {
     return Ivk_Input_GetState(self, edx, SwapLR(key, (DWORD)_ReturnAddress()));
 }
 
 int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned short key);
-CInvoke<int(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetToggled(IvkTargetVer(0x004D5020, Engine_G2A), &Hook_Input_GetToggled);
+CInvoke<int(__fastcall*)(zCInput_Win32*, void*, unsigned short)> Ivk_Input_GetToggled(0x004D5020, &Hook_Input_GetToggled);
 int __fastcall Hook_Input_GetToggled(zCInput_Win32* self, void* edx, unsigned short key) {
     return Ivk_Input_GetToggled(self, edx, SwapLR(key, (DWORD)_ReturnAddress()));
 }
@@ -1420,7 +1388,7 @@ inline bool IsMainWorld(zCWorld* w) {
 }
 
 void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam);
-CInvoke<void(__fastcall*)(zCWorld*, void*, zCCamera&)> Ivk_World_Render(IvkTargetVer(0x00621700, Engine_G2A), &Hook_World_Render);
+CInvoke<void(__fastcall*)(zCWorld*, void*, zCCamera&)> Ivk_World_Render(0x00621700, &Hook_World_Render);
 void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
     bool main = IsMainWorld(self);
     bool prevUi = g_uiPhase;
@@ -1452,12 +1420,29 @@ void __fastcall Hook_World_Render(zCWorld* self, void* edx, zCCamera& cam) {
 
 // ───────────────────────── События Union ─────────────────────────
 void Game_Entry() {
-    int ev = (int)Union.GetEngineVersion();
-    WriteText("zMirror_log.txt", SFmt("Game_Entry: zMirrorTest V1.7.6 (M4) engine=%d hooks=G2A-only %s\n",
-        ev, ev == Engine_G2A ? "OK" : "WARNING: hooks inactive on this engine (G2A addresses)"), false);
 }
 
-void Game_Init() { }
+// Включение зеркала через конфиг INI [zMirrorWorld] Mirror=0/1
+// (метод аналогичен Ref/Plugin.cpp: InsertChangeHandler + ReadInt).
+void ApplyMirrorByValue(int value) {
+    if (value != 0) value = 1;
+    int nm = value ? MODE_GPU : MODE_OFF;
+    if (nm == g_mode) return;
+    g_mode = nm;
+    g_failStreak = 0;
+    SyncMouseFlip();
+}
+
+int Change_Mirror(zCOptionEntry& entry) {
+    ApplyMirrorByValue(entry.varValueTemp.ToInt32());
+    return 0;
+}
+
+void Game_Init() {
+    if (!zoptions) return;
+    zoptions->InsertChangeHandler("zMirrorWorld", "Mirror", Change_Mirror);
+    ApplyMirrorByValue(zoptions->ReadInt("zMirrorWorld", "Mirror", 0));
+}
 
 void Game_Exit() {
     GfRelease();
@@ -1467,34 +1452,7 @@ void Game_Exit() {
 
 void Game_PreLoop() { }
 
-inline bool KeyEdge(int vk, bool& was) {
-    bool down = (GetAsyncKeyState(vk) & 0x8000) != 0;
-    bool edge = down && !was;
-    was = down;
-    return edge;
-}
-
-void Msg(const std::string& s) {
-    if (screen) screen->PrintCXY(zSTRING(s.c_str()));
-}
-
 void Game_Loop() {
-    // HOME — переключение зеркала: OFF <-> GPU (бэкенд автоматически)
-    static bool wasHome = false;
-    if (KeyEdge(VK_HOME, wasHome)) {
-        g_mode = (g_mode == MODE_GPU) ? MODE_OFF : MODE_GPU;
-        g_failStreak = 0;
-        SyncMouseFlip();
-        Log(std::string("mirror mode: ") + kModeNames[g_mode]);
-        if (g_mode == MODE_GPU) {
-            if (GpuUsesFlip()) Msg("MIRROR MODE: GPU [FLIP]");
-            else { AcquireD3D11(); Msg("MIRROR MODE: GPU [FLIP11]"); }
-        }
-        else Msg("MIRROR MODE: OFF");
-    }
-
-
-
 }
 
 void Game_PostLoop() { }
