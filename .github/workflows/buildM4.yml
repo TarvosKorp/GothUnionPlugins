@@ -28,7 +28,7 @@ jobs:
             "/p:Configuration=MP x4 MT Release" `
             /p:Platform=Win32 `
             /p:PlatformToolset=v143 `
-            "/p:TargetName=zMirrorWorldM4" `
+            "/p:TargetName=zMirrorWorld" `
             "/p:SolutionDir=$($PWD.Path)\"
 
       - name: Upload DLL
