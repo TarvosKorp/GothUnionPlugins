@@ -128,22 +128,44 @@ void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y
 }
 
 // oCDocumentManager::HandleEvent(int) — G2A 0x0065F450.
-// This is the document manager's input callback; observe events without
-// changing their values or suppressing the original handler.
+// The manager normally stops event propagation (zInputKeyStop == 1).
+// Let movement keys continue to the game's other input callbacks.
+static bool MapDiagIsMovementKey(int event) {
+    switch ((unsigned int)event & 0xFF) {
+    // Observed/default WASD + Q/E movement bindings.
+    case 0x11: // W
+    case 0x1F: // S
+    case 0x1E: // A
+    case 0x20: // D
+    case 0x10: // Q
+    case 0x12: // E
+    // Arrow-key alternatives.
+    case 0xC8: // Up
+    case 0xD0: // Down
+    case 0xCB: // Left
+    case 0xCD: // Right
+        return true;
+    default:
+        return false;
+    }
+}
+
 int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event);
 CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_DocMan_HandleEvent(
     0x0065F450, &Hook_DocMan_HandleEvent, IvkEnabled(Engine_G2A));
 
 int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
-    int result = Ivk_DocMan_HandleEvent(self, edx, event);
+    int originalResult = Ivk_DocMan_HandleEvent(self, edx, event);
     static unsigned long count = 0;
     static DWORD lastLog[256] = { 0 };
     ++count;
     unsigned int slot = (unsigned int)event & 0xFF;
     DWORD now = GetTickCount();
-    if (now - lastLog[slot] >= 200) {
-        MapDiagLog("[map-input] HandleEvent count=%lu self=%p event=0x%08X result=%d",
-            count, self, (unsigned)event, result);
+    bool passMovement = MapDiagIsMovementKey(event);
+    int result = passMovement ? 0 : originalResult;
+    if (passMovement || now - lastLog[slot] >= 200) {
+        MapDiagLog("[map-input] HandleEvent count=%lu self=%p event=0x%08X original=%d forwarded=%d",
+            count, self, (unsigned)event, originalResult, result);
         lastLog[slot] = now;
     }
     return result;
