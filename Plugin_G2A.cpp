@@ -179,6 +179,29 @@ void Game_Entry() {
         (int)CCallBack::IsHooked(handleEventHookInfo), (int)CCallBack::IsExist(handleEventHookInfo),
         handleEventHookInfo.lpOriginal, handleEventHookInfo.lpPointer, handleEventHookInfo.lpDetour);
 
+    THookInfo& inputHookInfo = const_cast<THookInfo&>(Ivk_Input_ProcessInputEvents.GetHookInfo());
+    MapDiagLog("[diag] Input::ProcessInputEvents state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
+        (int)CCallBack::IsHooked(inputHookInfo), (int)CCallBack::IsExist(inputHookInfo),
+        inputHookInfo.lpOriginal, inputHookInfo.lpPointer, inputHookInfo.lpDetour);
+
+    // Compare the installed hook with the function actually present in the
+    // live zinput object's virtual table (slot 24 in zCInput_Win32).
+    zCInput* inputObject = Gothic_II_Addon::zinput;
+    if (!inputObject) {
+        MapDiagLog("[diag] zinput object is NULL");
+    }
+    else {
+        void** inputVtable = *(void***)inputObject;
+        void* processInputSlot = inputVtable[24];
+        MapDiagLog("[diag] zinput=%p vtable=%p ProcessInputEvents[vtable+24]=%p",
+            inputObject, inputVtable, processInputSlot);
+
+        unsigned char* slotBytes = (unsigned char*)processInputSlot;
+        MapDiagLog("[diag] ProcessInputEvents vtable bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
+            slotBytes[0], slotBytes[1], slotBytes[2], slotBytes[3],
+            slotBytes[4], slotBytes[5], slotBytes[6], slotBytes[7]);
+    }
+
     // The 1.0k CreateRefApplication overload below receives 21 callbacks.
     // GAME_EVENTS_MAX belongs to the legacy 17-event enum, so it is NOT the
     // size of this application's callback table.
