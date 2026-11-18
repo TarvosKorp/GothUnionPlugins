@@ -71,6 +71,20 @@ int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
         self, event, result);
     return result;
 }
+// zCInput_Win32::ProcessInputEvents() — G2A: 0x004D5700.
+// A low-volume heartbeat to verify that the game's input pump reaches our hooks.
+void __fastcall Hook_Input_ProcessInputEvents(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_Input_ProcessInputEvents(
+    0x004D5700, &Hook_Input_ProcessInputEvents, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_Input_ProcessInputEvents(void* self, void* edx) {
+    static unsigned long count = 0;
+    ++count;
+    if (count == 1 || count % 300 == 0)
+        MapDiagLog("[hook] Input::ProcessInputEvents count=%lu self=%p", count, self);
+    Ivk_Input_ProcessInputEvents(self, edx);
+}
+
 // oCViewDocumentMap::UpdatePosition() — G2A: 0x0068D7B0.
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
