@@ -1,12 +1,5 @@
 [plugin] Game_Entry
-[hook-state] DocMan::Show hooked=1 exists=1 original=0065F300 trampoline=36590798 detour=71D916B0
-[hook-state] MapScreen::Show hooked=1 exists=1 original=0047F9C0 trampoline=365907E0 detour=71D916F0
-[hook-state] MapView::UpdatePosition hooked=1 exists=1 original=0068D7B0 trampoline=36590AB0 detour=71D91AE0
-[hook-state] Game::Render hooked=1 exists=1 original=006C86A0 trampoline=36590870 detour=71D917B0
-[hook-state] Renderer::Vid_Blit hooked=1 exists=1 original=00657670 trampoline=36590828 detour=71D91740
-[hook-state] Input::ProcessInputEvents hooked=1 exists=1 original=004D5700 trampoline=36590990 detour=71D918E0
-[hook-state] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=365909D8 detour=71D91940
-[hook-state] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=36590A20 detour=71D919D0
-[hook-state] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590A68 detour=71D91A40
+[hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590798 detour=71D912C0
+[hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365907E0 detour=71D91350
+[hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590828 detour=71D913C0
 [runtime] Game_Entry zinput=NULL
-[runtime] Game_Entry zrenderer=NULL
