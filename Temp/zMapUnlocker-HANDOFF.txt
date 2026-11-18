@@ -31,17 +31,17 @@ SDK G2A
 
 ТЕКУЩЕЕ СОСТОЯНИЕ
 - Ветка: feature/zMapUnlocker-map-live-marker.
-- Последний коммит Plugin_G2A.cpp: 96ff838e0363ab79b53a42566186b47be45d5afb.
+- Последний коммит Plugin_G2A.cpp: a377b1d8641ef4749493176669a4a88c156fae62.
 - Изменён только Plugin_G2A.cpp.
 - Перехват DocumentManager::Show удалён.
 - Оставлен только UpdatePosition с логированием ENTER/RETURN. В Game_Entry логируются THookInfo (lpOriginal, lpPointer, lpDetour, ulProtected), CCallBack::IsHooked/IsExist, а также первые 8 байт по адресам lpOriginal и lpPointer.
-- Game_Loop, Game_MenuLoop и остальные callbacks пустые; ввод и UI не затрагиваются.
+- Game_Loop и Game_MenuLoop теперь раз в 120 вызовов пишут диагностический счётчик; остальные callbacks пустые. Ввод и UI не затрагиваются.
 - Лог: zMapUnlocker.log в рабочей директории игры.
 
 СЛЕДУЮЩИЙ ТЕСТ
 1. Собрать DLL из текущей feature-ветки.
 2. Запустить игру, открыть карту, подержать несколько секунд, закрыть Escape.
-3. Сообщить, вылетает ли игра, и прислать содержимое zMapUnlocker.log прямо в чат.
+3. Подержать карту открытой 5–10 секунд, закрыть её и прислать содержимое zMapUnlocker.log прямо в чат. Важно сохранить строки Game_Loop и Game_MenuLoop.
 4. Если будет вылет — положить свежий crash report туда же.
 
 ИНТЕРПРЕТАЦИЯ
