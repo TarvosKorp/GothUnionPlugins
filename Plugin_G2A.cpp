@@ -57,7 +57,7 @@ void MapDiagCwd(const char* stage) {
 }
 
 // zCInput_Win32::GetState(unsigned short) — G2A 0x004D4D30.
-// Log zero results too: a quiet key state must not hide a successful hook.
+// Log state transitions immediately, then sample held keys at up to 5 Hz per key.
 float __fastcall Hook_Input_GetState(void* self, void* edx, unsigned short key);
 CInvoke<float(__fastcall*)(void*, void*, unsigned short)> Ivk_Input_GetState(
     0x004D4D30, &Hook_Input_GetState, IvkEnabled(Engine_G2A));
@@ -65,16 +65,27 @@ CInvoke<float(__fastcall*)(void*, void*, unsigned short)> Ivk_Input_GetState(
 float __fastcall Hook_Input_GetState(void* self, void* edx, unsigned short key) {
     float value = Ivk_Input_GetState(self, edx, key);
     static unsigned long count = 0;
+    static DWORD lastLog[1024] = { 0 };
+    static float lastValue[1024] = { 0.0f };
+    static bool seen[1024] = { false };
     ++count;
-    if (value != 0.0f || count <= 40 || count % 500 == 0) {
+
+    unsigned int slot = key < 1024 ? (unsigned int)key : 1023;
+    DWORD now = GetTickCount();
+    bool changed = !seen[slot] || value != lastValue[slot];
+    if (changed || (value != 0.0f && now - lastLog[slot] >= 200)) {
         if (count == 1) MapDiagCwd("first GetState");
         MapDiagLog("[input] GetState count=%lu self=%p key=0x%04X value=%.3f",
             count, self, (unsigned)key, value);
+        lastLog[slot] = now;
+        lastValue[slot] = value;
+        seen[slot] = true;
     }
     return value;
 }
 
 // zCInput_Win32::GetToggled(unsigned short) — G2A 0x004D5020.
+// Toggled values are edge-like; rate-limit repeated reports per logical key.
 int __fastcall Hook_Input_GetToggled(void* self, void* edx, unsigned short key);
 CInvoke<int(__fastcall*)(void*, void*, unsigned short)> Ivk_Input_GetToggled(
     0x004D5020, &Hook_Input_GetToggled, IvkEnabled(Engine_G2A));
@@ -82,14 +93,20 @@ CInvoke<int(__fastcall*)(void*, void*, unsigned short)> Ivk_Input_GetToggled(
 int __fastcall Hook_Input_GetToggled(void* self, void* edx, unsigned short key) {
     int value = Ivk_Input_GetToggled(self, edx, key);
     static unsigned long count = 0;
+    static DWORD lastLog[1024] = { 0 };
     ++count;
-    if (value != 0 || count <= 40 || count % 500 == 0)
+    unsigned int slot = key < 1024 ? (unsigned int)key : 1023;
+    DWORD now = GetTickCount();
+    if (value != 0 && now - lastLog[slot] >= 200) {
         MapDiagLog("[input] GetToggled count=%lu self=%p key=0x%04X value=%d",
             count, self, (unsigned)key, value);
+        lastLog[slot] = now;
+    }
     return value;
 }
 
 // zCInput_Win32::GetMousePos(float&, float&, float&) — G2A 0x004D5730.
+// Sample movement at up to 5 Hz and emit one zero record when movement stops.
 void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y, float& z);
 CInvoke<void(__fastcall*)(void*, void*, float&, float&, float&)> Ivk_Input_GetMousePos(
     0x004D5730, &Hook_Input_GetMousePos, IvkEnabled(Engine_G2A));
@@ -97,10 +114,17 @@ CInvoke<void(__fastcall*)(void*, void*, float&, float&, float&)> Ivk_Input_GetMo
 void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y, float& z) {
     Ivk_Input_GetMousePos(self, edx, x, y, z);
     static unsigned long count = 0;
+    static DWORD lastLog = 0;
+    static bool wasMoving = false;
     ++count;
-    if (x != 0.0f || y != 0.0f || z != 0.0f || count <= 12 || count % 500 == 0)
+    DWORD now = GetTickCount();
+    bool moving = x != 0.0f || y != 0.0f || z != 0.0f;
+    if ((moving && (!wasMoving || now - lastLog >= 200)) || (!moving && wasMoving)) {
         MapDiagLog("[input] GetMousePos count=%lu self=%p x=%.3f y=%.3f z=%.3f",
             count, self, x, y, z);
+        lastLog = now;
+    }
+    wasMoving = moving;
 }
 
 // oCDocumentManager::HandleEvent(int) — G2A 0x0065F450.
@@ -113,10 +137,15 @@ CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_DocMan_HandleEvent(
 int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
     int result = Ivk_DocMan_HandleEvent(self, edx, event);
     static unsigned long count = 0;
+    static DWORD lastLog[256] = { 0 };
     ++count;
-    if (count <= 80 || count % 500 == 0)
+    unsigned int slot = (unsigned int)event & 0xFF;
+    DWORD now = GetTickCount();
+    if (now - lastLog[slot] >= 200) {
         MapDiagLog("[map-input] HandleEvent count=%lu self=%p event=0x%08X result=%d",
             count, self, (unsigned)event, result);
+        lastLog[slot] = now;
+    }
     return result;
 }
 
