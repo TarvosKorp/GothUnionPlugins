@@ -1,41 +1,43 @@
 [plugin] Game_Entry
-[diag] UpdatePosition hookInfo original=0068D7B0 pointer=36590948 detour=71D91650 protected=0
+[diag] UpdatePosition hookInfo original=0068D7B0 pointer=36590990 detour=71D91720 protected=0
 [diag] UpdatePosition state isHooked=1 isExist=1
-[diag] target bytes=E9 9B 3E 70 71 CC 6A FF
-[diag] pointer bytes=64 A1 00 00 00 00 E9 63
-[diag] DocumentManager::Show hookInfo original=0065F300 pointer=36590798 detour=71D91490 protected=0
+[diag] target bytes=E9 6B 3F 70 71 CC 6A FF
+[diag] pointer bytes=64 A1 00 00 00 00 E9 1B
+[diag] DocumentManager::Show hookInfo original=0065F300 pointer=36590798 detour=71D91500 protected=0
 [diag] DocumentManager::Show state isHooked=1 isExist=1
-[diag] Show target bytes=E9 8B 21 73 71 CC CC 8B
+[diag] Show target bytes=E9 FB 21 73 71 CC CC 8B
 [diag] Show pointer bytes=53 56 8B F1 8B 46 04 E9
-[diag] MapScreen::Show state isHooked=1 isExist=1 original=0047F9C0 pointer=365907E0 detour=71D914D0
-[diag] CreateMap state isHooked=1 isExist=1 original=0065EEF0 pointer=36590828 detour=71D91520
-[diag] UpdateMap state isHooked=1 isExist=1 original=0065F400 pointer=36590870 detour=71D91560
-[diag] HandleEvent state isHooked=1 isExist=1 original=0065F450 pointer=365908B8 detour=71D915A0
-[diag] Input::ProcessInputEvents state isHooked=1 isExist=1 original=004D5700 pointer=36590900 detour=71D915F0
+[diag] oCGame::Render state isHooked=1 isExist=1 original=006C86A0 pointer=36590828 detour=71D91590
+[diag] oCMapScreen::Show target bytes=E9 7B 1B 91 71 CC CC 64
+[diag] MapScreen::Show state isHooked=1 isExist=1 original=0047F9C0 pointer=365907E0 detour=71D91540
+[diag] CreateMap state isHooked=1 isExist=1 original=0065EEF0 pointer=36590870 detour=71D915F0
+[diag] UpdateMap state isHooked=1 isExist=1 original=0065F400 pointer=365908B8 detour=71D91630
+[diag] HandleEvent state isHooked=1 isExist=1 original=0065F450 pointer=36590900 detour=71D91670
+[diag] Input::ProcessInputEvents state isHooked=1 isExist=1 original=004D5700 pointer=36590948 detour=71D916C0
 [diag] zinput object is NULL
-[diag] application=09643598 eventTable=09650660 inspectedEventCount=21
+[diag] application=096A6EB8 eventTable=0980A610 inspectedEventCount=21
 [diag] applicationList count=45 containsCurrent=1
-[diag] expected callbacks: entry=71D91690 init=71D91AA0 exit=71D91AB0 preloop=71D91AC0 loop=71D91B00 postloop=71D91B40 menuloop=71D91B80
-[diag] expected callbacks: saveBegin=71D91BC0 saveEnd=71D91BD0 loadNewBegin=71D91BE0 loadNewEnd=71D91C00 loadSaveBegin=71D91C20 loadSaveEnd=71D91C40
-[diag] expected callbacks: loadLevelBegin=71D91C60 loadLevelEnd=71D91C80 loadTriggerBegin=71D91CA0 loadTriggerEnd=71D91CB0 pause=71D91CC0 unpause=71D91CD0 defineExternals=71D91CE0 applyOptions=71D91CF0
-[diag] event[00] GAME_ENTRY=71D91690
-[diag] event[01] GAME_INIT=71D91AA0
-[diag] event[02] GAME_EXIT=71D91AB0
-[diag] event[03] GAME_LOOP=71D91B00
-[diag] event[04] GAME_SAVE_BEGIN=71D91BC0
-[diag] event[05] GAME_SAVE_END=71D91BD0
-[diag] event[06] GAME_LOAD_BEGIN_NEWGAME=71D91BE0
-[diag] event[07] GAME_LOAD_END_NEWGAME=71D91C00
-[diag] event[08] GAME_LOAD_BEGIN_SAVEGAME=71D91C20
-[diag] event[09] GAME_LOAD_END_SAVEGAME=71D91C40
-[diag] event[10] GAME_LOAD_BEGIN_CHANGELEVEL=71D91C60
-[diag] event[11] GAME_LOAD_END_CHANGELEVEL=71D91C80
-[diag] event[12] GAME_LOAD_BEGIN_TRIGGER=71D91CA0
-[diag] event[13] GAME_LOAD_END_TRIGGER=71D91CB0
-[diag] event[14] GAME_PAUSE=71D91CC0
-[diag] event[15] GAME_UNPAUSE=71D91CD0
-[diag] event[16] GAME_DEFINE_EXTERNALS=71D91CE0
-[diag] event[17] GAME_PRE_LOOP=71D91AC0
-[diag] event[18] GAME_POST_LOOP=71D91B40
-[diag] event[19] GAME_MENU_LOOP=71D91B80
-[diag] event[20] GAME_APPLY_OPTIONS=71D91CF0
+[diag] expected callbacks: entry=71D91760 init=71D91BD0 exit=71D91BE0 preloop=71D91BF0 loop=71D91C30 postloop=71D91C70 menuloop=71D91CB0
+[diag] expected callbacks: saveBegin=71D91CF0 saveEnd=71D91D00 loadNewBegin=71D91D10 loadNewEnd=71D91D30 loadSaveBegin=71D91D50 loadSaveEnd=71D91D70
+[diag] expected callbacks: loadLevelBegin=71D91D90 loadLevelEnd=71D91DB0 loadTriggerBegin=71D91DD0 loadTriggerEnd=71D91DE0 pause=71D91DF0 unpause=71D91E00 defineExternals=71D91E10 applyOptions=71D91E20
+[diag] event[00] GAME_ENTRY=71D91760
+[diag] event[01] GAME_INIT=71D91BD0
+[diag] event[02] GAME_EXIT=71D91BE0
+[diag] event[03] GAME_LOOP=71D91C30
+[diag] event[04] GAME_SAVE_BEGIN=71D91CF0
+[diag] event[05] GAME_SAVE_END=71D91D00
+[diag] event[06] GAME_LOAD_BEGIN_NEWGAME=71D91D10
+[diag] event[07] GAME_LOAD_END_NEWGAME=71D91D30
+[diag] event[08] GAME_LOAD_BEGIN_SAVEGAME=71D91D50
+[diag] event[09] GAME_LOAD_END_SAVEGAME=71D91D70
+[diag] event[10] GAME_LOAD_BEGIN_CHANGELEVEL=71D91D90
+[diag] event[11] GAME_LOAD_END_CHANGELEVEL=71D91DB0
+[diag] event[12] GAME_LOAD_BEGIN_TRIGGER=71D91DD0
+[diag] event[13] GAME_LOAD_END_TRIGGER=71D91DE0
+[diag] event[14] GAME_PAUSE=71D91DF0
+[diag] event[15] GAME_UNPAUSE=71D91E00
+[diag] event[16] GAME_DEFINE_EXTERNALS=71D91E10
+[diag] event[17] GAME_PRE_LOOP=71D91BF0
+[diag] event[18] GAME_POST_LOOP=71D91C70
+[diag] event[19] GAME_MENU_LOOP=71D91CB0
+[diag] event[20] GAME_APPLY_OPTIONS=71D91E20
