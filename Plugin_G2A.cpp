@@ -1,29 +1,48 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <math.h>
+#include <intrin.h>
 
-// zMapUnlocker — iteration 4: clear oCNpc::movlock while a document/map is open.
+// zMapUnlocker — iteration 5: live GPS marker + own horizontal mouse turn while a map is open.
 //
-// Result of iteration 3 (log zMapUnlocker2.log):
-//  * While the document is open the hero has movlock=1 (bit reads as -1); after Esc it is 0.
-//    interactItem=NULL, bodyState=0, keyboard/mouse devices enabled -> NOT item-use, NOT device lock.
-//  * With movlock=1 the hero AI stops polling movement keys: GetState drops from ~17 to 4 calls
-//    per frame, and GetMousePos is read but nothing consumes it. Game_Loop keeps running (~55 fps).
-//  * Returning 0 from DocumentManager::HandleEvent was irrelevant (movement is polled).
+// Results so far (logs 1-3):
+//  * Log path bug fixed (absolute path). movlock=1 while a document is open; clearing it every
+//    frame (iteration 4) restores walking and key turning (GAME_LEFT/RIGHT/STRAFE).
+//  * Mouse deltas ARE delivered to GetMousePos while the map is open, but the hero ignores them
+//    (some guard inside the hero/camera mouse code; not found yet).
+//  * The GPS marker does not follow the hero: oCViewDocumentMap::UpdatePosition (0x0068D7B0) is
+//    apparently called only once, when the map is shown.
 //
-// This build: while a document is open (flag set by the first HandleEvent, cleared on Esc/load),
-// call player->SetMovLock(0) every frame from Game_PreLoop/Game_Loop. Diagnostics stay on, so
-// [stats] shows whether GetState polling returns to ~17/frame.
-// NOTE: the flag is set by the first key event, so press any key once after opening the map.
-// NOTE: this unlocks ALL documents (books/notes too). Map-only filtering is a later step.
+// This build:
+//  1) MARKER: ~10x per second, finds the open oCViewDocumentMap (oCDocumentManager::ListDocuments,
+//     type checked by vtable pointer) and calls its UpdatePosition(). No hook on UpdatePosition/Show.
+//  2) MOUSE: takes the horizontal mouse delta seen in the GetMousePos hook and rotates the hero with
+//     RotateWorldY while the map is open. Tune live: NUMPAD+ / NUMPAD- = speed x1.25 / x0.8,
+//     NUMPAD* = flip direction. Values are logged ([mouse]); tell me the final ones.
+//  3) DIAG: [callers] lists return addresses of GetMousePos callers in the world vs. with the map
+//     open, to find the real consumer later.
+// NOTE: the "document open" flag is set by the first key event after opening (press any key once).
 #ifndef MAPDIAG_UNLOCK
 #define MAPDIAG_UNLOCK 1
 #endif
 #ifndef MAPDIAG_FORCE_MOVE
-#define MAPDIAG_FORCE_MOVE 0   // iteration-3 experiment, no longer needed
+#define MAPDIAG_FORCE_MOVE 0
 #endif
 #ifndef MAPDIAG_PASS_KEYS
-#define MAPDIAG_PASS_KEYS 0    // do not leak WASD/QE events to other input callbacks
+#define MAPDIAG_PASS_KEYS 0
+#endif
+#ifndef MAPDIAG_MARKER
+#define MAPDIAG_MARKER 1
+#endif
+#ifndef MAPDIAG_MARKER_MS
+#define MAPDIAG_MARKER_MS 100     // 10 updates per second
+#endif
+#ifndef MAPDIAG_MOUSE_TURN
+#define MAPDIAG_MOUSE_TURN 1
+#endif
+#ifndef MAPDIAG_MOUSE_DEG_PER_UNIT
+#define MAPDIAG_MOUSE_DEG_PER_UNIT 0.30f
 #endif
 
 namespace GOTHIC_ENGINE {
@@ -80,6 +99,32 @@ static volatile bool g_docOpen = false;          // set by DocumentManager::Hand
 static unsigned long g_cLoop = 0, g_cPre = 0, g_cPost = 0, g_cMenu = 0;
 static unsigned long g_cGetState = 0, g_cGetStateNZ = 0, g_cGetMouse = 0, g_cGetMouseNZ = 0, g_cToggled = 0;
 static DWORD g_lastStats = 0, g_lastHero = 0;
+
+// mouse turn state
+static float g_frameDx = 0.0f;                         // largest |dx| seen this frame (from the GetMousePos hook)
+static float g_degPerUnit = MAPDIAG_MOUSE_DEG_PER_UNIT;
+static float g_mouseSign = 1.0f;
+
+// GetMousePos caller histogram: [0] = world, [1] = document open
+static void* g_callers[16] = { 0 };
+static unsigned long g_callerCnt[2][16] = { { 0 } };
+static void MapDiagNoteCaller(void* ret, int phase) {
+    for (int i = 0; i < 16; ++i) {
+        if (g_callers[i] == ret) { ++g_callerCnt[phase][i]; return; }
+        if (!g_callers[i]) { g_callers[i] = ret; ++g_callerCnt[phase][i]; return; }
+    }
+}
+static void MapDiagDumpCallers(const char* label, int phase) {
+    char buf[600]; buf[0] = 0;
+    for (int i = 0; i < 16 && g_callers[i]; ++i) {
+        char one[48];
+        _snprintf(one, sizeof(one) - 1, " %p x%lu", g_callers[i], g_callerCnt[phase][i]);
+        one[sizeof(one) - 1] = 0;
+        if (strlen(buf) + strlen(one) < sizeof(buf) - 1) strcat(buf, one);
+    }
+    MapDiagLog("[callers] GetMousePos %s:%s", label, buf);
+    for (int i = 0; i < 16; ++i) g_callerCnt[phase][i] = 0;
+}
 
 static void MapDiagHeroProbe(const char* why) {
     oCNpc* hero = Gothic_II_Addon::player;
@@ -191,8 +236,11 @@ CInvoke<void(__fastcall*)(void*, void*, float&, float&, float&)> Ivk_Input_GetMo
     0x004D5730, &Hook_Input_GetMousePos, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y, float& z) {
+    void* retAddr = _ReturnAddress();
     Ivk_Input_GetMousePos(self, edx, x, y, z);
     ++g_cGetMouse;
+    MapDiagNoteCaller(retAddr, g_docOpen ? 1 : 0);
+    if (g_docOpen && fabsf(x) > fabsf(g_frameDx)) g_frameDx = x;
     static DWORD lastLog = 0;
     static bool wasMoving = false;
     DWORD now = GetTickCount();
@@ -204,6 +252,30 @@ void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y
     }
     wasMoving = moving;
     MapDiagTick();
+}
+
+// ---------------------------------------------------------------- map view lookup
+// Primary vtable pointers of oCViewDocumentMap (from the SDK vftable tables). A plain
+// oCViewDocument has different ones, so this tells a map from a book/note.
+static bool MapDiagIsMapVptr(unsigned int vptr) {
+    return vptr == 0x0083BA9C || vptr == 0x0083BAA4;
+}
+
+static oCViewDocumentMap* MapDiagFindMapView(bool logIt) {
+    oCDocumentManager& mgr = oCDocumentManager::GetDocumentManager();
+    zCListSort<oCViewDocument>* node = mgr.ListDocuments;
+    oCViewDocumentMap* found = NULL;
+    for (int guard = 0; node && guard < 32; node = node->next, ++guard) {
+        oCViewDocument* view = node->data;
+        if (!view) continue;
+        unsigned int vptr = *(unsigned int*)view;
+        bool isMap = MapDiagIsMapVptr(vptr);
+        if (logIt)
+            MapDiagLog("[docs] node view=%p vptr=%08X isMap=%d ondesk=%d", view, vptr, (int)isMap, (int)view->ondesk);
+        if (isMap) found = (oCViewDocumentMap*)view;
+    }
+    if (logIt) MapDiagLog("[docs] mapView=%p", found);
+    return found;
 }
 
 // ---------------------------------------------------------------- DocumentManager::HandleEvent
@@ -229,6 +301,9 @@ int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
         g_lastStats = 0;
         MapDiagLog("[doc] OPEN (first HandleEvent event=0x%08X)", (unsigned)event);
         MapDiagHeroProbe("doc-open");
+        MapDiagDumpCallers("world", 0);
+        g_frameDx = 0.0f;
+        MapDiagFindMapView(true);
     }
 
     int originalResult = Ivk_DocMan_HandleEvent(self, edx, event);
@@ -236,7 +311,9 @@ int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
     if (((unsigned int)event & 0xFF) == 0x01) {          // Esc closes the document
         MapDiagLog("[doc] ESC original=%d", originalResult);
         MapDiagHeroProbe("doc-esc");
+        MapDiagDumpCallers("doc-open", 1);
         g_docOpen = false;
+        g_frameDx = 0.0f;
     }
 
     static DWORD lastLog[256] = { 0 };
@@ -265,6 +342,66 @@ static void MapDiagUnlock() {
         if (cleared <= 3 || cleared % 300 == 0)
             MapDiagLog("[unlock] SetMovLock(0) cleared=%lu now=%d", cleared, (int)hero->IsMovLock());
     }
+#endif
+}
+
+// 10 Hz: ask the engine to recompute the GPS marker (position + heading) of the open map.
+static void MapDiagMarker() {
+#if MAPDIAG_MARKER
+    if (!g_docOpen) return;
+    static DWORD last = 0;
+    static unsigned long n = 0;
+    static bool warned = false;
+    DWORD now = GetTickCount();
+    if (now - last < MAPDIAG_MARKER_MS) return;
+    last = now;
+    oCViewDocumentMap* map = MapDiagFindMapView(false);
+    if (!map) {
+        if (!warned) { warned = true; MapDiagLog("[marker] no map view in ListDocuments (open document is not a map, or type check failed)"); }
+        return;
+    }
+    warned = false;
+    map->UpdatePosition();
+    ++n;
+    if (n <= 3 || n % 10 == 0) {
+        oCNpc* hero = Gothic_II_Addon::player;
+        if (hero) {
+            float px = 0, py = 0, pz = 0;
+            hero->GetPositionWorld(px, py, pz);
+            zVEC3 at = hero->GetAtVectorWorld();
+            MapDiagLog("[marker] UpdatePosition #%lu map=%p hero=(%.0f, %.0f, %.0f) at=(%.2f, %.2f)", n, map, px, py, pz, at.n[0], at.n[2]);
+        }
+    }
+#endif
+}
+
+// Own horizontal mouse turn while the map is open (the game's own mouse turn is gated).
+static void MapDiagMouseTurn() {
+#if MAPDIAG_MOUSE_TURN
+    if (!g_docOpen) { g_frameDx = 0.0f; return; }
+
+    // live tuning (edge-triggered)
+    static bool prevAdd = false, prevSub = false, prevMul = false;
+    bool add = (GetAsyncKeyState(VK_ADD) & 0x8000) != 0;
+    bool sub = (GetAsyncKeyState(VK_SUBTRACT) & 0x8000) != 0;
+    bool mul = (GetAsyncKeyState(VK_MULTIPLY) & 0x8000) != 0;
+    if (add && !prevAdd) g_degPerUnit *= 1.25f;
+    if (sub && !prevSub) g_degPerUnit *= 0.8f;
+    if (mul && !prevMul) g_mouseSign = -g_mouseSign;
+    if ((add && !prevAdd) || (sub && !prevSub) || (mul && !prevMul))
+        MapDiagLog("[mouse] tuning: degPerUnit=%.3f sign=%+.0f", g_degPerUnit, g_mouseSign);
+    prevAdd = add; prevSub = sub; prevMul = mul;
+
+    float dx = g_frameDx;
+    g_frameDx = 0.0f;
+    if (dx == 0.0f) return;
+    oCNpc* hero = Gothic_II_Addon::player;
+    if (!hero) return;
+    hero->RotateWorldY(dx * g_degPerUnit * g_mouseSign);
+    static unsigned long n = 0;
+    ++n;
+    if (n <= 5 || n % 100 == 0)
+        MapDiagLog("[mouse] turn #%lu dx=%.3f deg=%.3f", n, dx, dx * g_degPerUnit * g_mouseSign);
 #endif
 }
 
@@ -313,7 +450,7 @@ extern CApplication* lpApplication;
 
 void Game_Entry() {
     MapDiagReset();
-    MapDiagLog("[plugin] Game_Entry (iteration 4, UNLOCK=%d)", (int)MAPDIAG_UNLOCK);
+    MapDiagLog("[plugin] Game_Entry (iteration 5, UNLOCK=%d MARKER=%d MOUSE=%d)", (int)MAPDIAG_UNLOCK, (int)MAPDIAG_MARKER, (int)MAPDIAG_MOUSE_TURN);
     MapDiagCwd("Game_Entry");
     MapDiagHookState("Input::GetState", const_cast<THookInfo&>(Ivk_Input_GetState.GetHookInfo()));
     MapDiagHookState("Input::GetToggled", const_cast<THookInfo&>(Ivk_Input_GetToggled.GetHookInfo()));
@@ -324,7 +461,7 @@ void Game_Entry() {
 
 void Game_Init() { MapDiagLog("[callback] Game_Init"); MapDiagRuntimeProbe("Game_Init"); }
 void Game_Exit() { MapDiagLog("[callback] Game_Exit"); }
-void Game_PreLoop() { ++g_cPre; MapDiagUnlock(); MapDiagTick(); }
+void Game_PreLoop() { ++g_cPre; MapDiagUnlock(); MapDiagMouseTurn(); MapDiagMarker(); MapDiagTick(); }
 void Game_Loop() {
     ++g_cLoop;
     MapDiagUnlock();
