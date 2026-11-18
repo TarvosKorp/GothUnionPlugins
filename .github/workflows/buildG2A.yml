@@ -1,4 +1,4 @@
-name: Build G2A plugin
+name: Build zMapUnlocker G2A plugin
 
 on:
   workflow_dispatch:      # ручной запуск кнопкой «Run workflow»
