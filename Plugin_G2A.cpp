@@ -251,8 +251,10 @@ static void MapDiagDrawSmoothArrow() {
     // CheckObjectRoutines is the immediate-render stage used by the Coop
     // marker implementation. View::Line() queues line primitives too late here;
     // DrawPolySimple submits the textured quad directly before EndFrame.
-    const int sw = *(int*)((char*)renderer + 0x984);
-    const int sh = *(int*)((char*)renderer + 0x988);
+    // G2A layout differs from G1: zCRnd_D3D screen width/height are
+    // at +0x98C/+0x990. +0x984/+0x988 are the G1 offsets.
+    const int sw = *(int*)((char*)renderer + 0x98C);
+    const int sh = *(int*)((char*)renderer + 0x990);
     if (sw < 320 || sw > 16384 || sh < 200 || sh > 16384) {
         static bool badScreenLogged = false;
         if (!badScreenLogged) {
@@ -300,14 +302,10 @@ void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
     if (isArrow)
         ((oCViewDocument*)self)->SetTextureAlpha(0);
 
-    // Let the engine finish the arrow view's normal Blit first, then submit
-    // our replacement immediately on top of it in the same render pass.
     Ivk_ViewArrow_Blit(self, edx);
 
     if (isArrow) {
         ++g_arrowBlitCalls;
-        MapDiagDrawSmoothArrow();
-
         DWORD now = GetTickCount();
         if (g_lastArrowBlitLog == 0 || now - g_lastArrowBlitLog >= 1000) {
             g_lastArrowBlitLog = now;
@@ -315,6 +313,19 @@ void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
                 g_arrowBlitCalls, self, g_mapView);
         }
     }
+}
+
+// oCGame::CheckObjectRoutines() — G2A 0x006CABB0.
+// oCGame::Render calls this after zCViewDraw::Render and before EndFrame.
+// Coop's proven map-overlay implementation uses this exact stage.
+void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_Game_CheckObjectRoutines(
+    0x006CABB0, &Hook_Game_CheckObjectRoutines, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx) {
+    if (self == Gothic_II_Addon::ogame)
+        MapDiagDrawSmoothArrow();
+    Ivk_Game_CheckObjectRoutines(self, edx);
 }
 
 // ---------------------------------------------------------------- input hooks
@@ -632,6 +643,7 @@ void Game_Entry() {
     MapDiagHookState("Input::GetMousePos", const_cast<THookInfo&>(Ivk_Input_GetMousePos.GetHookInfo()));
     MapDiagHookState("DocumentManager::HandleEvent", const_cast<THookInfo&>(Ivk_DocMan_HandleEvent.GetHookInfo()));
     MapDiagHookState("ViewArrow::Blit", const_cast<THookInfo&>(Ivk_ViewArrow_Blit.GetHookInfo()));
+    MapDiagHookState("Game::CheckObjectRoutines", const_cast<THookInfo&>(Ivk_Game_CheckObjectRoutines.GetHookInfo()));
     MapDiagRuntimeProbe("Game_Entry");
 }
 
