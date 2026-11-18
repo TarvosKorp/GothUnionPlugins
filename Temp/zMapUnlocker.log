@@ -1,89 +1,85 @@
-128651906 | [plugin] Game_Entry
-128651906 | [cwd] Game_Entry cwd='C:\Games\Gothic\Gothic 2 - Night of the Raven\System' log='C:\Games\Gothic\Gothic 2 - Night of the Raven\System\zMapUnlocker.log'
-128651906 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590798 detour=71D91400
-128651906 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365907E0 detour=71D91560
-128651906 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590828 detour=71D915F0
-128651906 | [hook] DocumentManager::HandleEvent hooked=1 exists=1 original=0065F450 trampoline=36590870 detour=71D916E0
-128651906 | [runtime] Game_Entry zinput=NULL
-128657328 | [callback] Game_DefineExternals
-128658421 | [callback] Game_Init
-128658421 | [cwd] Game_Init cwd='C:\GAMES\GOTHIC\GOTHIC 2 - NIGHT OF THE RAVEN' log='C:\Games\Gothic\Gothic 2 - Night of the Raven\System\zMapUnlocker.log'
-128658421 | [runtime] Game_Init zinput=095FAEB8 vtable=00830B64 GetState[1]=004D4D30 GetToggled[3]=004D5020 GetMousePos[20]=004D5730 ProcessInputEvents[29]=004D5700
-128658437 | [callback] Game_MenuLoop count=1
-128660218 | [callback] Game_LoadBegin_SaveGame
-128662906 | [callback] Game_LoadEnd_SaveGame
-128662906 | [callback] Game_ApplyOptions
-128662906 | [callback] Game_PreLoop count=1
-128662906 | [cwd] first GetState cwd='C:\GAMES\GOTHIC\GOTHIC 2 - NIGHT OF THE RAVEN' log='C:\Games\Gothic\Gothic 2 - Night of the Raven\System\zMapUnlocker.log'
-128662906 | [input] GetState count=1 self=095FAEB8 key=0x0010 value=0.000
-128662906 | [input] GetState count=4 self=095FAEB8 key=0x0005 value=0.000
-128662906 | [input] GetState count=6 self=095FAEB8 key=0x000B value=0.000
-128662906 | [input] GetState count=7 self=095FAEB8 key=0x0008 value=0.000
-128662906 | [input] GetState count=8 self=095FAEB8 key=0x0006 value=0.000
-128662906 | [input] GetState count=9 self=095FAEB8 key=0x0003 value=0.000
-128662906 | [input] GetState count=10 self=095FAEB8 key=0x0012 value=0.000
-128662906 | [input] GetState count=11 self=095FAEB8 key=0x0013 value=0.000
-128662906 | [input] GetState count=16 self=095FAEB8 key=0x0001 value=0.000
-128662906 | [input] GetState count=17 self=095FAEB8 key=0x0002 value=0.000
-128662906 | [input] GetState count=19 self=095FAEB8 key=0x0004 value=0.000
-128662921 | [callback] Game_PostLoop count=1
-128663140 | [input] GetMousePos count=49 self=095FAEB8 x=0.000 y=1.100 z=0.000
-128663156 | [input] GetMousePos count=52 self=095FAEB8 x=0.000 y=0.000 z=0.000
-128663171 | [input] GetMousePos count=55 self=095FAEB8 x=0.000 y=1.100 z=0.000
-128663203 | [input] GetMousePos count=58 self=095FAEB8 x=0.000 y=0.000 z=0.000
-128663421 | [callback] Game_Loop count=1
-128663421 | [cwd] Game_Loop cwd='C:\GAMES\GOTHIC\GOTHIC 2 - NIGHT OF THE RAVEN' log='C:\Games\Gothic\Gothic 2 - Night of the Raven\System\zMapUnlocker.log'
-128663421 | [runtime] Game_Loop zinput=095FAEB8 vtable=00830B64 GetState[1]=004D4D30 GetToggled[3]=004D5020 GetMousePos[20]=004D5730 ProcessInputEvents[29]=004D5700
-128663578 | [input] GetMousePos count=103 self=095FAEB8 x=0.000 y=-1.100 z=0.000
-128663593 | [input] GetMousePos count=106 self=095FAEB8 x=0.000 y=0.000 z=0.000
-128663671 | [input] GetMousePos count=118 self=095FAEB8 x=1.100 y=0.000 z=0.000
-128663875 | [input] GetMousePos count=154 self=095FAEB8 x=0.000 y=0.000 z=0.000
-128663890 | [input] GetMousePos count=157 self=095FAEB8 x=6.050 y=0.550 z=0.000
-128664093 | [input] GetMousePos count=190 self=095FAEB8 x=11.000 y=0.000 z=0.000
-128664296 | [input] GetMousePos count=217 self=095FAEB8 x=0.000 y=0.000 z=0.000
-128666531 | [input] GetMousePos count=424 self=095FAEB8 x=-3.300 y=1.100 z=0.000
-128666750 | [input] GetMousePos count=442 self=095FAEB8 x=-11.000 y=-2.750 z=0.000
-128666968 | [input] GetMousePos count=460 self=095FAEB8 x=-8.250 y=0.000 z=0.000
-128667187 | [input] GetMousePos count=478 self=095FAEB8 x=-6.600 y=0.000 z=0.000
-128667406 | [input] GetMousePos count=496 self=095FAEB8 x=0.000 y=0.000 z=0.000
-128667453 | [input] GetMousePos count=500 self=095FAEB8 x=1.100 y=-1.100 z=0.000
-128667656 | [input] GetMousePos count=516 self=095FAEB8 x=17.600 y=3.850 z=0.000
-128667859 | [input] GetMousePos count=532 self=095FAEB8 x=14.300 y=3.850 z=0.000
-128668062 | [input] GetMousePos count=546 self=095FAEB8 x=1.100 y=0.550 z=0.000
-128668187 | [input] GetMousePos count=556 self=095FAEB8 x=0.000 y=0.000 z=0.000
-128668468 | [input] GetMousePos count=580 self=095FAEB8 x=-2.200 y=0.550 z=0.000
-128668671 | [input] GetMousePos count=598 self=095FAEB8 x=-14.300 y=-4.400 z=0.000
-128668875 | [input] GetMousePos count=616 self=095FAEB8 x=-15.950 y=-4.400 z=0.000
-128669078 | [input] GetMousePos count=634 self=095FAEB8 x=-7.700 y=-1.100 z=0.000
-128669281 | [input] GetMousePos count=654 self=095FAEB8 x=-2.200 y=0.000 z=0.000
-128669406 | [input] GetMousePos count=666 self=095FAEB8 x=0.000 y=0.000 z=0.000
-128669625 | [map-input] HandleEvent count=1 self=00AAC3CC event=0x00000020 original=1 forwarded=0
-128669859 | [map-input] HandleEvent count=2 self=00AAC3CC event=0x00000020 original=1 forwarded=0
-128670031 | [map-input] HandleEvent count=3 self=00AAC3CC event=0x00000020 original=1 forwarded=0
-128670187 | [map-input] HandleEvent count=4 self=00AAC3CC event=0x00000020 original=1 forwarded=0
-128670312 | [map-input] HandleEvent count=5 self=00AAC3CC event=0x00000011 original=1 forwarded=0
-128670625 | [map-input] HandleEvent count=6 self=00AAC3CC event=0x00000011 original=1 forwarded=0
-128670796 | [map-input] HandleEvent count=7 self=00AAC3CC event=0x00000011 original=1 forwarded=0
-128670953 | [map-input] HandleEvent count=8 self=00AAC3CC event=0x00000011 original=1 forwarded=0
-128671015 | [map-input] HandleEvent count=9 self=00AAC3CC event=0x0000001E original=1 forwarded=0
-128671328 | [map-input] HandleEvent count=10 self=00AAC3CC event=0x0000001E original=1 forwarded=0
-128671468 | [map-input] HandleEvent count=11 self=00AAC3CC event=0x0000001E original=1 forwarded=0
-128671640 | [map-input] HandleEvent count=12 self=00AAC3CC event=0x0000001E original=1 forwarded=0
-128671734 | [map-input] HandleEvent count=13 self=00AAC3CC event=0x0000001F original=1 forwarded=0
-128672046 | [map-input] HandleEvent count=14 self=00AAC3CC event=0x0000001F original=1 forwarded=0
-128672203 | [map-input] HandleEvent count=15 self=00AAC3CC event=0x0000001F original=1 forwarded=0
-128672375 | [map-input] HandleEvent count=16 self=00AAC3CC event=0x0000001F original=1 forwarded=0
-128672500 | [map-input] HandleEvent count=17 self=00AAC3CC event=0x00000012 original=1 forwarded=0
-128672812 | [map-input] HandleEvent count=18 self=00AAC3CC event=0x00000012 original=1 forwarded=0
-128672984 | [map-input] HandleEvent count=19 self=00AAC3CC event=0x00000012 original=1 forwarded=0
-128673125 | [map-input] HandleEvent count=20 self=00AAC3CC event=0x00000012 original=1 forwarded=0
-128673281 | [map-input] HandleEvent count=21 self=00AAC3CC event=0x00000010 original=1 forwarded=0
-128673593 | [map-input] HandleEvent count=22 self=00AAC3CC event=0x00000010 original=1 forwarded=0
-128673750 | [map-input] HandleEvent count=23 self=00AAC3CC event=0x00000010 original=1 forwarded=0
-128673921 | [map-input] HandleEvent count=24 self=00AAC3CC event=0x00000010 original=1 forwarded=0
-128674093 | [map-input] HandleEvent count=25 self=00AAC3CC event=0x00000010 original=1 forwarded=0
-128675093 | [map-input] HandleEvent count=26 self=00AAC3CC event=0x00000001 original=1 forwarded=1
-128675468 | [callback] Game_Pause
-128677671 | [callback] Game_Unpause
-128677687 | [callback] Game_ApplyOptions
-128677703 | [callback] Game_Exit
+131902703 | [plugin] Game_Entry (iteration 5, UNLOCK=1 MARKER=1 MOUSE=1)
+131902703 | [cwd] Game_Entry cwd='C:\Games\Gothic\Gothic 2 - Night of the Raven\System'
+131902703 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590798 detour=71D91840
+131902703 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365907E0 detour=71D91960
+131902703 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590828 detour=71D919C0
+131902703 | [hook] DocumentManager::HandleEvent hooked=1 exists=1 original=0065F450 trampoline=36590870 detour=71D91BF0
+131902703 | [runtime] Game_Entry zinput=NULL
+131909906 | [callback] Game_DefineExternals
+131911828 | [callback] Game_Init
+131911828 | [runtime] Game_Init zinput=09596760
+131913015 | [callback] Game_LoadBegin_SaveGame
+131917609 | [callback] Game_LoadEnd_SaveGame
+131917625 | [stats] doc=0 dt=5766 loop=0 pre=1 post=0 menu=70 GetState=0(nz=0) GetToggled=0 GetMousePos=0(nz=0)
+131917625 | [input] GetState doc=0 key=16 raw=0.000 returned=0.000
+131917828 | [input] GetState doc=0 key=5 raw=0.000 returned=0.000
+131918296 | [input] GetState doc=0 key=11 raw=0.000 returned=0.000
+131918515 | [input] GetState doc=0 key=8 raw=0.000 returned=0.000
+131918750 | [input] GetState doc=0 key=6 raw=0.000 returned=0.000
+131920281 | [input] GetMousePos doc=0 x=4.950 y=0.550 z=0.000
+131920500 | [input] GetMousePos doc=0 x=0.550 y=0.000 z=0.000
+131920703 | [input] GetMousePos doc=0 x=-8.800 y=-2.200 z=0.000
+131920921 | [doc] OPEN (first HandleEvent event=0x00000011)
+131920921 | [hero] doc-open player=28A6F010 interactItem=00000000 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+131920921 | [callers] GetMousePos world: 0069AA31 x47 004A4C38 x244
+131920921 | [docs] node view=32A405F8 vptr=0083BACC isMap=0
+131920921 | [docs] mapView=00000000
+131920921 | [map-input] HandleEvent event=0x00000011 original=1 returned=1
+131920921 | [unlock] SetMovLock(0) cleared=1 now=0
+131920921 | [marker] no map view in ListDocuments (open document is not a map, or type check failed)
+131920921 | [hero] tick player=28A6F010 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+131921125 | [input] GetState doc=1 key=3 raw=0.000 returned=0.000
+131921218 | [mouse] turn #1 dx=2.750 deg=0.825
+131921250 | [mouse] turn #2 dx=7.150 deg=2.145
+131921265 | [mouse] turn #3 dx=6.050 deg=1.815
+131921296 | [mouse] turn #4 dx=2.750 deg=0.825
+131921328 | [input] GetState doc=1 key=18 raw=0.000 returned=0.000
+131921343 | [mouse] turn #5 dx=3.850 deg=1.155
+131921546 | [input] GetState doc=1 key=19 raw=0.000 returned=0.000
+131921750 | [input] GetMousePos doc=1 x=-1.100 y=0.000 z=0.000
+131921921 | [stats] doc=1 dt=1000 loop=125 pre=152 post=152 menu=0 GetState=1448(nz=12) GetToggled=228 GetMousePos=379(nz=86)
+131921921 | [hero] tick player=28A6F010 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=3 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+131921953 | [input] GetState doc=1 key=3 raw=1.000 returned=1.000
+131922156 | [input] GetMousePos doc=1 x=-3.850 y=-0.550 z=0.000
+131922359 | [input] GetMousePos doc=1 x=1.100 y=-1.100 z=0.000
+131922562 | [input] GetState doc=1 key=3 raw=1.000 returned=1.000
+131922765 | [input] GetState doc=1 key=3 raw=1.000 returned=1.000
+131922921 | [stats] doc=1 dt=1000 loop=23 pre=23 post=23 menu=0 GetState=437(nz=46) GetToggled=46 GetMousePos=69(nz=60)
+131922921 | [hero] tick player=28A6F010 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=3 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+131922984 | [input] GetState doc=1 key=3 raw=1.000 returned=1.000
+131923187 | [input] GetState doc=1 key=3 raw=1.000 returned=1.000
+131923390 | [input] GetState doc=1 key=3 raw=0.000 returned=0.000
+131923593 | [input] GetState doc=1 key=1 raw=0.000 returned=0.000
+131923796 | [input] GetState doc=1 key=19 raw=1.000 returned=1.000
+131923921 | [stats] doc=1 dt=1000 loop=40 pre=40 post=40 menu=0 GetState=700(nz=46) GetToggled=73 GetMousePos=118(nz=28)
+131923921 | [hero] tick player=28A6F010 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=1 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+131924000 | [input] GetState doc=1 key=2 raw=0.000 returned=0.000
+131924203 | [input] GetState doc=1 key=19 raw=1.000 returned=1.000
+131924406 | [input] GetState doc=1 key=18 raw=1.000 returned=1.000
+131924625 | [input] GetState doc=1 key=18 raw=1.000 returned=1.000
+131924828 | [input] GetMousePos doc=1 x=-1.650 y=-0.550 z=0.000
+131924921 | [stats] doc=1 dt=1000 loop=52 pre=52 post=52 menu=0 GetState=530(nz=52) GetToggled=53 GetMousePos=156(nz=48)
+131924921 | [hero] tick player=28A6F010 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=1 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+131925031 | [input] GetState doc=1 key=18 raw=0.000 returned=0.000
+131925250 | [input] GetState doc=1 key=19 raw=0.000 returned=0.000
+131925453 | [input] GetMousePos doc=1 x=-7.700 y=-0.550 z=0.000
+131925656 | [input] GetMousePos doc=1 x=0.000 y=0.000 z=0.000
+131925859 | [input] GetMousePos doc=1 x=10.450 y=1.100 z=0.000
+131925859 | [mouse] turn #100 dx=10.450 deg=3.135
+131925921 | [stats] doc=1 dt=1000 loop=44 pre=44 post=44 menu=0 GetState=791(nz=0) GetToggled=83 GetMousePos=132(nz=123)
+131925921 | [hero] tick player=28A6F010 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+131926062 | [input] GetMousePos doc=1 x=6.600 y=1.650 z=0.000
+131926265 | [input] GetMousePos doc=1 x=0.000 y=0.000 z=0.000
+131926484 | [input] GetState doc=1 key=4 raw=0.000 returned=0.000
+131926765 | [input] GetToggled doc=1 key=22 value=1
+131926921 | [stats] doc=1 dt=1000 loop=39 pre=39 post=39 menu=0 GetState=741(nz=0) GetToggled=79 GetMousePos=117(nz=60)
+131926921 | [hero] tick player=28A6F010 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+131927437 | [callback] Game_Pause doc=1
+131927437 | [unlock] SetMovLock(0) cleared=2 now=0
+131927921 | [stats] doc=1 dt=1000 loop=41 pre=40 post=40 menu=19 GetState=398(nz=0) GetToggled=42 GetMousePos=63(nz=0)
+131927921 | [hero] tick player=28A6F010 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+131928546 | [unlock] SetMovLock(0) cleared=3 now=0
+131928921 | [stats] doc=1 dt=1000 loop=42 pre=42 post=42 menu=42 GetState=0(nz=0) GetToggled=0 GetMousePos=0(nz=0)
+131928921 | [hero] tick player=28A6F010 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+131929265 | [callback] Game_Unpause doc=1
+131929296 | [callback] Game_Exit
