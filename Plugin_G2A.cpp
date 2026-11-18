@@ -176,6 +176,12 @@ static void MapDiagTick() {
 static oCViewDocumentMap* g_arrowPreparedMap = NULL;
 static unsigned long g_smoothArrowDraws = 0;
 static DWORD g_lastArrowDrawLog = 0;
+static zCTexture* g_smoothArrowTexture = NULL;
+static int g_smoothArrowWidth = 0;
+static int g_smoothArrowHeight = 0;
+static float g_smoothArrowBaseAngle = 0.0f;
+static float g_smoothArrowBestArea = 0.0f;
+static bool g_smoothArrowTextureReady = false;
 static unsigned long g_arrowBlitCalls = 0;
 static DWORD g_lastArrowBlitLog = 0;
 
@@ -198,24 +204,25 @@ static void MapDiagDrawSmoothArrow() {
     if (!hero || !renderer) return;
 
     oCViewDocument& arrow = g_mapView->ViewArrow;
-    zCTexture* texture = arrow.Texture;
+    zCTexture* currentTexture = arrow.Texture;
     const int x = arrow.PixelPosition.X;
     const int y = arrow.PixelPosition.Y;
-    const int w = arrow.PixelSize.X;
-    const int h = arrow.PixelSize.Y;
-    if (!texture || w < 4 || h < 4) {
+    const int currentW = arrow.PixelSize.X;
+    const int currentH = arrow.PixelSize.Y;
+    if (!currentTexture || currentW < 4 || currentH < 4) {
         static bool missingLogged = false;
         if (!missingLogged) {
             missingLogged = true;
             MapDiagLog("[arrow] direct draw unavailable texture=%p pixel=%d,%d %dx%d virtual=%dx%d",
-                texture, x, y, w, h, arrow.VirtualSize.X, arrow.VirtualSize.Y);
+                currentTexture, x, y, currentW, currentH, arrow.VirtualSize.X, arrow.VirtualSize.Y);
         }
         return;
     }
 
-    // The engine selects one of eight stock arrow textures in UpdatePosition.
-    // Reuse that already-loaded transparent arrow image, but rotate its quad only
-    // by the residual angle between the 8-way page and the exact player heading.
+    // Work out the stock 45-degree page selected by UpdatePosition().
+    // Odd page indices are the four diagonal variants. Cache the largest
+    // diagonal page texture and keep using it, rather than allowing the
+    // engine's eight-page selector to swap narrow/wide artwork while turning.
     zVEC3 at = hero->GetAtVectorWorld();
     float dx = at.n[0];
     float dy = -at.n[2];
@@ -225,13 +232,36 @@ static void MapDiagDrawSmoothArrow() {
     dy /= len;
 
     const float angle = atan2f(dy, dx);
-    const float pageAngle = floorf(angle / 0.78539816339f + 0.5f) * 0.78539816339f;
-    const float correction = angle - pageAngle;
-    const float c = cosf(correction);
-    const float sn = sinf(correction);
+    const float pageStep = 0.78539816339f;
+    const int pageIndex = (int)floorf(angle / pageStep + 0.5f);
+    const float pageAngle = (float)pageIndex * pageStep;
+    const float currentArea = (float)currentW * (float)currentH;
+    if ((pageIndex % 2) != 0 &&
+        (!g_smoothArrowTextureReady || currentArea > g_smoothArrowBestArea)) {
+        g_smoothArrowTexture = currentTexture;
+        g_smoothArrowWidth = currentW;
+        g_smoothArrowHeight = currentH;
+        g_smoothArrowBaseAngle = pageAngle;
+        g_smoothArrowBestArea = currentArea;
+        g_smoothArrowTextureReady = true;
+        MapDiagLog("[arrow] cached diagonal artwork tex=%p size=%dx%d area=%.0f base=%.3f page=%d",
+            g_smoothArrowTexture, g_smoothArrowWidth, g_smoothArrowHeight,
+            g_smoothArrowBestArea, g_smoothArrowBaseAngle, pageIndex);
+    }
 
-    const float cx = (float)x + (float)w * 0.5f;
-    const float cy = (float)y + (float)h * 0.5f;
+    // Until a diagonal page has been observed, use the current page as a
+    // temporary fallback. Afterwards, keep one artwork and rotate it through
+    // the full heading delta; no more 8-way texture changes are visible.
+    zCTexture* texture = g_smoothArrowTextureReady ? g_smoothArrowTexture : currentTexture;
+    const int w = g_smoothArrowTextureReady ? g_smoothArrowWidth : currentW;
+    const int h = g_smoothArrowTextureReady ? g_smoothArrowHeight : currentH;
+    const float baseAngle = g_smoothArrowTextureReady ? g_smoothArrowBaseAngle : pageAngle;
+    const float rotation = angle - baseAngle;
+    const float c = cosf(rotation);
+    const float sn = sinf(rotation);
+
+    const float cx = (float)x + (float)currentW * 0.5f;
+    const float cy = (float)y + (float)currentH * 0.5f;
     const float halfW = (float)w * 0.46f;
     const float halfH = (float)h * 0.46f;
     const float lx[4] = { -halfW, halfW, halfW, -halfW };
@@ -283,8 +313,9 @@ static void MapDiagDrawSmoothArrow() {
     DWORD now = GetTickCount();
     if (g_lastArrowDrawLog == 0 || now - g_lastArrowDrawLog >= 1000) {
         g_lastArrowDrawLog = now;
-        MapDiagLog("[arrow] renderer draw #%lu at=(%.3f, %.3f) rect=%d,%d %dx%d tex=%p screen=%dx%d correction=%.3f",
-            g_smoothArrowDraws, at.n[0], at.n[2], x, y, w, h, texture, sw, sh, correction);
+        MapDiagLog("[arrow] renderer draw #%lu at=(%.3f, %.3f) rect=%d,%d %dx%d tex=%p screen=%dx%d rotation=%.3f cached=%d",
+            g_smoothArrowDraws, at.n[0], at.n[2], x, y, w, h, texture, sw, sh, rotation,
+            (int)g_smoothArrowTextureReady);
     }
 }
 
@@ -463,6 +494,12 @@ static void MapDiagRefreshMapState() {
     g_docOpen = (current != NULL);
     g_frameDx = 0.0f;
     if (!current) g_arrowPreparedMap = NULL;
+    g_smoothArrowTexture = NULL;
+    g_smoothArrowWidth = 0;
+    g_smoothArrowHeight = 0;
+    g_smoothArrowBaseAngle = 0.0f;
+    g_smoothArrowBestArea = 0.0f;
+    g_smoothArrowTextureReady = false;
 
     if (g_docOpen) {
         g_lastStats = 0;
