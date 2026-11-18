@@ -288,3 +288,26 @@ Important: this is an experimental rendering path. Do not merge to main until vi
 - Corrected feature commit: c6b99638cb9abf51c9c57725a2038b038c7544e6. Only Plugin_G2A.cpp changed. The stock arrow texture is now hidden with SetTextureAlpha(0); drawing dimensions come from ViewArrow.VirtualSize.X/Y.
 - This correction is source/API-based; it has not yet been compiled or tested in-game.
 - Next step: run the existing G2A build workflow for the current feature branch. If successful, test the smooth pointer visually as described above. Preserve the already confirmed live marker, immediate mouse turning, and MirrorWorld compatibility.
+
+## 2026-11-19 — smooth arrow rendering moved to the arrow's own blit
+
+User reports that after the previous compile correction, the marker flashes at the correct location when the map opens, then disappears. The available zMapUnlocker.log shows Screen::Render hook installed, but contains no [arrow] smooth draw records at all; therefore the root-screen hook did not reach the custom draw function in the tested path. The log is from the prior test and does not establish the exact reason the hook was skipped.
+
+SDK inspection:
+- oCViewDocument -> zCViewDialog -> zCViewPrint -> zCViewFX -> zCViewDraw.
+- zCViewPrint overrides virtual Blit() at G2A 0x006934A0; oCViewDocument and oCViewDocumentMap do not override Blit().
+- ViewArrow therefore uses zCViewPrint::Blit().
+
+Feature commit:
+- ff57e0a4f7a31c820430ee5e5d669c5bcbb004cd.
+- Only Plugin_G2A.cpp changed.
+- Removed the root zCView::Render hook.
+- Added a hook to zCViewPrint::Blit() at 0x006934A0. It identifies the exact ViewArrow instance, sets its texture alpha to zero immediately before native blitting (so UpdatePosition/SetPage cannot leave the stock 8-way arrow visible), calls the original Blit, then draws the continuous pointer into that same ViewArrow.
+- This places custom drawing in the arrow object's own rendering path. Still requires compile and in-game verification.
+
+Next test:
+1. Build the current feature branch.
+2. Open the map and leave it open for several seconds.
+3. Check whether the pointer remains visible continuously; rotate the character and check whether its direction follows smoothly.
+4. Close and reopen the map once.
+5. If it still disappears, send the updated System/zMapUnlocker.log. Look for [arrow] smooth draw records; they should now appear if ViewArrow::Blit is reached.
