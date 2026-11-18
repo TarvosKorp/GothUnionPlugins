@@ -169,6 +169,85 @@ static void MapDiagTick() {
     }
 }
 
+// ---------------------------------------------------------------- smooth map arrow
+// The stock map arrow is an eight-page document. Hide only that small arrow view
+// and draw a continuously oriented pointer into the same view after the screen
+// has rendered its normal contents.
+static oCViewDocumentMap* g_arrowPreparedMap = NULL;
+static unsigned long g_smoothArrowDraws = 0;
+
+static void MapDiagPrepareSmoothArrow() {
+    if (!g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView) return;
+    g_mapView->ViewArrow.SetTransparency(0);
+    g_arrowPreparedMap = g_mapView;
+    int w = 0, h = 0;
+    g_mapView->ViewArrow.GetSize(w, h);
+    MapDiagLog("[arrow] native arrow hidden map=%p view=%p size=%dx%d",
+        g_mapView, &g_mapView->ViewArrow, w, h);
+}
+
+static void MapDiagDrawSmoothArrow() {
+    if (!g_docOpen || !g_mapView) return;
+    oCNpc* hero = Gothic_II_Addon::player;
+    if (!hero) return;
+
+    oCViewDocument& arrow = g_mapView->ViewArrow;
+    int w = 0, h = 0;
+    arrow.GetSize(w, h);
+    if (w < 8 || h < 8) return;
+
+    // World +Z is north/up on the map; world +X is east/right.
+    zVEC3 at = hero->GetAtVectorWorld();
+    float dx = at.n[0];
+    float dy = -at.n[2];
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 0.001f) return;
+    dx /= len;
+    dy /= len;
+
+    const float cx = (float)w * 0.5f;
+    const float cy = (float)h * 0.5f;
+    const float shaft = (float)(w < h ? w : h) * 0.39f;
+    const float halfBase = shaft * 0.43f;
+    const float back = shaft * 0.28f;
+    const float px = -dy;
+    const float py = dx;
+
+    const int tipX = (int)(cx + dx * shaft);
+    const int tipY = (int)(cy + dy * shaft);
+    const int leftX = (int)(cx - dx * back + px * halfBase);
+    const int leftY = (int)(cy - dy * back + py * halfBase);
+    const int rightX = (int)(cx - dx * back - px * halfBase);
+    const int rightY = (int)(cy - dy * back - py * halfBase);
+    const int tailX = (int)(cx - dx * shaft * 0.42f);
+    const int tailY = (int)(cy - dy * shaft * 0.42f);
+
+    zCOLOR color(255, 220, 72);
+    arrow.Line(tipX, tipY, leftX, leftY, color);
+    arrow.Line(tipX, tipY, rightX, rightY, color);
+    arrow.Line(leftX, leftY, tailX, tailY, color);
+    arrow.Line(rightX, rightY, tailX, tailY, color);
+    arrow.Line(leftX, leftY, rightX, rightY, color);
+
+    ++g_smoothArrowDraws;
+    if (g_smoothArrowDraws <= 3 || g_smoothArrowDraws % 300 == 0) {
+        MapDiagLog("[arrow] smooth draw #%lu at=(%.3f, %.3f) view=%dx%d",
+            g_smoothArrowDraws, at.n[0], at.n[2], w, h);
+    }
+}
+
+// zCView::Render() — G2A 0x007AC210. Draw after the root screen's normal
+// contents so the replacement pointer stays above the original map arrow.
+void __fastcall Hook_Screen_Render(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_Screen_Render(
+    0x007AC210, &Hook_Screen_Render, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_Screen_Render(void* self, void* edx) {
+    Ivk_Screen_Render(self, edx);
+    if (self == Gothic_II_Addon::screen && g_docOpen && g_mapView)
+        MapDiagDrawSmoothArrow();
+}
+
 // ---------------------------------------------------------------- input hooks
 #if MAPDIAG_FORCE_MOVE
 // Physically held key -> logical movement id (only used while a document is open).
@@ -303,6 +382,7 @@ static void MapDiagRefreshMapState() {
     g_mapView = current;
     g_docOpen = (current != NULL);
     g_frameDx = 0.0f;
+    if (!current) g_arrowPreparedMap = NULL;
 
     if (g_docOpen) {
         g_lastStats = 0;
@@ -387,6 +467,7 @@ static void MapDiagMarker() {
     }
     warned = false;
     map->UpdatePosition();
+    MapDiagPrepareSmoothArrow();
     ++n;
     if (n <= 3 || n % 10 == 0) {
         oCNpc* hero = Gothic_II_Addon::player;
@@ -481,6 +562,7 @@ void Game_Entry() {
     MapDiagHookState("Input::GetToggled", const_cast<THookInfo&>(Ivk_Input_GetToggled.GetHookInfo()));
     MapDiagHookState("Input::GetMousePos", const_cast<THookInfo&>(Ivk_Input_GetMousePos.GetHookInfo()));
     MapDiagHookState("DocumentManager::HandleEvent", const_cast<THookInfo&>(Ivk_DocMan_HandleEvent.GetHookInfo()));
+    MapDiagHookState("Screen::Render", const_cast<THookInfo&>(Ivk_Screen_Render.GetHookInfo()));
     MapDiagRuntimeProbe("Game_Entry");
 }
 
