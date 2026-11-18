@@ -71,6 +71,22 @@ int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
         self, event, result);
     return result;
 }
+// zCInput_Win32::zCInput_Win32_OnInit(HWND**) — G2A: 0x004D4A10.
+// This is the initialization point for the concrete Win32 input object.
+void __fastcall Hook_Input_OnInit(void* self, void* edx, void* hwndPtr);
+CInvoke<void(__fastcall*)(void*, void*, void*)> Ivk_Input_OnInit(
+    0x004D4A10, &Hook_Input_OnInit, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_Input_OnInit(void* self, void* edx, void* hwndPtr) {
+    MapDiagLog("[hook] Input::OnInit ENTER self=%p hwndPtr=%p zinput=%p",
+        self, hwndPtr, Gothic_II_Addon::zinput);
+    Ivk_Input_OnInit(self, edx, hwndPtr);
+
+    void** vtable = *(void***)self;
+    MapDiagLog("[hook] Input::OnInit RETURN self=%p zinput=%p vtable=%p ProcessInputEvents=%p",
+        self, Gothic_II_Addon::zinput, vtable, vtable[24]);
+}
+
 // zCInput_Win32::ProcessInputEvents() — G2A: 0x004D5700.
 // A low-volume heartbeat to verify that the game's input pump reaches our hooks.
 void __fastcall Hook_Input_ProcessInputEvents(void* self, void* edx);
