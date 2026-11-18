@@ -32,7 +32,10 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
 TSaveLoadGameInfo& SaveLoadGameInfo = UnionCore::SaveLoadGameInfo;
 
 void Game_Entry() {
+    const THookInfo& hookInfo = Ivk_MapView_UpdatePosition.GetHookInfo();
     MapDiagLog("[plugin] Game_Entry");
+    MapDiagLog("[diag] UpdatePosition hookInfo original=%p pointer=%p detour=%p protected=%u",
+        hookInfo.lpOriginal, hookInfo.lpPointer, hookInfo.lpDetour, hookInfo.ulProtected);
 }
 void Game_Init() {}
 void Game_Exit() {}
