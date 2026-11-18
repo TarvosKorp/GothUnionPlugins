@@ -1,10 +1,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-// zMapUnlocker — этап изоляции.
-// Восстановлен только перехват oCViewDocumentMap::UpdatePosition.
-// Никакие игровые события не блокируются; UI и input не опрашиваются из циклов.
-// Лог фиксирует вход и выход из оригинального метода, чтобы локализовать вылет.
+// zMapUnlocker — диагностика цепочки открытия карты.
+// Перехватываются только Show и UpdatePosition; ввод и UI не изменяются.
 
 namespace GOTHIC_ENGINE {
 
@@ -20,8 +18,18 @@ void MapDiagLog(const char* format, ...) {
     fclose(file);
 }
 
-// Адрес и сигнатура подтверждены в SDK G2A:
-// oCViewDocumentMap::UpdatePosition() — 0x0068D7B0.
+// oCDocumentManager::Show(int) — G2A: 0x0065F300.
+void __fastcall Hook_DocumentManager_Show(void* self, void* edx, int documentId);
+CInvoke<void(__fastcall*)(void*, void*, int)> Ivk_DocumentManager_Show(
+    0x0065F300, &Hook_DocumentManager_Show, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_DocumentManager_Show(void* self, void* edx, int documentId) {
+    MapDiagLog("[hook] DocumentManager::Show ENTER self=%p id=%d", self, documentId);
+    Ivk_DocumentManager_Show(self, edx, documentId);
+    MapDiagLog("[hook] DocumentManager::Show RETURN self=%p id=%d", self, documentId);
+}
+
+// oCViewDocumentMap::UpdatePosition() — G2A: 0x0068D7B0.
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
     0x0068D7B0, &Hook_MapView_UpdatePosition, IvkEnabled(Engine_G2A));
