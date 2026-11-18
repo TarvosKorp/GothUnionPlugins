@@ -211,175 +211,53 @@ TSaveLoadGameInfo& SaveLoadGameInfo = UnionCore::SaveLoadGameInfo;
 // The application object is defined below; Game_Entry inspects its event table.
 extern CApplication* lpApplication;
 
-void Game_Entry() {
-    // Truncate before writing any diagnostics for this session.
-    MapDiagReset();
+void MapDiagHookState(const char* name, THookInfo& info) {
+    MapDiagLog("[hook-state] %s hooked=%d exists=%d original=%p trampoline=%p detour=%p",
+        name, (int)CCallBack::IsHooked(info), (int)CCallBack::IsExist(info),
+        info.lpOriginal, info.lpPointer, info.lpDetour);
+}
 
-    THookInfo& hookInfo = const_cast<THookInfo&>(Ivk_MapView_UpdatePosition.GetHookInfo());
-    bool32 isHooked = CCallBack::IsHooked(hookInfo);
-    bool32 isExist = CCallBack::IsExist(hookInfo);
-
-    MapDiagLog("[plugin] Game_Entry");
-    MapDiagLog("[diag] UpdatePosition hookInfo original=%p pointer=%p detour=%p protected=%u",
-        hookInfo.lpOriginal, hookInfo.lpPointer, hookInfo.lpDetour, hookInfo.ulProtected);
-    MapDiagLog("[diag] UpdatePosition state isHooked=%d isExist=%d",
-        (int)isHooked, (int)isExist);
-
-    // Inspect the target entry after Union reports the hook as installed.
-    unsigned char* originalBytes = (unsigned char*)hookInfo.lpOriginal;
-    unsigned char* pointerBytes = (unsigned char*)hookInfo.lpPointer;
-    MapDiagLog("[diag] target bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
-        originalBytes[0], originalBytes[1], originalBytes[2], originalBytes[3],
-        originalBytes[4], originalBytes[5], originalBytes[6], originalBytes[7]);
-    MapDiagLog("[diag] pointer bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
-        pointerBytes[0], pointerBytes[1], pointerBytes[2], pointerBytes[3],
-        pointerBytes[4], pointerBytes[5], pointerBytes[6], pointerBytes[7]);
-
-    THookInfo& showHookInfo = const_cast<THookInfo&>(Ivk_DocMan_Show.GetHookInfo());
-    bool32 showIsHooked = CCallBack::IsHooked(showHookInfo);
-    bool32 showIsExist = CCallBack::IsExist(showHookInfo);
-    MapDiagLog("[diag] DocumentManager::Show hookInfo original=%p pointer=%p detour=%p protected=%u",
-        showHookInfo.lpOriginal, showHookInfo.lpPointer, showHookInfo.lpDetour, showHookInfo.ulProtected);
-    MapDiagLog("[diag] DocumentManager::Show state isHooked=%d isExist=%d",
-        (int)showIsHooked, (int)showIsExist);
-    unsigned char* showOriginalBytes = (unsigned char*)showHookInfo.lpOriginal;
-    unsigned char* showPointerBytes = (unsigned char*)showHookInfo.lpPointer;
-    MapDiagLog("[diag] Show target bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
-        showOriginalBytes[0], showOriginalBytes[1], showOriginalBytes[2], showOriginalBytes[3],
-        showOriginalBytes[4], showOriginalBytes[5], showOriginalBytes[6], showOriginalBytes[7]);
-    MapDiagLog("[diag] Show pointer bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
-        showPointerBytes[0], showPointerBytes[1], showPointerBytes[2], showPointerBytes[3],
-        showPointerBytes[4], showPointerBytes[5], showPointerBytes[6], showPointerBytes[7]);
-
-    THookInfo& blitHookInfo = const_cast<THookInfo&>(Ivk_Renderer_Vid_Blit.GetHookInfo());
-    unsigned char* blitTarget = (unsigned char*)blitHookInfo.lpOriginal;
-    unsigned char* blitPointer = (unsigned char*)blitHookInfo.lpPointer;
-    MapDiagLog("[diag] Vid_Blit state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
-        (int)CCallBack::IsHooked(blitHookInfo), (int)CCallBack::IsExist(blitHookInfo),
-        blitHookInfo.lpOriginal, blitHookInfo.lpPointer, blitHookInfo.lpDetour);
-    MapDiagLog("[diag] Vid_Blit target bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
-        blitTarget[0], blitTarget[1], blitTarget[2], blitTarget[3],
-        blitTarget[4], blitTarget[5], blitTarget[6], blitTarget[7]);
-    MapDiagLog("[diag] Vid_Blit pointer bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
-        blitPointer[0], blitPointer[1], blitPointer[2], blitPointer[3],
-        blitPointer[4], blitPointer[5], blitPointer[6], blitPointer[7]);
-
-    THookInfo& gameRenderHookInfo = const_cast<THookInfo&>(Ivk_Game_Render.GetHookInfo());
-    MapDiagLog("[diag] oCGame::Render state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
-        (int)CCallBack::IsHooked(gameRenderHookInfo), (int)CCallBack::IsExist(gameRenderHookInfo),
-        gameRenderHookInfo.lpOriginal, gameRenderHookInfo.lpPointer, gameRenderHookInfo.lpDetour);
-
-    THookInfo& mapScreenShowHookInfo = const_cast<THookInfo&>(Ivk_MapScreen_Show.GetHookInfo());
-    unsigned char* mapScreenBytes = (unsigned char*)mapScreenShowHookInfo.lpOriginal;
-    MapDiagLog("[diag] oCMapScreen::Show target bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
-        mapScreenBytes[0], mapScreenBytes[1], mapScreenBytes[2], mapScreenBytes[3],
-        mapScreenBytes[4], mapScreenBytes[5], mapScreenBytes[6], mapScreenBytes[7]);
-
-    MapDiagLog("[diag] MapScreen::Show state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
-        (int)CCallBack::IsHooked(mapScreenShowHookInfo), (int)CCallBack::IsExist(mapScreenShowHookInfo),
-        mapScreenShowHookInfo.lpOriginal, mapScreenShowHookInfo.lpPointer, mapScreenShowHookInfo.lpDetour);
-
-    THookInfo& createMapHookInfo = const_cast<THookInfo&>(Ivk_DocMan_CreateMap.GetHookInfo());
-    MapDiagLog("[diag] CreateMap state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
-        (int)CCallBack::IsHooked(createMapHookInfo), (int)CCallBack::IsExist(createMapHookInfo),
-        createMapHookInfo.lpOriginal, createMapHookInfo.lpPointer, createMapHookInfo.lpDetour);
-
-    THookInfo& updateMapHookInfo = const_cast<THookInfo&>(Ivk_DocMan_UpdateMap.GetHookInfo());
-    MapDiagLog("[diag] UpdateMap state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
-        (int)CCallBack::IsHooked(updateMapHookInfo), (int)CCallBack::IsExist(updateMapHookInfo),
-        updateMapHookInfo.lpOriginal, updateMapHookInfo.lpPointer, updateMapHookInfo.lpDetour);
-
-    THookInfo& handleEventHookInfo = const_cast<THookInfo&>(Ivk_DocMan_HandleEvent.GetHookInfo());
-    MapDiagLog("[diag] HandleEvent state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
-        (int)CCallBack::IsHooked(handleEventHookInfo), (int)CCallBack::IsExist(handleEventHookInfo),
-        handleEventHookInfo.lpOriginal, handleEventHookInfo.lpPointer, handleEventHookInfo.lpDetour);
-
-    THookInfo& inputHookInfo = const_cast<THookInfo&>(Ivk_Input_ProcessInputEvents.GetHookInfo());
-    MapDiagLog("[diag] Input::ProcessInputEvents state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
-        (int)CCallBack::IsHooked(inputHookInfo), (int)CCallBack::IsExist(inputHookInfo),
-        inputHookInfo.lpOriginal, inputHookInfo.lpPointer, inputHookInfo.lpDetour);
-
-    // Verify actual virtual dispatch targets using SDK declaration order:
-    // zCInput::ProcessInputEvents is slot 29; zCRenderer::Vid_Blit is slot 70.
+void MapDiagRuntimeProbe(const char* stage) {
     Gothic_II_Addon::zCInput* inputObject = Gothic_II_Addon::zinput;
-    if (!inputObject) {
-        MapDiagLog("[diag] zinput object is NULL at Game_Entry");
-    }
-    else {
-        void** inputVtable = *(void***)inputObject;
-        void* processInputSlot = inputVtable[29];
-        MapDiagLog("[diag] zinput=%p vtable=%p ProcessInputEvents[vtable+29]=%p expected=%p",
-            inputObject, inputVtable, processInputSlot, (void*)0x004D5700);
-        unsigned char* slotBytes = (unsigned char*)processInputSlot;
-        MapDiagLog("[diag] ProcessInputEvents vtable bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
-            slotBytes[0], slotBytes[1], slotBytes[2], slotBytes[3], slotBytes[4], slotBytes[5], slotBytes[6], slotBytes[7]);
-    }
-
     Gothic_II_Addon::zCRenderer* rendererObject = Gothic_II_Addon::zrenderer;
-    if (!rendererObject) {
-        MapDiagLog("[diag] zrenderer object is NULL at Game_Entry");
+
+    if (inputObject) {
+        void** vt = *(void***)inputObject;
+        MapDiagLog("[runtime] %s zinput=%p vtable=%p GetState[1]=%p GetToggled[3]=%p GetMousePos[20]=%p ProcessInputEvents[29]=%p",
+            stage, inputObject, vt, vt[1], vt[3], vt[20], vt[29]);
     }
     else {
-        void** rendererVtable = *(void***)rendererObject;
-        void* vidBlitSlot = rendererVtable[70];
-        MapDiagLog("[diag] zrenderer=%p vtable=%p Vid_Blit[vtable+70]=%p expected=%p",
-            rendererObject, rendererVtable, vidBlitSlot, (void*)0x00657670);
-        unsigned char* slotBytes = (unsigned char*)vidBlitSlot;
-        MapDiagLog("[diag] Vid_Blit vtable bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
-            slotBytes[0], slotBytes[1], slotBytes[2], slotBytes[3], slotBytes[4], slotBytes[5], slotBytes[6], slotBytes[7]);
+        MapDiagLog("[runtime] %s zinput=NULL", stage);
     }
-    // The 1.0k CreateRefApplication overload below receives 21 callbacks.
-    // GAME_EVENTS_MAX belongs to the legacy 17-event enum, so it is NOT the
-    // size of this application's callback table.
-    const int appEventCount = 21;
-    if (!lpApplication) {
-        MapDiagLog("[diag] application pointer is NULL");
+
+    if (rendererObject) {
+        void** vt = *(void***)rendererObject;
+        MapDiagLog("[runtime] %s zrenderer=%p vtable=%p Vid_Blit[70]=%p",
+            stage, rendererObject, vt, vt[70]);
     }
     else {
-        TAppFunc* events = lpApplication->lpEvents;
-        MapDiagLog("[diag] application=%p eventTable=%p inspectedEventCount=%d",
-            lpApplication, events, appEventCount);
-        MapDiagLog("[diag] applicationList count=%u containsCurrent=%d",
-            (unsigned)CApplication::lstApps.GetNumInList(),
-            (int)CApplication::lstApps.IsInList(lpApplication));
-
-        MapDiagLog("[diag] expected callbacks: entry=%p init=%p exit=%p preloop=%p loop=%p postloop=%p menuloop=%p",
-            (void*)Game_Entry, (void*)Game_Init, (void*)Game_Exit,
-            (void*)Game_PreLoop, (void*)Game_Loop, (void*)Game_PostLoop,
-            (void*)Game_MenuLoop);
-        MapDiagLog("[diag] expected callbacks: saveBegin=%p saveEnd=%p loadNewBegin=%p loadNewEnd=%p loadSaveBegin=%p loadSaveEnd=%p",
-            (void*)Game_SaveBegin, (void*)Game_SaveEnd,
-            (void*)Game_LoadBegin_NewGame, (void*)Game_LoadEnd_NewGame,
-            (void*)Game_LoadBegin_SaveGame, (void*)Game_LoadEnd_SaveGame);
-        MapDiagLog("[diag] expected callbacks: loadLevelBegin=%p loadLevelEnd=%p loadTriggerBegin=%p loadTriggerEnd=%p pause=%p unpause=%p defineExternals=%p applyOptions=%p",
-            (void*)Game_LoadBegin_ChangeLevel, (void*)Game_LoadEnd_ChangeLevel,
-            (void*)Game_LoadBegin_Trigger, (void*)Game_LoadEnd_Trigger,
-            (void*)Game_Pause, (void*)Game_Unpause,
-            (void*)Game_DefineExternals, (void*)Game_ApplyOptions);
-
-        if (!events) {
-            MapDiagLog("[diag] application event table is NULL");
-        }
-        else {
-            // Runtime layout keeps legacy EGameEvents first; newer callbacks are appended.
-            static const char* eventNames[21] = {
-                "GAME_ENTRY", "GAME_INIT", "GAME_EXIT", "GAME_LOOP",
-                "GAME_SAVE_BEGIN", "GAME_SAVE_END",
-                "GAME_LOAD_BEGIN_NEWGAME", "GAME_LOAD_END_NEWGAME",
-                "GAME_LOAD_BEGIN_SAVEGAME", "GAME_LOAD_END_SAVEGAME",
-                "GAME_LOAD_BEGIN_CHANGELEVEL", "GAME_LOAD_END_CHANGELEVEL",
-                "GAME_LOAD_BEGIN_TRIGGER", "GAME_LOAD_END_TRIGGER",
-                "GAME_PAUSE", "GAME_UNPAUSE", "GAME_DEFINE_EXTERNALS",
-                "GAME_PRE_LOOP", "GAME_POST_LOOP", "GAME_MENU_LOOP",
-                "GAME_APPLY_OPTIONS"
-            };
-
-            for (int i = 0; i < appEventCount; ++i)
-                MapDiagLog("[diag] event[%02d] %s=%p",
-                    i, eventNames[i], (void*)events[i]);
-        }
+        MapDiagLog("[runtime] %s zrenderer=NULL", stage);
     }
 }
+
+void Game_Entry() {
+    MapDiagReset();
+    MapDiagLog("[plugin] Game_Entry");
+
+    MapDiagHookState("DocMan::Show", const_cast<THookInfo&>(Ivk_DocMan_Show.GetHookInfo()));
+    MapDiagHookState("MapScreen::Show", const_cast<THookInfo&>(Ivk_MapScreen_Show.GetHookInfo()));
+    MapDiagHookState("MapView::UpdatePosition", const_cast<THookInfo&>(Ivk_MapView_UpdatePosition.GetHookInfo()));
+    MapDiagHookState("Game::Render", const_cast<THookInfo&>(Ivk_Game_Render.GetHookInfo()));
+    MapDiagHookState("Renderer::Vid_Blit", const_cast<THookInfo&>(Ivk_Renderer_Vid_Blit.GetHookInfo()));
+
+    MapDiagHookState("Input::ProcessInputEvents", const_cast<THookInfo&>(Ivk_Input_ProcessInputEvents.GetHookInfo()));
+    MapDiagHookState("Input::GetState", const_cast<THookInfo&>(Ivk_Input_GetState.GetHookInfo()));
+    MapDiagHookState("Input::GetToggled", const_cast<THookInfo&>(Ivk_Input_GetToggled.GetHookInfo()));
+    MapDiagHookState("Input::GetMousePos", const_cast<THookInfo&>(Ivk_Input_GetMousePos.GetHookInfo()));
+
+    MapDiagRuntimeProbe("Game_Entry");
+}
+
 // Log the first call and then one sample every 300 calls. This keeps the
 // log compact while revealing which Union application callbacks actually run.
 void MapDiagPulse(const char* name, unsigned long& count) {
@@ -388,7 +266,7 @@ void MapDiagPulse(const char* name, unsigned long& count) {
         MapDiagLog("[callback] %s count=%lu", name, count);
 }
 
-void Game_Init() { MapDiagLog("[callback] Game_Init"); }
+void Game_Init() { MapDiagLog("[callback] Game_Init"); MapDiagRuntimeProbe("Game_Init"); }
 void Game_Exit() { MapDiagLog("[callback] Game_Exit"); }
 
 void Game_PreLoop() {
@@ -398,6 +276,7 @@ void Game_PreLoop() {
 void Game_Loop() {
     static unsigned long count = 0;
     MapDiagPulse("Game_Loop", count);
+    if (count == 1) MapDiagRuntimeProbe("Game_Loop");
 }
 void Game_PostLoop() {
     static unsigned long count = 0;
