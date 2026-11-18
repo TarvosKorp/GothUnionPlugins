@@ -124,6 +124,54 @@ void __fastcall Hook_Input_ProcessInputEvents(void* self, void* edx) {
     Ivk_Input_ProcessInputEvents(self, edx);
 }
 
+
+// Direct input-query hooks used by the working zMirrorWorld plugin.
+// These observe the actual key/mouse queries rather than the input-event pump.
+float __fastcall Hook_Input_GetState(void* self, void* edx, unsigned short key);
+CInvoke<float(__fastcall*)(void*, void*, unsigned short)> Ivk_Input_GetState(
+    0x004D4D30, &Hook_Input_GetState, IvkEnabled(Engine_G2A));
+
+float __fastcall Hook_Input_GetState(void* self, void* edx, unsigned short key) {
+    float value = Ivk_Input_GetState(self, edx, key);
+    if (value != 0.0f) {
+        static unsigned long activeCount = 0;
+        ++activeCount;
+        if (activeCount <= 120 || activeCount % 50 == 0)
+            MapDiagLog("[hook] Input::GetState active=%lu self=%p key=0x%04X value=%.3f",
+                activeCount, self, (unsigned)key, value);
+    }
+    return value;
+}
+
+int __fastcall Hook_Input_GetToggled(void* self, void* edx, unsigned short key);
+CInvoke<int(__fastcall*)(void*, void*, unsigned short)> Ivk_Input_GetToggled(
+    0x004D5020, &Hook_Input_GetToggled, IvkEnabled(Engine_G2A));
+
+int __fastcall Hook_Input_GetToggled(void* self, void* edx, unsigned short key) {
+    int value = Ivk_Input_GetToggled(self, edx, key);
+    if (value) {
+        static unsigned long toggledCount = 0;
+        ++toggledCount;
+        if (toggledCount <= 80 || toggledCount % 30 == 0)
+            MapDiagLog("[hook] Input::GetToggled active=%lu self=%p key=0x%04X value=%d",
+                toggledCount, self, (unsigned)key, value);
+    }
+    return value;
+}
+
+void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y, float& z);
+CInvoke<void(__fastcall*)(void*, void*, float&, float&, float&)> Ivk_Input_GetMousePos(
+    0x004D5730, &Hook_Input_GetMousePos, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y, float& z) {
+    Ivk_Input_GetMousePos(self, edx, x, y, z);
+    static unsigned long count = 0;
+    ++count;
+    if (count <= 8 || count % 30 == 0)
+        MapDiagLog("[hook] Input::GetMousePos count=%lu self=%p x=%.3f y=%.3f z=%.3f",
+            count, self, x, y, z);
+}
+
 // oCViewDocumentMap::UpdatePosition() — G2A: 0x0068D7B0.
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
