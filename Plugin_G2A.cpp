@@ -1,25 +1,59 @@
 #include <stdio.h>
 #include <stdarg.h>
+#include <string.h>
 
 // zMapUnlocker — focused input diagnostics for Gothic II Addon.
-// Only the three input-query hooks are retained in this iteration.
+// The log uses an absolute path next to Gothic2.exe: the game changes its
+// current working directory during startup, so relative paths split the log.
 
 namespace GOTHIC_ENGINE {
 
+// Resolve once, independently of later SetCurrentDirectory/_chdir calls.
+static const char* MapDiagPath() {
+    static char path[MAX_PATH] = { 0 };
+    static bool ready = false;
+    if (!ready) {
+        ready = true;
+        DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
+        if (n == 0 || n >= MAX_PATH) {
+            lstrcpyA(path, "zMapUnlocker.log");
+        } else {
+            char* slash = strrchr(path, '\\\\');
+            if (slash) *(slash + 1) = 0;
+            lstrcatA(path, "zMapUnlocker.log");
+        }
+    }
+    return path;
+}
+
 void MapDiagReset() {
-    FILE* file = fopen("zMapUnlocker.log", "w");
+    FILE* file = fopen(MapDiagPath(), "w");
     if (file) fclose(file);
 }
 
 void MapDiagLog(const char* format, ...) {
-    FILE* file = fopen("zMapUnlocker.log", "a");
-    if (!file) return;
+    char line[1024];
     va_list args;
     va_start(args, format);
-    vfprintf(file, format, args);
+    _vsnprintf(line, sizeof(line) - 1, format, args);
     va_end(args);
-    fprintf(file, "\n");
+    line[sizeof(line) - 1] = 0;
+
+    // Also emit to the Windows debugger, even if the file cannot be opened.
+    OutputDebugStringA("[zMapUnlocker] ");
+    OutputDebugStringA(line);
+    OutputDebugStringA("\n");
+
+    FILE* file = fopen(MapDiagPath(), "a");
+    if (!file) return;
+    fprintf(file, "%8lu | %s\\n", (unsigned long)GetTickCount(), line);
     fclose(file);
+}
+
+void MapDiagCwd(const char* stage) {
+    char cwd[MAX_PATH] = { 0 };
+    GetCurrentDirectoryA(MAX_PATH, cwd);
+    MapDiagLog("[cwd] %s cwd='%s' log='%s'", stage, cwd, MapDiagPath());
 }
 
 // zCInput_Win32::GetState(unsigned short) — G2A 0x004D4D30.
@@ -33,8 +67,11 @@ float __fastcall Hook_Input_GetState(void* self, void* edx, unsigned short key) 
     static unsigned long count = 0;
     ++count;
     if (count <= 40 || count % 500 == 0)
-        MapDiagLog("[input] GetState count=%lu self=%p key=0x%04X value=%.3f",
-            count, self, (unsigned)key, value);
+        {
+            if (count == 1) MapDiagCwd("first GetState");
+            MapDiagLog("[input] GetState count=%lu self=%p key=0x%04X value=%.3f",
+                count, self, (unsigned)key, value);
+        }
     return value;
 }
 
@@ -115,6 +152,7 @@ extern CApplication* lpApplication;
 void Game_Entry() {
     MapDiagReset();
     MapDiagLog("[plugin] Game_Entry");
+    MapDiagCwd("Game_Entry");
     MapDiagHookState("Input::GetState", const_cast<THookInfo&>(Ivk_Input_GetState.GetHookInfo()));
     MapDiagHookState("Input::GetToggled", const_cast<THookInfo&>(Ivk_Input_GetToggled.GetHookInfo()));
     MapDiagHookState("Input::GetMousePos", const_cast<THookInfo&>(Ivk_Input_GetMousePos.GetHookInfo()));
@@ -127,13 +165,13 @@ void MapDiagCallback(const char* name, unsigned long& count) {
         MapDiagLog("[callback] %s count=%lu", name, count);
 }
 
-void Game_Init() { MapDiagLog("[callback] Game_Init"); MapDiagRuntimeProbe("Game_Init"); }
+void Game_Init() { MapDiagLog("[callback] Game_Init"); MapDiagCwd("Game_Init"); MapDiagRuntimeProbe("Game_Init"); }
 void Game_Exit() { MapDiagLog("[callback] Game_Exit"); }
 void Game_PreLoop() { static unsigned long n = 0; MapDiagCallback("Game_PreLoop", n); }
 void Game_Loop() {
     static unsigned long n = 0;
     MapDiagCallback("Game_Loop", n);
-    if (n == 1) MapDiagRuntimeProbe("Game_Loop");
+    if (n == 1) { MapDiagCwd("Game_Loop"); MapDiagRuntimeProbe("Game_Loop"); }
 }
 void Game_PostLoop() { static unsigned long n = 0; MapDiagCallback("Game_PostLoop", n); }
 void Game_MenuLoop() { static unsigned long n = 0; MapDiagCallback("Game_MenuLoop", n); }
