@@ -66,12 +66,11 @@ float __fastcall Hook_Input_GetState(void* self, void* edx, unsigned short key) 
     float value = Ivk_Input_GetState(self, edx, key);
     static unsigned long count = 0;
     ++count;
-    if (count <= 40 || count % 500 == 0)
-        {
-            if (count == 1) MapDiagCwd("first GetState");
-            MapDiagLog("[input] GetState count=%lu self=%p key=0x%04X value=%.3f",
-                count, self, (unsigned)key, value);
-        }
+    if (value != 0.0f || count <= 40 || count % 500 == 0) {
+        if (count == 1) MapDiagCwd("first GetState");
+        MapDiagLog("[input] GetState count=%lu self=%p key=0x%04X value=%.3f",
+            count, self, (unsigned)key, value);
+    }
     return value;
 }
 
@@ -84,7 +83,7 @@ int __fastcall Hook_Input_GetToggled(void* self, void* edx, unsigned short key) 
     int value = Ivk_Input_GetToggled(self, edx, key);
     static unsigned long count = 0;
     ++count;
-    if (count <= 40 || count % 500 == 0)
+    if (value != 0 || count <= 40 || count % 500 == 0)
         MapDiagLog("[input] GetToggled count=%lu self=%p key=0x%04X value=%d",
             count, self, (unsigned)key, value);
     return value;
@@ -99,9 +98,26 @@ void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y
     Ivk_Input_GetMousePos(self, edx, x, y, z);
     static unsigned long count = 0;
     ++count;
-    if (count <= 12 || count % 500 == 0)
+    if (x != 0.0f || y != 0.0f || z != 0.0f || count <= 12 || count % 500 == 0)
         MapDiagLog("[input] GetMousePos count=%lu self=%p x=%.3f y=%.3f z=%.3f",
             count, self, x, y, z);
+}
+
+// oCDocumentManager::HandleEvent(int) — G2A 0x0065F450.
+// This is the document manager's input callback; observe events without
+// changing their values or suppressing the original handler.
+int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event);
+CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_DocMan_HandleEvent(
+    0x0065F450, &Hook_DocMan_HandleEvent, IvkEnabled(Engine_G2A));
+
+int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
+    int result = Ivk_DocMan_HandleEvent(self, edx, event);
+    static unsigned long count = 0;
+    ++count;
+    if (count <= 80 || count % 500 == 0)
+        MapDiagLog("[map-input] HandleEvent count=%lu self=%p event=0x%08X result=%d",
+            count, self, (unsigned)event, result);
+    return result;
 }
 
 void MapDiagHookState(const char* name, THookInfo& info) {
@@ -156,6 +172,7 @@ void Game_Entry() {
     MapDiagHookState("Input::GetState", const_cast<THookInfo&>(Ivk_Input_GetState.GetHookInfo()));
     MapDiagHookState("Input::GetToggled", const_cast<THookInfo&>(Ivk_Input_GetToggled.GetHookInfo()));
     MapDiagHookState("Input::GetMousePos", const_cast<THookInfo&>(Ivk_Input_GetMousePos.GetHookInfo()));
+    MapDiagHookState("DocumentManager::HandleEvent", const_cast<THookInfo&>(Ivk_DocMan_HandleEvent.GetHookInfo()));
     MapDiagRuntimeProbe("Game_Entry");
 }
 
