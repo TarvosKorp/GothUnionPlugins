@@ -15,12 +15,12 @@ bool DocDlgOnScreen() {
     if (!screen) return false;
 
     oCDocumentManager& dm = oCDocumentManager::GetDocumentManager();
-    zCView* dlg = dm.DlgDocumentMain;
+    zCViewDialog* dlg = dm.DlgDocumentMain;
     if (!dlg) return false;
 
     int guard = 0;
     for (zCView* v = screen->childs.root; v && guard < 512; v = v->next, guard++) {
-        if (v == dlg) return true;
+        if ((void*)v == (void*)dlg) return true;
     }
     return false;
 }
