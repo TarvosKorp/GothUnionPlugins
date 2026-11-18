@@ -37,6 +37,9 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
 
 TSaveLoadGameInfo& SaveLoadGameInfo = UnionCore::SaveLoadGameInfo;
 
+// The application object is defined below; Game_Entry inspects its event table.
+extern CApplication* lpApplication;
+
 void Game_Entry() {
     // Truncate before writing any diagnostics for this session.
     MapDiagReset();
