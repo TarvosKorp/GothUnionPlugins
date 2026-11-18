@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-// zMapUnlocker — диагностика цепочки открытия карты.
-// Перехватываются только Show и UpdatePosition; ввод и UI не изменяются.
+// zMapUnlocker — пассивная диагностика UpdatePosition.
+// DocumentManager::Show отключён: его перехват сопровождался вылетом при открытии карты.
 
 namespace GOTHIC_ENGINE {
 
@@ -16,17 +16,6 @@ void MapDiagLog(const char* format, ...) {
     va_end(args);
     fprintf(file, "\n");
     fclose(file);
-}
-
-// oCDocumentManager::Show(int) — G2A: 0x0065F300.
-void __fastcall Hook_DocumentManager_Show(void* self, void* edx, int documentId);
-CInvoke<void(__fastcall*)(void*, void*, int)> Ivk_DocumentManager_Show(
-    0x0065F300, &Hook_DocumentManager_Show, IvkEnabled(Engine_G2A));
-
-void __fastcall Hook_DocumentManager_Show(void* self, void* edx, int documentId) {
-    MapDiagLog("[hook] DocumentManager::Show ENTER self=%p id=%d", self, documentId);
-    Ivk_DocumentManager_Show(self, edx, documentId);
-    MapDiagLog("[hook] DocumentManager::Show RETURN self=%p id=%d", self, documentId);
 }
 
 // oCViewDocumentMap::UpdatePosition() — G2A: 0x0068D7B0.
