@@ -360,3 +360,30 @@ Next test:
 3. Rotate the character with the mouse through several directions; check that the arrow follows smoothly.
 4. Close and reopen the map once.
 5. Send the updated System/zMapUnlocker.log. If still invisible, the new [arrow] renderer draw diagnostics will tell whether a valid texture, pixel rectangle and screen dimensions were available.
+
+
+## 2026-11-19 — ViewArrow::Blit order corrected
+
+User test after feature commit 8eabac533c648687237832012de0f36775083e16:
+- The replacement arrow remains invisible.
+- Fresh Temp/zMapUnlocker.log confirms map detection, mouse turning, and live marker updates are working.
+- Startup confirms ViewArrow::Blit hook installed at 0x006934A0, but the log contains no renderer-draw records and no Blit-call records.
+- Source inspection found a concrete omission: Hook_ViewArrow_Blit hid the native arrow and called the original Blit, but did not call MapDiagDrawSmoothArrow. The custom draw remained attached to CheckObjectRoutines, which runs before its original function; the prior comment incorrectly described it as drawing after the map render.
+- Therefore the previous test did not establish that the custom textured quad was actually submitted after the arrow's native blit.
+
+New feature commit:
+- e026764bf6156a46bcdcc0bb02d14d3172901b08.
+- Only Plugin_G2A.cpp changed.
+- Hook_ViewArrow_Blit now calls the original Blit first and then MapDiagDrawSmoothArrow for the exact ViewArrow instance, so the replacement is submitted immediately after the native arrow view in the same render path.
+- Removed the CheckObjectRoutines drawing hook to avoid the earlier pre-original render-stage draw.
+- Added rate-limited diagnostics: ViewArrow::Blit call count at most once per second; successful renderer draw details at most once per second; one-time invalid screen/texture diagnostics. High-frequency logging remains controlled.
+- Source re-fetched after commit and verified: post-Blit draw call present; old CheckObjectRoutines hook absent; draw/Blit logs rate-limited.
+- This change has not yet been compiled or tested in-game.
+
+Next test:
+1. Build the current feature branch.
+2. Open the map and leave it open for several seconds.
+3. Rotate the character with the mouse.
+4. Check whether the yellow arrow is continuously visible and follows the heading smoothly.
+5. Close and reopen the map once.
+6. Send the updated Temp/zMapUnlocker.log. The key records are [arrow] ViewArrow::Blit and [arrow] renderer draw, or [arrow] direct draw unavailable / invalid renderer dimensions.
