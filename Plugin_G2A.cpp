@@ -262,8 +262,7 @@ static void MapDiagDrawSmoothArrow() {
     zCTexture* texture = g_smoothArrowTextureReady ? g_smoothArrowTexture : currentTexture;
     const int w = g_smoothArrowTextureReady ? g_smoothArrowWidth : currentW;
     const int h = g_smoothArrowTextureReady ? g_smoothArrowHeight : currentH;
-    const float rotation = g_smoothArrowAngle -
-        (g_smoothArrowTextureReady ? g_smoothArrowBaseAngle : 1.57079632679f);
+    const float rotation = g_smoothArrowAngle - g_smoothArrowBaseAngle;
     const float c = cosf(rotation);
     const float sn = sinf(rotation);
 
