@@ -49,21 +49,20 @@ void __fastcall Hook_MapView_Dtor(zCView* self, void* edx) {
 }
 
 // Show() позволяет отличить карту от обычного текстового документа.
-void __fastcall Hook_DocMan_Show(void* self, void* edx);
-CInvoke<void(__fastcall*)(void*, void*)> Ivk_DocMan_Show(
+void __fastcall Hook_DocMan_Show(void* self, void* edx, int documentId);
+CInvoke<void(__fastcall*)(void*, void*, int)> Ivk_DocMan_Show(
     0x0065F300, &Hook_DocMan_Show, IvkEnabled(Engine_G2A));
 
-void __fastcall Hook_DocMan_Show(void* self, void* edx) {
+void __fastcall Hook_DocMan_Show(void* self, void* edx, int documentId) {
     const bool outer = (g_docShowDepth == 0);
     if (outer) g_mapUpdInShow = false;
 
     ++g_docShowDepth;
-    Ivk_DocMan_Show(self, edx);
+    Ivk_DocMan_Show(self, edx, documentId);
     --g_docShowDepth;
 
     if (!outer) return;
 
-    const int documentId = (int)(INT_PTR)edx;
     oCDocumentManager* dm = (oCDocumentManager*)self;
     oCViewDocument* document = dm->GetDocumentView(documentId);
 
