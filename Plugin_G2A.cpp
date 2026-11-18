@@ -61,45 +61,57 @@ void Game_Entry() {
         pointerBytes[0], pointerBytes[1], pointerBytes[2], pointerBytes[3],
         pointerBytes[4], pointerBytes[5], pointerBytes[6], pointerBytes[7]);
 }
-void Game_Init() {}
-void Game_Exit() {}
+// Log the first call and then one sample every 300 calls. This keeps the
+// log compact while revealing which Union application callbacks actually run.
+void MapDiagPulse(const char* name, unsigned long& count) {
+    ++count;
+    if (count == 1 || count % 300 == 0)
+        MapDiagLog("[callback] %s count=%lu", name, count);
+}
 
-void Game_PreLoop() {}
+void Game_Init() { MapDiagLog("[callback] Game_Init"); }
+void Game_Exit() { MapDiagLog("[callback] Game_Exit"); }
+
+void Game_PreLoop() {
+    static unsigned long count = 0;
+    MapDiagPulse("Game_PreLoop", count);
+}
 void Game_Loop() {
-    static unsigned long loopCount = 0;
-    if (++loopCount % 120 == 0)
-        MapDiagLog("[diag] Game_Loop count=%lu", loopCount);
+    static unsigned long count = 0;
+    MapDiagPulse("Game_Loop", count);
 }
-void Game_PostLoop() {}
+void Game_PostLoop() {
+    static unsigned long count = 0;
+    MapDiagPulse("Game_PostLoop", count);
+}
 void Game_MenuLoop() {
-    static unsigned long menuLoopCount = 0;
-    if (++menuLoopCount % 120 == 0)
-        MapDiagLog("[diag] Game_MenuLoop count=%lu", menuLoopCount);
+    static unsigned long count = 0;
+    MapDiagPulse("Game_MenuLoop", count);
 }
 
-void Game_SaveBegin() {}
-void Game_SaveEnd() {}
+void Game_SaveBegin() { MapDiagLog("[callback] Game_SaveBegin"); }
+void Game_SaveEnd() { MapDiagLog("[callback] Game_SaveEnd"); }
 
-void LoadBegin() {}
-void LoadEnd() {}
+void LoadBegin() { MapDiagLog("[callback] LoadBegin"); }
+void LoadEnd() { MapDiagLog("[callback] LoadEnd"); }
 
-void Game_LoadBegin_NewGame() { LoadBegin(); }
-void Game_LoadEnd_NewGame() { LoadEnd(); }
+void Game_LoadBegin_NewGame() { MapDiagLog("[callback] Game_LoadBegin_NewGame"); LoadBegin(); }
+void Game_LoadEnd_NewGame() { MapDiagLog("[callback] Game_LoadEnd_NewGame"); LoadEnd(); }
 
-void Game_LoadBegin_SaveGame() { LoadBegin(); }
-void Game_LoadEnd_SaveGame() { LoadEnd(); }
+void Game_LoadBegin_SaveGame() { MapDiagLog("[callback] Game_LoadBegin_SaveGame"); LoadBegin(); }
+void Game_LoadEnd_SaveGame() { MapDiagLog("[callback] Game_LoadEnd_SaveGame"); LoadEnd(); }
 
-void Game_LoadBegin_ChangeLevel() { LoadBegin(); }
-void Game_LoadEnd_ChangeLevel() { LoadEnd(); }
+void Game_LoadBegin_ChangeLevel() { MapDiagLog("[callback] Game_LoadBegin_ChangeLevel"); LoadBegin(); }
+void Game_LoadEnd_ChangeLevel() { MapDiagLog("[callback] Game_LoadEnd_ChangeLevel"); LoadEnd(); }
 
-void Game_LoadBegin_Trigger() {}
-void Game_LoadEnd_Trigger() {}
+void Game_LoadBegin_Trigger() { MapDiagLog("[callback] Game_LoadBegin_Trigger"); }
+void Game_LoadEnd_Trigger() { MapDiagLog("[callback] Game_LoadEnd_Trigger"); }
 
-void Game_Pause() {}
-void Game_Unpause() {}
+void Game_Pause() { MapDiagLog("[callback] Game_Pause"); }
+void Game_Unpause() { MapDiagLog("[callback] Game_Unpause"); }
 
-void Game_DefineExternals() {}
-void Game_ApplyOptions() {}
+void Game_DefineExternals() { MapDiagLog("[callback] Game_DefineExternals"); }
+void Game_ApplyOptions() { MapDiagLog("[callback] Game_ApplyOptions"); }
 
 #define AppDefault True
 CApplication* lpApplication = !CHECK_THIS_ENGINE ? Null : CApplication::CreateRefApplication(
