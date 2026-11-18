@@ -57,9 +57,17 @@ void Game_Init() {}
 void Game_Exit() {}
 
 void Game_PreLoop() {}
-void Game_Loop() {}
+void Game_Loop() {
+    static unsigned long loopCount = 0;
+    if (++loopCount % 120 == 0)
+        MapDiagLog("[diag] Game_Loop count=%lu", loopCount);
+}
 void Game_PostLoop() {}
-void Game_MenuLoop() {}
+void Game_MenuLoop() {
+    static unsigned long menuLoopCount = 0;
+    if (++menuLoopCount % 120 == 0)
+        MapDiagLog("[diag] Game_MenuLoop count=%lu", menuLoopCount);
+}
 
 void Game_SaveBegin() {}
 void Game_SaveEnd() {}
