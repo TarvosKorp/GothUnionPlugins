@@ -184,7 +184,7 @@ static void MapDiagPrepareSmoothArrow() {
     g_arrowPreparedMap = g_mapView;
     int w = g_mapView->ViewArrow.VirtualSize.X;
     int h = g_mapView->ViewArrow.VirtualSize.Y;
-    MapDiagLog("[arrow] native arrow hidden map=%p view=%p size=%dx%d",
+    MapDiagLog("[arrow] native arrow alpha disabled map=%p view=%p size=%dx%d",
         g_mapView, &g_mapView->ViewArrow, w, h);
 }
 
@@ -240,15 +240,22 @@ static void MapDiagDrawSmoothArrow() {
     }
 }
 
-// zCView::Render() — G2A 0x007AC210. Draw after the root screen's normal
-// contents so the replacement pointer stays above the original map arrow.
-void __fastcall Hook_Screen_Render(void* self, void* edx);
-CInvoke<void(__fastcall*)(void*, void*)> Ivk_Screen_Render(
-    0x007AC210, &Hook_Screen_Render, IvkEnabled(Engine_G2A));
+// zCViewPrint::Blit() — G2A 0x006934A0.
+// ViewArrow inherits this exact Blit implementation. Draw the replacement
+// immediately after its own native page has been blitted, not after root screen.
+void __fastcall Hook_ViewArrow_Blit(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
+    0x006934A0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2A));
 
-void __fastcall Hook_Screen_Render(void* self, void* edx) {
-    Ivk_Screen_Render(self, edx);
-    if (self == Gothic_II_Addon::screen && g_docOpen && g_mapView)
+void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
+    bool isArrow = g_docOpen && g_mapView &&
+        self == (void*)&g_mapView->ViewArrow;
+    if (isArrow)
+        ((oCViewDocument*)self)->SetTextureAlpha(0);
+
+    Ivk_ViewArrow_Blit(self, edx);
+
+    if (isArrow)
         MapDiagDrawSmoothArrow();
 }
 
