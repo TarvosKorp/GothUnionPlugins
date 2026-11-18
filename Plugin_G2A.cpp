@@ -95,7 +95,8 @@ void MapDiagCwd(const char* stage) {
 }
 
 // ---------------------------------------------------------------- shared state
-static volatile bool g_docOpen = false;          // set by DocumentManager::HandleEvent, cleared on Esc / load
+static volatile bool g_docOpen = false;          // synchronized from the live document list
+static oCViewDocumentMap* g_mapView = NULL;
 static unsigned long g_cLoop = 0, g_cPre = 0, g_cPost = 0, g_cMenu = 0;
 static unsigned long g_cGetState = 0, g_cGetStateNZ = 0, g_cGetMouse = 0, g_cGetMouseNZ = 0, g_cToggled = 0;
 static DWORD g_lastStats = 0, g_lastHero = 0;
@@ -263,7 +264,11 @@ void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y
 // Primary vtable pointers of oCViewDocumentMap (from the SDK vftable tables). A plain
 // oCViewDocument has different ones, so this tells a map from a book/note.
 static bool MapDiagIsMapVptr(unsigned int vptr) {
-    return vptr == 0x0083BA9C || vptr == 0x0083BAA4;
+    // The ListDocuments pointer addresses the zCObject subobject's primary vtable.
+    // G2A tables: oCViewDocumentMap_for_zCObject=0x0083BACC,
+    //             oCViewDocumentMap (zCInputCallback)=0x0083BA9C,
+    //             oCViewDocumentMap_for_zCViewBase=0x0083BAA4.
+    return vptr == 0x0083BACC || vptr == 0x0083BA9C || vptr == 0x0083BAA4;
 }
 
 static oCViewDocumentMap* MapDiagFindMapView(bool logIt) {
@@ -281,6 +286,35 @@ static oCViewDocumentMap* MapDiagFindMapView(bool logIt) {
     }
     if (logIt) MapDiagLog("[docs] mapView=%p", found);
     return found;
+}
+
+// Refresh from the actual document list, not from the first key event. This
+// also lets mouse turning and movement unlock activate immediately on map open.
+static void MapDiagRefreshMapState() {
+    static DWORD lastCheck = 0;
+    DWORD now = GetTickCount();
+    if (now - lastCheck < 50) return;
+    lastCheck = now;
+
+    oCViewDocumentMap* current = MapDiagFindMapView(false);
+    if (current == g_mapView) return;
+
+    bool wasOpen = g_docOpen;
+    g_mapView = current;
+    g_docOpen = (current != NULL);
+    g_frameDx = 0.0f;
+
+    if (g_docOpen) {
+        g_lastStats = 0;
+        MapDiagLog("[doc] OPEN detected from ListDocuments mapView=%p", current);
+        MapDiagFindMapView(true);
+        MapDiagHeroProbe("map-open");
+        MapDiagDumpCallers("world", 0);
+    } else if (wasOpen) {
+        MapDiagLog("[doc] CLOSE detected from ListDocuments");
+        MapDiagHeroProbe("map-close");
+        MapDiagDumpCallers("map-open", 1);
+    }
 }
 
 // ---------------------------------------------------------------- DocumentManager::HandleEvent
@@ -301,24 +335,10 @@ CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_DocMan_HandleEvent(
     0x0065F450, &Hook_DocMan_HandleEvent, IvkEnabled(Engine_G2A));
 
 int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
-    if (!g_docOpen && ((unsigned int)event & 0xFF) != 0x01) {
-        g_docOpen = true;
-        g_lastStats = 0;
-        MapDiagLog("[doc] OPEN (first HandleEvent event=0x%08X)", (unsigned)event);
-        MapDiagHeroProbe("doc-open");
-        MapDiagDumpCallers("world", 0);
-        g_frameDx = 0.0f;
-        MapDiagFindMapView(true);
-    }
-
     int originalResult = Ivk_DocMan_HandleEvent(self, edx, event);
 
-    if (((unsigned int)event & 0xFF) == 0x01) {          // Esc closes the document
-        MapDiagLog("[doc] ESC original=%d", originalResult);
-        MapDiagHeroProbe("doc-esc");
-        MapDiagDumpCallers("doc-open", 1);
-        g_docOpen = false;
-        g_frameDx = 0.0f;
+    if (((unsigned int)event & 0xFF) == 0x01) {
+        MapDiagLog("[doc] ESC event original=%d", originalResult);
     }
 
     static DWORD lastLog[256] = { 0 };
@@ -360,7 +380,7 @@ static void MapDiagMarker() {
     DWORD now = GetTickCount();
     if (now - last < MAPDIAG_MARKER_MS) return;
     last = now;
-    oCViewDocumentMap* map = MapDiagFindMapView(false);
+    oCViewDocumentMap* map = g_mapView;
     if (!map) {
         if (!warned) { warned = true; MapDiagLog("[marker] no map view in ListDocuments (open document is not a map, or type check failed)"); }
         return;
@@ -466,7 +486,7 @@ void Game_Entry() {
 
 void Game_Init() { MapDiagLog("[callback] Game_Init"); MapDiagRuntimeProbe("Game_Init"); }
 void Game_Exit() { MapDiagLog("[callback] Game_Exit"); }
-void Game_PreLoop() { ++g_cPre; MapDiagUnlock(); MapDiagMouseTurn(); MapDiagMarker(); MapDiagTick(); }
+void Game_PreLoop() { ++g_cPre; MapDiagRefreshMapState(); MapDiagUnlock(); MapDiagMouseTurn(); MapDiagMarker(); MapDiagTick(); }
 void Game_Loop() {
     ++g_cLoop;
     MapDiagUnlock();
