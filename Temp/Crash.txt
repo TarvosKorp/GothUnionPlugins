@@ -1,7 +1,0 @@
-======================================= UNHANDLED EXCEPTION OCCURED ======================================================
-======================================= CRASH INFOS: =====================================================================
-Startup Options:
-=============================================== CALLSTACK : ==============================================================
-0023:004D1A36 (0x0135FA60 0x00000003 0x0135FA4C 0x0135FA94) Gothic2.exe, zCArraySort<zSKeyMapping *>::Search()+6 byte(s), ..\\ZenGin\_dieter\zContainer.h, line 965
-0023:004CC11D (0x0082E6F0 0x000000B0 0x090895E1 0x00000005) Gothic2.exe, zCInput::BindOption()+253 byte(s), P:\dev\g2addon\release\ZenGin\_carsten\zInput.cpp, line 102+47 byte(s)
-0023:71E6252A (0x00000000 0x00000000 0x00000000 0x00000000) UNION_NATURALSPRINT_V59_BETA10.DLL
