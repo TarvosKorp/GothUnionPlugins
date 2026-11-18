@@ -138,3 +138,60 @@ SDK G2A
 - Коммит feature b106e52d285c1bfd5c78b6a6545b925c772c3bc6: только Plugin_G2A.cpp. В Hook_DocMan_HandleEvent после вызова оригинала результат принудительно меняется на 0 (zInputKeyNext) для WASD/QE scan codes и стрелок, чтобы событие продолжило путь к следующим input callbacks. Escape и остальные события сохраняют оригинальный результат. Это первый функциональный эксперимент; он ограничен перехватом HandleEvent и легко откатывается.
 - Следующий тест: собрать актуальную feature-ветку. Открыть карту и проверить, двигается ли персонаж клавишами W/A/S/D/Q/E (или стрелками, если они используются), не закрывая карту. Отдельно пошевелить мышью и проверить, изменяется ли направление/поворот. Затем закрыть карту Escape. Прислать компактный zMapUnlocker.log. Не требуется вручную включать дополнительное логирование.
 - В новом логе особенно важны строки HandleEvent с original=1 forwarded=0 для movement keys, и изменения GetState/GetMousePos. Если клавиши заработают, причина блокировки была в остановке распространения событий DocumentManager. Если нет — следующий этап: проследить input callback list/обработчик управления персонажем; не расширять список пропускаемых клавиш наугад.
+
+
+========================================================================
+2026-11-19 — Claude iterations 3–5 reviewed; compile fix on feature branch
+========================================================================
+
+New user-provided artifacts reviewed:
+- Temp/zMapUnlocker.log      — test of the earlier HandleEvent forwarding experiment
+- Temp/zMapUnlocker2.log     — Claude iteration 3 (FORCE_MOVE=1)
+- Temp/zMapUnlocker3.log     — Claude iteration 4 (UNLOCK=1)
+- Temp/Claude Comment.txt   — user's test feedback and Claude's final explanation
+- Temp/Claude_Plugin_G2A.cpp — Claude iteration 5 source, copied into feature branch
+
+Findings:
+1. Forwarding movement scan codes from DocumentManager::HandleEvent (returning
+   zInputKeyNext/0) did not by itself restore logical movement input. In log 1,
+   HandleEvent reports original=1/forwarded=0, but the movement-state path
+   remains inactive while the map is open.
+2. Iteration 3 tried synthesizing movement through GetAsyncKeyState. The log
+   still shows zero logical movement state while the document is open; it did
+   not establish a working solution.
+3. Iteration 4 found the effective control lock: oCNpc::movlock. The plugin
+   clears it with SetMovLock(0) while the document is open. Log 3 confirms
+   movlock changes from -1 to 0, GetState returns nonzero movement actions,
+   and bodyState changes to walking/strafe states. User confirms movement and
+   keyboard turning work with the map open.
+4. Mouse input is still not fully resolved. Log 3 contains a small number of
+   nonzero GetMousePos samples near the end, but that is not sufficient to
+   establish a working mouse-turn implementation.
+5. The GPS marker remains unverified. Iteration 5 attempts to locate
+   oCViewDocumentMap in oCDocumentManager::ListDocuments and call
+   UpdatePosition() at 10 Hz, but that build did not compile, so there are no
+   runtime results for the marker or custom mouse-turn path.
+
+Iteration 5 compile failure:
+- MSVC C2039 at Plugin_G2A.cpp:274: 'ondesk' is not a member of
+  Gothic_II_Addon::oCViewDocument.
+- The invalid diagnostic access was removed. The [docs] log now records only
+  view pointer, vtable pointer, and isMap flag.
+- Feature commit: f90a99fb33346765e7358094b062517e14ec54f8
+- This commit also applies a shared 200 ms limiter to high-frequency input
+  diagnostics, keeping those records to approximately 5 per second instead
+  of independent per-key/per-event rates.
+- The feature branch remains feature/zMapUnlocker-map-live-marker.
+- No changes were made to main's plugin source or workflow files.
+
+Next test:
+- Build the current feature branch.
+- If it compiles, open the in-game map, tap one key once to set the plugin's
+  document-open state, walk and turn with the keyboard, then move the mouse
+  horizontally for several seconds.
+- Observe whether the GPS marker follows position and heading.
+- Send the resulting System/zMapUnlocker.log.
+- Pay particular attention to [docs] isMap/mapView, [marker] UpdatePosition,
+  [mouse] turn, and [callers] entries.
+- Continue to keep high-frequency diagnostics globally limited to about
+  five records per second.
