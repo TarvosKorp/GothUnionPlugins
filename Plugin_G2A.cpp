@@ -35,6 +35,42 @@ void __fastcall Hook_DocMan_Show(void* self, void* edx) {
     Ivk_DocMan_Show(self, edx);
     MapDiagLog("[hook] DocumentManager::Show RETURN self=%p documentId=%d", self, id);
 }
+
+// oCDocumentManager methods from Gothic II Addon SDK.
+int __fastcall Hook_DocMan_CreateMap(void* self, void* edx);
+CInvoke<int(__fastcall*)(void*, void*)> Ivk_DocMan_CreateMap(
+    0x0065EEF0, &Hook_DocMan_CreateMap, IvkEnabled(Engine_G2A));
+
+int __fastcall Hook_DocMan_CreateMap(void* self, void* edx) {
+    MapDiagLog("[hook] DocumentManager::CreateMap ENTER self=%p", self);
+    int result = Ivk_DocMan_CreateMap(self, edx);
+    MapDiagLog("[hook] DocumentManager::CreateMap RETURN self=%p result=%d", self, result);
+    return result;
+}
+
+void __fastcall Hook_DocMan_UpdateMap(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_DocMan_UpdateMap(
+    0x0065F400, &Hook_DocMan_UpdateMap, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_DocMan_UpdateMap(void* self, void* edx) {
+    MapDiagLog("[hook] DocumentManager::UpdateMap ENTER self=%p documentId=%d",
+        self, (int)(INT_PTR)edx);
+    Ivk_DocMan_UpdateMap(self, edx);
+    MapDiagLog("[hook] DocumentManager::UpdateMap RETURN self=%p documentId=%d",
+        self, (int)(INT_PTR)edx);
+}
+
+int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event);
+CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_DocMan_HandleEvent(
+    0x0065F450, &Hook_DocMan_HandleEvent, IvkEnabled(Engine_G2A));
+
+int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
+    MapDiagLog("[hook] DocumentManager::HandleEvent ENTER self=%p event=%d", self, event);
+    int result = Ivk_DocMan_HandleEvent(self, edx, event);
+    MapDiagLog("[hook] DocumentManager::HandleEvent RETURN self=%p event=%d result=%d",
+        self, event, result);
+    return result;
+}
 // oCViewDocumentMap::UpdatePosition() — G2A: 0x0068D7B0.
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
