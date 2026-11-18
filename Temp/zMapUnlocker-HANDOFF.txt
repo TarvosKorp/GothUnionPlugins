@@ -195,3 +195,58 @@ Next test:
   [mouse] turn, and [callers] entries.
 - Continue to keep high-frequency diagnostics globally limited to about
   five records per second.
+
+
+========================================================================
+2026-11-19 — map lookup corrected; document state no longer key-gated
+========================================================================
+
+User test of iteration 5:
+- Walking and keyboard turning work while the map is open.
+- Horizontal mouse turning works after the user presses any key once; before
+  that first key event, horizontal mouse turning remains inactive.
+- GPS marker still appears static while the hero moves.
+
+Analysis of the latest System/zMapUnlocker.log:
+- On map open, ListDocuments contained one view at 0x32A405F8.
+- Its actual vptr was 0x0083BACC.
+- The plugin's previous MapDiagIsMapVptr checked only 0x0083BA9C and
+  0x0083BAA4, so it rejected the actual map view.
+- Consequently MapDiagFindMapView returned NULL, MapDiagMarker never called
+  UpdatePosition(), and the marker could not update.
+- The same design set g_docOpen only on the first DocumentManager::HandleEvent.
+  This explains why mouse turning did not activate until a key was pressed.
+
+SDK confirmation:
+- VFTable_G2A.h defines:
+  * vftable_oCViewDocumentMap_for_zCObject at 0x0083BACC
+  * vftable_oCViewDocumentMap (zCInputCallback) at 0x0083BA9C
+  * vftable_oCViewDocumentMap_for_zCViewBase at 0x0083BAA4
+- The logged ListDocuments pointer exposes the 0x0083BACC table.
+- oCViewDocumentMap::UpdatePosition is G2A 0x0068D7B0.
+
+Feature commit:
+- 8300770dce67eb379f74610bb3ef5b4b1bbdc8fe
+- Corrected map vtable recognition to include the actual 0x0083BACC table.
+- Added MapDiagRefreshMapState(), which checks ListDocuments every 50 ms,
+  caches the map pointer, and synchronizes g_docOpen from actual map presence.
+- Mouse turning and movement unlock now activate as soon as the map exists,
+  without requiring a preliminary keypress.
+- Marker updater now uses the cached, verified map pointer.
+- No changes outside Plugin_G2A.cpp on the feature branch.
+
+The user's Bip01 observation remains relevant for a later stage, but the
+current log proves the marker update routine was never reached at all because
+the map view type check was wrong. First verify that UpdatePosition is now
+actually called. If the marker remains static after that, instrument and
+compare the hero's zCVob transform with model-node transforms (especially
+BIP01) before choosing an alternate coordinate source.
+
+Next test:
+- Build current feature branch.
+- Open the map and move immediately, without pressing any key first.
+- Verify horizontal mouse turning works immediately.
+- Walk and turn; observe the GPS marker.
+- Send System/zMapUnlocker.log.
+- Look for [doc] OPEN detected from ListDocuments, [docs] isMap=1,
+  [marker] UpdatePosition, and [doc] CLOSE.
