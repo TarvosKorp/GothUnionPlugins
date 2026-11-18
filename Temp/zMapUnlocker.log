@@ -3,29 +3,33 @@
 [diag] UpdatePosition state isHooked=1 isExist=1
 [diag] target bytes=E9 EB 3A 70 71 CC 6A FF
 [diag] pointer bytes=64 A1 00 00 00 00 E9 CB
-[diag] application=0936F1E0 eventTable=0945A318 inspectedEventCount=21
+[diag] DocumentManager::Show hookInfo original=0065F300 pointer=36590798 detour=71D91260 protected=0
+[diag] DocumentManager::Show state isHooked=1 isExist=1
+[diag] Show target bytes=E9 5B 1F 73 71 CC CC 8B
+[diag] Show pointer bytes=53 56 8B F1 8B 46 04 E9
+[diag] application=09373AB8 eventTable=0940D218 inspectedEventCount=21
 [diag] applicationList count=45 containsCurrent=1
-[diag] expected callbacks: entry=71D912E0 init=71D91500 exit=71D91510 preloop=71D91520 loop=71D91560 postloop=71D915A0 menuloop=71D915E0
-[diag] expected callbacks: saveBegin=71D91620 saveEnd=71D91630 loadNewBegin=71D91640 loadNewEnd=71D91660 loadSaveBegin=71D91680 loadSaveEnd=71D916A0
-[diag] expected callbacks: loadLevelBegin=71D916C0 loadLevelEnd=71D916E0 loadTriggerBegin=71D91700 loadTriggerEnd=71D91710 pause=71D91720 unpause=71D91730 defineExternals=71D91740 applyOptions=71D91750
+[diag] expected callbacks: entry=71D912E0 init=71D915B0 exit=71D915C0 preloop=71D915D0 loop=71D91610 postloop=71D91650 menuloop=71D91690
+[diag] expected callbacks: saveBegin=71D916D0 saveEnd=71D916E0 loadNewBegin=71D916F0 loadNewEnd=71D91710 loadSaveBegin=71D91730 loadSaveEnd=71D91750
+[diag] expected callbacks: loadLevelBegin=71D91770 loadLevelEnd=71D91790 loadTriggerBegin=71D917B0 loadTriggerEnd=71D917C0 pause=71D917D0 unpause=71D917E0 defineExternals=71D917F0 applyOptions=71D91800
 [diag] event[00] GAME_ENTRY=71D912E0
-[diag] event[01] GAME_INIT=71D91500
-[diag] event[02] GAME_EXIT=71D91510
-[diag] event[03] GAME_LOOP=71D91560
-[diag] event[04] GAME_SAVE_BEGIN=71D91620
-[diag] event[05] GAME_SAVE_END=71D91630
-[diag] event[06] GAME_LOAD_BEGIN_NEWGAME=71D91640
-[diag] event[07] GAME_LOAD_END_NEWGAME=71D91660
-[diag] event[08] GAME_LOAD_BEGIN_SAVEGAME=71D91680
-[diag] event[09] GAME_LOAD_END_SAVEGAME=71D916A0
-[diag] event[10] GAME_LOAD_BEGIN_CHANGELEVEL=71D916C0
-[diag] event[11] GAME_LOAD_END_CHANGELEVEL=71D916E0
-[diag] event[12] GAME_LOAD_BEGIN_TRIGGER=71D91700
-[diag] event[13] GAME_LOAD_END_TRIGGER=71D91710
-[diag] event[14] GAME_PAUSE=71D91720
-[diag] event[15] GAME_UNPAUSE=71D91730
-[diag] event[16] GAME_DEFINE_EXTERNALS=71D91740
-[diag] event[17] GAME_PRE_LOOP=71D91520
-[diag] event[18] GAME_POST_LOOP=71D915A0
-[diag] event[19] GAME_MENU_LOOP=71D915E0
-[diag] event[20] GAME_APPLY_OPTIONS=71D91750
+[diag] event[01] GAME_INIT=71D915B0
+[diag] event[02] GAME_EXIT=71D915C0
+[diag] event[03] GAME_LOOP=71D91610
+[diag] event[04] GAME_SAVE_BEGIN=71D916D0
+[diag] event[05] GAME_SAVE_END=71D916E0
+[diag] event[06] GAME_LOAD_BEGIN_NEWGAME=71D916F0
+[diag] event[07] GAME_LOAD_END_NEWGAME=71D91710
+[diag] event[08] GAME_LOAD_BEGIN_SAVEGAME=71D91730
+[diag] event[09] GAME_LOAD_END_SAVEGAME=71D91750
+[diag] event[10] GAME_LOAD_BEGIN_CHANGELEVEL=71D91770
+[diag] event[11] GAME_LOAD_END_CHANGELEVEL=71D91790
+[diag] event[12] GAME_LOAD_BEGIN_TRIGGER=71D917B0
+[diag] event[13] GAME_LOAD_END_TRIGGER=71D917C0
+[diag] event[14] GAME_PAUSE=71D917D0
+[diag] event[15] GAME_UNPAUSE=71D917E0
+[diag] event[16] GAME_DEFINE_EXTERNALS=71D917F0
+[diag] event[17] GAME_PRE_LOOP=71D915D0
+[diag] event[18] GAME_POST_LOOP=71D91650
+[diag] event[19] GAME_MENU_LOOP=71D91690
+[diag] event[20] GAME_APPLY_OPTIONS=71D91800
