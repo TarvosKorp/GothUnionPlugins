@@ -21,6 +21,8 @@ static unsigned long g_diagMouseSamples = 0;
 static unsigned long g_diagKeyW = 0, g_diagKeyA = 0, g_diagKeyS = 0, g_diagKeyD = 0;
 static unsigned long g_diagKeyUp = 0, g_diagKeyLeft = 0, g_diagKeyDown = 0, g_diagKeyRight = 0;
 
+bool DocDlgOnScreen();
+
 void MapDiagLog(const char* format, ...) {
     FILE* file = fopen("zMapUnlocker.log", "a");
     if (!file) return;
