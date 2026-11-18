@@ -265,7 +265,7 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_Game_CheckObjectRoutines(
     0x006CABB0, &Hook_Game_CheckObjectRoutines, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx) {
-    if (self == Gothic_II_Addon::game)
+    if (self == Gothic_II_Addon::ogame)
         MapDiagDrawSmoothArrow();
     Ivk_Game_CheckObjectRoutines(self, edx);
 }
