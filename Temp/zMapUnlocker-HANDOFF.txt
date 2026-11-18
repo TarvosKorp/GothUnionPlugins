@@ -331,3 +331,32 @@ Next test:
 - Feature commit with correction: 0f09be8aebb0784d0fa5984d5c85bfa9d2a19493.
 - No other source files or workflow files changed. The correction is source-verified but awaits a fresh G2A Actions build.
 - Next step: run the existing Build zMapUnlocker G2A plugin workflow on feature/zMapUnlocker-map-live-marker. If successful, continue the persistent-arrow in-game test. If it fails, inspect the new compiler log before making further changes.
+
+## 2026-11-19 — renderer-stage diagnosis and immediate-quad replacement
+
+User test after commit 0f09be8a:
+- The yellow pointer is still invisible.
+- The new log confirms Game::CheckObjectRoutines is installed and the hook is actually executing: [arrow] smooth draw #1, #2 and #3 appear during map opening.
+- Native arrow texture alpha is disabled successfully.
+- Player heading changes continuously during mouse turning; MapDiagDrawSmoothArrow receives changing GetAtVectorWorld values.
+- Therefore map detection, heading acquisition, and hook reachability are no longer suspects. The failed part is the drawing primitive: zCViewObject::Line() is a view/line-pass operation, not a reliable immediate overlay at CheckObjectRoutines time.
+
+Reference implementation inspected:
+- Gothic II Coop's CoopPartnerMarker.cpp draws overlays at the same CheckObjectRoutines stage using zrenderer->DrawPolySimple, not zCView::Line.
+- It disables Z writes, sets Z compare ALWAYS, alpha BLEND, bilinear filtering, full-screen viewport, draws a textured quad, then restores prior render state.
+- G2A SDK confirms zTRndSimpleVertex layout (pos, z, uv, color), zCRenderer methods, and zCViewDraw::Texture field at offset 0x60.
+- The map arrow's already-loaded Texture is reused. Its current page is one of the stock eight direction textures; the replacement quad rotates by the residual angle between the quantized page and the exact heading to recover smooth orientation without adding an external asset.
+
+Feature commit:
+- 8eabac533c648687237832012de0f36775083e16.
+- Only Plugin_G2A.cpp changed.
+- MapDiagDrawSmoothArrow now submits a textured quad via zrenderer->DrawPolySimple at CheckObjectRoutines, using ViewArrow.Texture, PixelPosition and PixelSize; renderer state is saved/restored.
+- Diagnostics log the arrow rectangle, texture pointer, screen dimensions and residual rotation for the first three draws and every 300th draw.
+- This patch is not yet compiled or tested.
+
+Next test:
+1. Build the current feature branch.
+2. Open the map and check whether the yellow arrow is now continuously visible.
+3. Rotate the character with the mouse through several directions; check that the arrow follows smoothly.
+4. Close and reopen the map once.
+5. Send the updated System/zMapUnlocker.log. If still invisible, the new [arrow] renderer draw diagnostics will tell whether a valid texture, pixel rectangle and screen dimensions were available.
