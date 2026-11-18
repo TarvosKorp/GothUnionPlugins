@@ -411,3 +411,30 @@ Next test:
 2. Open the map and rotate the character through several directions.
 3. Check whether the replacement pointer appears and stays visible.
 4. Send the updated Temp/zMapUnlocker.log if it does not appear.
+
+
+## 2026-11-19 — cache one diagonal arrow texture for continuous rotation
+
+User confirms the corrected G2A renderer offsets made the custom arrow visible and that it follows heading and position smoothly. Remaining visual issue: the stock 8-way page selector switches between a smaller narrow arrow for cardinal headings and a larger arrow for diagonal headings, producing visible size/artwork jolts as the heading crosses page boundaries.
+
+Source diagnosis:
+- MapDiagDrawSmoothArrow still used ViewArrow.Texture and PixelSize directly on every frame.
+- MapDiagMarker calls UpdatePosition() at 10 Hz, so the engine continues selecting one of its eight page textures even though the custom quad rotates smoothly.
+- Thus the 45-degree page selection was still changing the source artwork underneath the continuous rotation.
+
+Feature commit:
+- 3e49769ff6307294cbf855a9764efe184a128210.
+- Only Plugin_G2A.cpp changed.
+- The draw routine identifies diagonal pages by the odd 45-degree page index, caches their texture, pixel dimensions, and base angle, and then reuses that same cached diagonal artwork for every heading.
+- The quad rotates by the full difference between the live heading and the cached artwork's base angle, instead of rotating only by the residual angle from the current 8-way page.
+- Until a diagonal page is first observed, the current page remains a temporary fallback.
+- Cache is cleared when the map view changes/closes, preventing a stale texture pointer from being reused after reopening.
+- Added a one-time diagnostic when a diagonal texture is cached and updated renderer diagnostics to report rotation and cache state.
+- The change is committed but has not yet been compiled or tested in-game.
+
+Next test:
+1. Build the current feature branch.
+2. Open the map and rotate the character through a full turn, including all four cardinal and four diagonal directions.
+3. Check whether the arrow consistently keeps the larger diagonal artwork and whether the size/artwork jolts disappear.
+4. Close and reopen the map, then rotate again to verify the texture cache is initialized safely each time.
+5. Send the updated Temp/zMapUnlocker.log only if the arrow disappears, changes appearance unexpectedly, or the game behaves incorrectly. The key new line is [arrow] cached diagonal artwork; renderer draw lines report cached=1 after capture.
