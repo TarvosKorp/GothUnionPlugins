@@ -24,6 +24,18 @@ void MapDiagLog(const char* format, ...) {
     fclose(file);
 }
 
+// oCDocumentManager::Show(int) — G2A: 0x0065F300.
+// The document ID is passed in EDX (fastcall), not as a stack argument.
+void __fastcall Hook_DocMan_Show(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_DocMan_Show(
+    0x0065F300, &Hook_DocMan_Show, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_DocMan_Show(void* self, void* edx) {
+    int id = (int)(INT_PTR)edx;
+    MapDiagLog("[hook] DocumentManager::Show ENTER self=%p documentId=%d edx=%p", self, id, edx);
+    Ivk_DocMan_Show(self, edx);
+    MapDiagLog("[hook] DocumentManager::Show RETURN self=%p documentId=%d", self, id);
+}
 // oCViewDocumentMap::UpdatePosition() — G2A: 0x0068D7B0.
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
