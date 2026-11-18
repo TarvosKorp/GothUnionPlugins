@@ -20,6 +20,8 @@ static float g_diagMouseDxPeak = 0.0f;
 static unsigned long g_diagMouseSamples = 0;
 static unsigned long g_diagKeyW = 0, g_diagKeyA = 0, g_diagKeyS = 0, g_diagKeyD = 0;
 static unsigned long g_diagKeyUp = 0, g_diagKeyLeft = 0, g_diagKeyDown = 0, g_diagKeyRight = 0;
+static unsigned long g_diagDocEvents = 0, g_diagDocEscape = 0, g_diagDocOther = 0;
+static int g_diagDocLastEvent = -1;
 
 bool DocDlgOnScreen();
 
@@ -51,6 +53,8 @@ void ResetMapDiagCounters() {
     g_diagMouseSamples = 0;
     g_diagKeyW = g_diagKeyA = g_diagKeyS = g_diagKeyD = 0;
     g_diagKeyUp = g_diagKeyLeft = g_diagKeyDown = g_diagKeyRight = 0;
+    g_diagDocEvents = g_diagDocEscape = g_diagDocOther = 0;
+    g_diagDocLastEvent = -1;
 }
 
 void MapDiagLoop() {
@@ -93,7 +97,8 @@ void MapDiagLoop() {
     MapDiagLog(
         "[sample] t=%lu ms devices(kbd=%d mouse=%d) callbacks(doc=%d dlg=%d map=%d) "
         "mouse_dx(sum=%.2f peak=%.2f samples=%lu) "
-        "keys(W=%lu A=%lu S=%lu D=%lu Up=%lu Left=%lu Down=%lu Right=%lu)",
+        "keys(W=%lu A=%lu S=%lu D=%lu Up=%lu Left=%lu Down=%lu Right=%lu) "
+        "docEvents(total=%lu escape=%lu other=%lu last=%d)",
         now,
         zinput->GetDeviceEnabled(zINPUT_KEYBOARD),
         zinput->GetDeviceEnabled(zINPUT_MOUSE),
@@ -102,7 +107,8 @@ void MapDiagLoop() {
         g_mapView ? g_mapView->GetEnableHandleEvent() : -1,
         g_diagMouseDxSum, g_diagMouseDxPeak, g_diagMouseSamples,
         g_diagKeyW, g_diagKeyA, g_diagKeyS, g_diagKeyD,
-        g_diagKeyUp, g_diagKeyLeft, g_diagKeyDown, g_diagKeyRight
+        g_diagKeyUp, g_diagKeyLeft, g_diagKeyDown, g_diagKeyRight,
+        g_diagDocEvents, g_diagDocEscape, g_diagDocOther, g_diagDocLastEvent
     );
 
     g_diagLastTime = now;
@@ -181,8 +187,16 @@ CInvoke<int(__fastcall*)(oCDocumentManager*, void*, int)> Ivk_DocMan_HandleEvent
     0x0065F450, &Hook_DocMan_HandleEvent, IvkEnabled(Engine_G2A));
 
 int __fastcall Hook_DocMan_HandleEvent(oCDocumentManager* self, void* edx, int key) {
-    if (g_mapDocIsMap && DocDlgOnScreen() && key != KEY_ESCAPE) {
-        return 0;
+    if (g_mapDocIsMap && DocDlgOnScreen()) {
+        ++g_diagDocEvents;
+        g_diagDocLastEvent = key;
+        if (key == KEY_ESCAPE) {
+            ++g_diagDocEscape;
+        }
+        else {
+            ++g_diagDocOther;
+            return 0;
+        }
     }
     return Ivk_DocMan_HandleEvent(self, edx, key);
 }
