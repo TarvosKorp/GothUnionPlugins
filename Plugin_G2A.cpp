@@ -60,6 +60,37 @@ void Game_Entry() {
     MapDiagLog("[diag] pointer bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
         pointerBytes[0], pointerBytes[1], pointerBytes[2], pointerBytes[3],
         pointerBytes[4], pointerBytes[5], pointerBytes[6], pointerBytes[7]);
+
+    // Inspect the event table owned by the registered Union application.
+    // This distinguishes missing callback registration from callbacks that
+    // are registered but never dispatched by the engine.
+    if (!lpApplication) {
+        MapDiagLog("[diag] application pointer is NULL");
+    }
+    else {
+        TAppFunc* events = lpApplication->lpEvents;
+        MapDiagLog("[diag] application=%p eventTable=%p eventCount=%d",
+            lpApplication, events, (int)GAME_EVENTS_MAX);
+
+        if (!events) {
+            MapDiagLog("[diag] application event table is NULL");
+        }
+        else {
+            static const char* eventNames[GAME_EVENTS_MAX] = {
+                "GAME_ENTRY", "GAME_INIT", "GAME_EXIT", "GAME_LOOP",
+                "GAME_SAVE_BEGIN", "GAME_SAVE_END",
+                "GAME_LOAD_BEGIN_NEWGAME", "GAME_LOAD_END_NEWGAME",
+                "GAME_LOAD_BEGIN_SAVEGAME", "GAME_LOAD_END_SAVEGAME",
+                "GAME_LOAD_BEGIN_CHANGELEVEL", "GAME_LOAD_END_CHANGELEVEL",
+                "GAME_LOAD_BEGIN_TRIGGER", "GAME_LOAD_END_TRIGGER",
+                "GAME_PAUSE", "GAME_UNPAUSE", "GAME_DEFINE_EXTERNALS"
+            };
+
+            for (int i = 0; i < (int)GAME_EVENTS_MAX; ++i)
+                MapDiagLog("[diag] event[%02d] %s=%p",
+                    i, eventNames[i], (void*)events[i]);
+        }
+    }
 }
 // Log the first call and then one sample every 300 calls. This keeps the
 // log compact while revealing which Union application callbacks actually run.
