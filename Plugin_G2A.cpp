@@ -150,6 +150,21 @@ void Game_Entry() {
         showPointerBytes[0], showPointerBytes[1], showPointerBytes[2], showPointerBytes[3],
         showPointerBytes[4], showPointerBytes[5], showPointerBytes[6], showPointerBytes[7]);
 
+    THookInfo& createMapHookInfo = const_cast<THookInfo&>(Ivk_DocMan_CreateMap.GetHookInfo());
+    MapDiagLog("[diag] CreateMap state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
+        (int)CCallBack::IsHooked(createMapHookInfo), (int)CCallBack::IsExist(createMapHookInfo),
+        createMapHookInfo.lpOriginal, createMapHookInfo.lpPointer, createMapHookInfo.lpDetour);
+
+    THookInfo& updateMapHookInfo = const_cast<THookInfo&>(Ivk_DocMan_UpdateMap.GetHookInfo());
+    MapDiagLog("[diag] UpdateMap state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
+        (int)CCallBack::IsHooked(updateMapHookInfo), (int)CCallBack::IsExist(updateMapHookInfo),
+        updateMapHookInfo.lpOriginal, updateMapHookInfo.lpPointer, updateMapHookInfo.lpDetour);
+
+    THookInfo& handleEventHookInfo = const_cast<THookInfo&>(Ivk_DocMan_HandleEvent.GetHookInfo());
+    MapDiagLog("[diag] HandleEvent state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
+        (int)CCallBack::IsHooked(handleEventHookInfo), (int)CCallBack::IsExist(handleEventHookInfo),
+        handleEventHookInfo.lpOriginal, handleEventHookInfo.lpPointer, handleEventHookInfo.lpDetour);
+
     // The 1.0k CreateRefApplication overload below receives 21 callbacks.
     // GAME_EVENTS_MAX belongs to the legacy 17-event enum, so it is NOT the
     // size of this application's callback table.
