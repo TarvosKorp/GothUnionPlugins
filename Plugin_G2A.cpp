@@ -175,6 +175,9 @@ static void MapDiagTick() {
 // has rendered its normal contents.
 static oCViewDocumentMap* g_arrowPreparedMap = NULL;
 static unsigned long g_smoothArrowDraws = 0;
+static DWORD g_lastArrowDrawLog = 0;
+static unsigned long g_arrowBlitCalls = 0;
+static DWORD g_lastArrowBlitLog = 0;
 
 static void MapDiagPrepareSmoothArrow() {
     if (!g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView) return;
@@ -250,7 +253,14 @@ static void MapDiagDrawSmoothArrow() {
     // DrawPolySimple submits the textured quad directly before EndFrame.
     const int sw = *(int*)((char*)renderer + 0x984);
     const int sh = *(int*)((char*)renderer + 0x988);
-    if (sw < 320 || sw > 16384 || sh < 200 || sh > 16384) return;
+    if (sw < 320 || sw > 16384 || sh < 200 || sh > 16384) {
+        static bool badScreenLogged = false;
+        if (!badScreenLogged) {
+            badScreenLogged = true;
+            MapDiagLog("[arrow] invalid renderer dimensions screen=%dx%d", sw, sh);
+        }
+        return;
+    }
 
     const int oldZWrite = renderer->GetZBufferWriteEnabled();
     const zTRnd_ZBufferCmp oldZCmp = renderer->GetZBufferCompare();
@@ -268,7 +278,9 @@ static void MapDiagDrawSmoothArrow() {
     renderer->SetZBufferWriteEnabled(oldZWrite);
 
     ++g_smoothArrowDraws;
-    if (g_smoothArrowDraws <= 3 || g_smoothArrowDraws % 300 == 0) {
+    DWORD now = GetTickCount();
+    if (g_lastArrowDrawLog == 0 || now - g_lastArrowDrawLog >= 1000) {
+        g_lastArrowDrawLog = now;
         MapDiagLog("[arrow] renderer draw #%lu at=(%.3f, %.3f) rect=%d,%d %dx%d tex=%p screen=%dx%d correction=%.3f",
             g_smoothArrowDraws, at.n[0], at.n[2], x, y, w, h, texture, sw, sh, correction);
     }
@@ -284,24 +296,25 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
     bool isArrow = g_docOpen && g_mapView &&
         self == (void*)&g_mapView->ViewArrow;
+
     if (isArrow)
         ((oCViewDocument*)self)->SetTextureAlpha(0);
 
+    // Let the engine finish the arrow view's normal Blit first, then submit
+    // our replacement immediately on top of it in the same render pass.
     Ivk_ViewArrow_Blit(self, edx);
-}
 
-// oCGame::CheckObjectRoutines() — G2A 0x006CABB0.
-// In Gothic II this is reached after zCViewDraw::Render and before EndFrame.
-// Draw here so the replacement arrow is restored on every frame, after the
-// map view has finished painting over the previous frame.
-void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx);
-CInvoke<void(__fastcall*)(void*, void*)> Ivk_Game_CheckObjectRoutines(
-    0x006CABB0, &Hook_Game_CheckObjectRoutines, IvkEnabled(Engine_G2A));
-
-void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx) {
-    if (self == Gothic_II_Addon::ogame)
+    if (isArrow) {
+        ++g_arrowBlitCalls;
         MapDiagDrawSmoothArrow();
-    Ivk_Game_CheckObjectRoutines(self, edx);
+
+        DWORD now = GetTickCount();
+        if (g_lastArrowBlitLog == 0 || now - g_lastArrowBlitLog >= 1000) {
+            g_lastArrowBlitLog = now;
+            MapDiagLog("[arrow] ViewArrow::Blit #%lu self=%p map=%p",
+                g_arrowBlitCalls, self, g_mapView);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- input hooks
@@ -619,7 +632,6 @@ void Game_Entry() {
     MapDiagHookState("Input::GetMousePos", const_cast<THookInfo&>(Ivk_Input_GetMousePos.GetHookInfo()));
     MapDiagHookState("DocumentManager::HandleEvent", const_cast<THookInfo&>(Ivk_DocMan_HandleEvent.GetHookInfo()));
     MapDiagHookState("ViewArrow::Blit", const_cast<THookInfo&>(Ivk_ViewArrow_Blit.GetHookInfo()));
-    MapDiagHookState("Game::CheckObjectRoutines", const_cast<THookInfo&>(Ivk_Game_CheckObjectRoutines.GetHookInfo()));
     MapDiagRuntimeProbe("Game_Entry");
 }
 
