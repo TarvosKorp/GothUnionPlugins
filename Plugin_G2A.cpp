@@ -41,6 +41,17 @@ void Game_Entry() {
         hookInfo.lpOriginal, hookInfo.lpPointer, hookInfo.lpDetour, hookInfo.ulProtected);
     MapDiagLog("[diag] UpdatePosition state isHooked=%d isExist=%d",
         (int)isHooked, (int)isExist);
+
+    // Inspect the target entry after Union reports the hook as installed.
+    // A patched entry should differ from the original function prologue.
+    unsigned char* originalBytes = (unsigned char*)hookInfo.lpOriginal;
+    unsigned char* pointerBytes = (unsigned char*)hookInfo.lpPointer;
+    MapDiagLog("[diag] target bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
+        originalBytes[0], originalBytes[1], originalBytes[2], originalBytes[3],
+        originalBytes[4], originalBytes[5], originalBytes[6], originalBytes[7]);
+    MapDiagLog("[diag] pointer bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
+        pointerBytes[0], pointerBytes[1], pointerBytes[2], pointerBytes[3],
+        pointerBytes[4], pointerBytes[5], pointerBytes[6], pointerBytes[7]);
 }
 void Game_Init() {}
 void Game_Exit() {}
