@@ -178,10 +178,12 @@ static unsigned long g_smoothArrowDraws = 0;
 
 static void MapDiagPrepareSmoothArrow() {
     if (!g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView) return;
-    g_mapView->ViewArrow.SetTransparency(0);
+    // ViewArrow is an oCViewDocument (zCViewDraw -> zCViewObject),
+    // not a zCView. Hide its page texture through the inherited draw API.
+    g_mapView->ViewArrow.SetTextureAlpha(0);
     g_arrowPreparedMap = g_mapView;
-    int w = 0, h = 0;
-    g_mapView->ViewArrow.GetSize(w, h);
+    int w = g_mapView->ViewArrow.VirtualSize.X;
+    int h = g_mapView->ViewArrow.VirtualSize.Y;
     MapDiagLog("[arrow] native arrow hidden map=%p view=%p size=%dx%d",
         g_mapView, &g_mapView->ViewArrow, w, h);
 }
@@ -192,8 +194,10 @@ static void MapDiagDrawSmoothArrow() {
     if (!hero) return;
 
     oCViewDocument& arrow = g_mapView->ViewArrow;
-    int w = 0, h = 0;
-    arrow.GetSize(w, h);
+    // oCViewDocument inherits VirtualSize from zCViewObject.
+    // Its Line() API uses this view's virtual coordinate space.
+    int w = arrow.VirtualSize.X;
+    int h = arrow.VirtualSize.Y;
     if (w < 8 || h < 8) return;
 
     // World +Z is north/up on the map; world +X is east/right.
