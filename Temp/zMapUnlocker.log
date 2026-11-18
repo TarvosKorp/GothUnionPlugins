@@ -1,5 +1,143 @@
-[plugin] Game_Entry
-[hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590798 detour=71D912C0
-[hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365907E0 detour=71D91350
-[hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590828 detour=71D913C0
-[runtime] Game_Entry zinput=NULL
+127686484 | [plugin] Game_Entry
+127686484 | [cwd] Game_Entry cwd='C:\Games\Gothic\Gothic 2 - Night of the Raven\System' log='C:\Games\Gothic\Gothic 2 - Night of the Raven\System\zMapUnlocker.log'
+127686484 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590798 detour=71D91390
+127686484 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365907E0 detour=71D91480
+127686484 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590828 detour=71D914F0
+127686484 | [runtime] Game_Entry zinput=NULL
+127692078 | [callback] Game_DefineExternals
+127693218 | [callback] Game_Init
+127693218 | [cwd] Game_Init cwd='C:\GAMES\GOTHIC\GOTHIC 2 - NIGHT OF THE RAVEN' log='C:\Games\Gothic\Gothic 2 - Night of the Raven\System\zMapUnlocker.log'
+127693218 | [runtime] Game_Init zinput=0958B3F0 vtable=00830B64 GetState[1]=004D4D30 GetToggled[3]=004D5020 GetMousePos[20]=004D5730 ProcessInputEvents[29]=004D5700
+127693234 | [callback] Game_MenuLoop count=1
+127695562 | [callback] Game_LoadBegin_SaveGame
+127698187 | [callback] Game_LoadEnd_SaveGame
+127698203 | [callback] Game_ApplyOptions
+127698203 | [callback] Game_PreLoop count=1
+127698203 | [cwd] first GetState cwd='C:\GAMES\GOTHIC\GOTHIC 2 - NIGHT OF THE RAVEN' log='C:\Games\Gothic\Gothic 2 - Night of the Raven\System\zMapUnlocker.log'
+127698203 | [input] GetState count=1 self=0958B3F0 key=0x0010 value=0.000
+127698203 | [input] GetState count=2 self=0958B3F0 key=0x0010 value=0.000
+127698203 | [input] GetToggled count=1 self=0958B3F0 key=0x0017 value=0
+127698203 | [input] GetState count=3 self=0958B3F0 key=0x0010 value=0.000
+127698203 | [input] GetState count=4 self=0958B3F0 key=0x0005 value=0.000
+127698203 | [input] GetState count=5 self=0958B3F0 key=0x0005 value=0.000
+127698203 | [input] GetState count=6 self=0958B3F0 key=0x000B value=0.000
+127698203 | [input] GetState count=7 self=0958B3F0 key=0x0008 value=0.000
+127698203 | [input] GetState count=8 self=0958B3F0 key=0x0006 value=0.000
+127698203 | [input] GetState count=9 self=0958B3F0 key=0x0003 value=0.000
+127698203 | [input] GetToggled count=2 self=0958B3F0 key=0x0011 value=0
+127698203 | [input] GetState count=10 self=0958B3F0 key=0x0012 value=0.000
+127698203 | [input] GetState count=11 self=0958B3F0 key=0x0013 value=0.000
+127698203 | [input] GetState count=12 self=0958B3F0 key=0x0005 value=0.000
+127698203 | [input] GetState count=13 self=0958B3F0 key=0x0012 value=0.000
+127698203 | [input] GetState count=14 self=0958B3F0 key=0x0013 value=0.000
+127698203 | [input] GetState count=15 self=0958B3F0 key=0x0005 value=0.000
+127698203 | [input] GetMousePos count=1 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127698203 | [input] GetState count=16 self=0958B3F0 key=0x0001 value=0.000
+127698203 | [input] GetState count=17 self=0958B3F0 key=0x0002 value=0.000
+127698203 | [input] GetState count=18 self=0958B3F0 key=0x0003 value=0.000
+127698203 | [input] GetState count=19 self=0958B3F0 key=0x0004 value=0.000
+127698203 | [input] GetMousePos count=2 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127698203 | [input] GetMousePos count=3 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127698203 | [callback] Game_PostLoop count=1
+127698218 | [input] GetState count=20 self=0958B3F0 key=0x0010 value=0.000
+127698218 | [input] GetState count=21 self=0958B3F0 key=0x0010 value=0.000
+127698218 | [input] GetToggled count=3 self=0958B3F0 key=0x0017 value=0
+127698218 | [input] GetState count=22 self=0958B3F0 key=0x0010 value=0.000
+127698218 | [input] GetState count=23 self=0958B3F0 key=0x0005 value=0.000
+127698218 | [input] GetState count=24 self=0958B3F0 key=0x0005 value=0.000
+127698218 | [input] GetState count=25 self=0958B3F0 key=0x000B value=0.000
+127698218 | [input] GetState count=26 self=0958B3F0 key=0x0008 value=0.000
+127698218 | [input] GetState count=27 self=0958B3F0 key=0x0006 value=0.000
+127698218 | [input] GetToggled count=4 self=0958B3F0 key=0x0011 value=0
+127698218 | [input] GetState count=28 self=0958B3F0 key=0x0012 value=0.000
+127698218 | [input] GetState count=29 self=0958B3F0 key=0x0013 value=0.000
+127698218 | [input] GetState count=30 self=0958B3F0 key=0x0005 value=0.000
+127698218 | [input] GetMousePos count=4 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127698218 | [input] GetState count=31 self=0958B3F0 key=0x0001 value=0.000
+127698218 | [input] GetState count=32 self=0958B3F0 key=0x0002 value=0.000
+127698218 | [input] GetState count=33 self=0958B3F0 key=0x0003 value=0.000
+127698218 | [input] GetState count=34 self=0958B3F0 key=0x0004 value=0.000
+127698218 | [input] GetMousePos count=5 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127698218 | [input] GetMousePos count=6 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127698218 | [input] GetState count=35 self=0958B3F0 key=0x0010 value=0.000
+127698218 | [input] GetState count=36 self=0958B3F0 key=0x0010 value=0.000
+127698218 | [input] GetToggled count=5 self=0958B3F0 key=0x0017 value=0
+127698218 | [input] GetState count=37 self=0958B3F0 key=0x0010 value=0.000
+127698218 | [input] GetState count=38 self=0958B3F0 key=0x0005 value=0.000
+127698218 | [input] GetState count=39 self=0958B3F0 key=0x0005 value=0.000
+127698218 | [input] GetState count=40 self=0958B3F0 key=0x000B value=0.000
+127698218 | [input] GetToggled count=6 self=0958B3F0 key=0x0011 value=0
+127698218 | [input] GetMousePos count=7 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127698218 | [input] GetMousePos count=8 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127698218 | [input] GetMousePos count=9 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127698218 | [input] GetToggled count=7 self=0958B3F0 key=0x0017 value=0
+127698218 | [input] GetToggled count=8 self=0958B3F0 key=0x0011 value=0
+127698218 | [input] GetMousePos count=10 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127698234 | [input] GetMousePos count=11 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127698234 | [input] GetMousePos count=12 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127698234 | [input] GetToggled count=9 self=0958B3F0 key=0x0017 value=0
+127698234 | [input] GetToggled count=10 self=0958B3F0 key=0x0011 value=0
+127698250 | [input] GetToggled count=11 self=0958B3F0 key=0x0017 value=0
+127698250 | [input] GetToggled count=12 self=0958B3F0 key=0x0011 value=0
+127698265 | [input] GetToggled count=13 self=0958B3F0 key=0x0017 value=0
+127698265 | [input] GetToggled count=14 self=0958B3F0 key=0x0011 value=0
+127698281 | [input] GetToggled count=15 self=0958B3F0 key=0x0017 value=0
+127698281 | [input] GetToggled count=16 self=0958B3F0 key=0x0011 value=0
+127698296 | [input] GetToggled count=17 self=0958B3F0 key=0x0017 value=0
+127698296 | [input] GetToggled count=18 self=0958B3F0 key=0x0011 value=0
+127698312 | [input] GetToggled count=19 self=0958B3F0 key=0x0017 value=0
+127698312 | [input] GetToggled count=20 self=0958B3F0 key=0x0011 value=0
+127698328 | [input] GetToggled count=21 self=0958B3F0 key=0x0017 value=0
+127698328 | [input] GetToggled count=22 self=0958B3F0 key=0x0011 value=0
+127698359 | [input] GetToggled count=23 self=0958B3F0 key=0x0017 value=0
+127698359 | [input] GetToggled count=24 self=0958B3F0 key=0x0011 value=0
+127698375 | [input] GetToggled count=25 self=0958B3F0 key=0x0017 value=0
+127698375 | [input] GetToggled count=26 self=0958B3F0 key=0x0011 value=0
+127698390 | [input] GetToggled count=27 self=0958B3F0 key=0x0017 value=0
+127698390 | [input] GetToggled count=28 self=0958B3F0 key=0x0011 value=0
+127698406 | [input] GetToggled count=29 self=0958B3F0 key=0x0017 value=0
+127698406 | [input] GetToggled count=30 self=0958B3F0 key=0x0011 value=0
+127698421 | [input] GetToggled count=31 self=0958B3F0 key=0x0017 value=0
+127698421 | [input] GetToggled count=32 self=0958B3F0 key=0x0011 value=0
+127698437 | [input] GetToggled count=33 self=0958B3F0 key=0x0017 value=0
+127698437 | [input] GetToggled count=34 self=0958B3F0 key=0x0011 value=0
+127698453 | [input] GetToggled count=35 self=0958B3F0 key=0x0017 value=0
+127698453 | [input] GetToggled count=36 self=0958B3F0 key=0x0011 value=0
+127698468 | [input] GetToggled count=37 self=0958B3F0 key=0x0017 value=0
+127698468 | [input] GetToggled count=38 self=0958B3F0 key=0x0011 value=0
+127698484 | [input] GetToggled count=39 self=0958B3F0 key=0x0017 value=0
+127698484 | [input] GetToggled count=40 self=0958B3F0 key=0x0011 value=0
+127698718 | [callback] Game_Loop count=1
+127698718 | [cwd] Game_Loop cwd='C:\GAMES\GOTHIC\GOTHIC 2 - NIGHT OF THE RAVEN' log='C:\Games\Gothic\Gothic 2 - Night of the Raven\System\zMapUnlocker.log'
+127698718 | [runtime] Game_Loop zinput=0958B3F0 vtable=00830B64 GetState[1]=004D4D30 GetToggled[3]=004D5020 GetMousePos[20]=004D5730 ProcessInputEvents[29]=004D5700
+127698828 | [input] GetState count=500 self=0958B3F0 key=0x0012 value=0.000
+127699375 | [input] GetState count=1000 self=0958B3F0 key=0x0005 value=0.000
+127699828 | [input] GetState count=1500 self=0958B3F0 key=0x0013 value=0.000
+127700421 | [input] GetState count=2000 self=0958B3F0 key=0x0002 value=0.000
+127701062 | [input] GetState count=2500 self=0958B3F0 key=0x0005 value=0.000
+127701703 | [input] GetMousePos count=500 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127701734 | [input] GetState count=3000 self=0958B3F0 key=0x0012 value=0.000
+127702359 | [input] GetState count=3500 self=0958B3F0 key=0x0001 value=0.000
+127702843 | [input] GetState count=4000 self=0958B3F0 key=0x0010 value=0.000
+127703296 | [input] GetState count=4500 self=0958B3F0 key=0x0005 value=0.000
+127703328 | [input] GetToggled count=500 self=0958B3F0 key=0x0011 value=0
+127703796 | [input] GetState count=5000 self=0958B3F0 key=0x0006 value=0.000
+127704375 | [input] GetState count=5500 self=0958B3F0 key=0x0005 value=0.000
+127704953 | [input] GetMousePos count=1000 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127705062 | [input] GetState count=6000 self=0958B3F0 key=0x0001 value=0.000
+127705890 | [input] GetState count=6500 self=0958B3F0 key=0x0001 value=0.000
+127706468 | [input] GetState count=7000 self=0958B3F0 key=0x000B value=0.000
+127708437 | [input] GetMousePos count=1500 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127708718 | [input] GetState count=7500 self=0958B3F0 key=0x0010 value=0.000
+127710406 | [input] GetToggled count=1000 self=0958B3F0 key=0x0017 value=0
+127710875 | [input] GetState count=8000 self=0958B3F0 key=0x0010 value=0.000
+127712703 | [input] GetMousePos count=2000 self=0958B3F0 x=0.000 y=0.000 z=0.000
+127712984 | [input] GetState count=8500 self=0958B3F0 key=0x0010 value=0.000
+127715015 | [input] GetState count=9000 self=0958B3F0 key=0x0010 value=0.000
+127715437 | [callback] Game_Pause
+127716312 | [callback] Game_PreLoop count=1000
+127716328 | [callback] Game_PostLoop count=1000
+127716765 | [callback] Game_Loop count=1000
+127717671 | [callback] Game_Unpause
+127717671 | [callback] Game_ApplyOptions
+127717687 | [callback] Game_Exit
