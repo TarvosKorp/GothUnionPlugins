@@ -191,52 +191,86 @@ static void MapDiagPrepareSmoothArrow() {
 static void MapDiagDrawSmoothArrow() {
     if (!g_docOpen || !g_mapView) return;
     oCNpc* hero = Gothic_II_Addon::player;
-    if (!hero) return;
+    zCRenderer* renderer = Gothic_II_Addon::zrenderer;
+    if (!hero || !renderer) return;
 
     oCViewDocument& arrow = g_mapView->ViewArrow;
-    // oCViewDocument inherits VirtualSize from zCViewObject.
-    // Its Line() API uses this view's virtual coordinate space.
-    int w = arrow.VirtualSize.X;
-    int h = arrow.VirtualSize.Y;
-    if (w < 8 || h < 8) return;
+    zCTexture* texture = arrow.Texture;
+    const int x = arrow.PixelPosition.X;
+    const int y = arrow.PixelPosition.Y;
+    const int w = arrow.PixelSize.X;
+    const int h = arrow.PixelSize.Y;
+    if (!texture || w < 4 || h < 4) {
+        static bool missingLogged = false;
+        if (!missingLogged) {
+            missingLogged = true;
+            MapDiagLog("[arrow] direct draw unavailable texture=%p pixel=%d,%d %dx%d virtual=%dx%d",
+                texture, x, y, w, h, arrow.VirtualSize.X, arrow.VirtualSize.Y);
+        }
+        return;
+    }
 
-    // World +Z is north/up on the map; world +X is east/right.
+    // The engine selects one of eight stock arrow textures in UpdatePosition.
+    // Reuse that already-loaded transparent arrow image, but rotate its quad only
+    // by the residual angle between the 8-way page and the exact player heading.
     zVEC3 at = hero->GetAtVectorWorld();
     float dx = at.n[0];
     float dy = -at.n[2];
-    float len = sqrtf(dx * dx + dy * dy);
+    const float len = sqrtf(dx * dx + dy * dy);
     if (len < 0.001f) return;
     dx /= len;
     dy /= len;
 
-    const float cx = (float)w * 0.5f;
-    const float cy = (float)h * 0.5f;
-    const float shaft = (float)(w < h ? w : h) * 0.39f;
-    const float halfBase = shaft * 0.43f;
-    const float back = shaft * 0.28f;
-    const float px = -dy;
-    const float py = dx;
+    const float angle = atan2f(dy, dx);
+    const float pageAngle = floorf(angle / 0.78539816339f + 0.5f) * 0.78539816339f;
+    const float correction = angle - pageAngle;
+    const float c = cosf(correction);
+    const float sn = sinf(correction);
 
-    const int tipX = (int)(cx + dx * shaft);
-    const int tipY = (int)(cy + dy * shaft);
-    const int leftX = (int)(cx - dx * back + px * halfBase);
-    const int leftY = (int)(cy - dy * back + py * halfBase);
-    const int rightX = (int)(cx - dx * back - px * halfBase);
-    const int rightY = (int)(cy - dy * back - py * halfBase);
-    const int tailX = (int)(cx - dx * shaft * 0.42f);
-    const int tailY = (int)(cy - dy * shaft * 0.42f);
+    const float cx = (float)x + (float)w * 0.5f;
+    const float cy = (float)y + (float)h * 0.5f;
+    const float halfW = (float)w * 0.46f;
+    const float halfH = (float)h * 0.46f;
+    const float lx[4] = { -halfW, halfW, halfW, -halfW };
+    const float ly[4] = { -halfH, -halfH, halfH, halfH };
+    const float tu[4] = { 0.f, 1.f, 1.f, 0.f };
+    const float tv[4] = { 0.f, 0.f, 1.f, 1.f };
+    zTRndSimpleVertex vertices[4];
+    for (int i = 0; i < 4; ++i) {
+        vertices[i].pos.n[0] = cx + c * lx[i] - sn * ly[i];
+        vertices[i].pos.n[1] = cy + sn * lx[i] + c * ly[i];
+        vertices[i].z = 1.f;
+        vertices[i].uv.n[0] = tu[i];
+        vertices[i].uv.n[1] = tv[i];
+        vertices[i].color = zCOLOR(255, 255, 255);
+    }
 
-    zCOLOR color(255, 220, 72);
-    arrow.Line(tipX, tipY, leftX, leftY, color);
-    arrow.Line(tipX, tipY, rightX, rightY, color);
-    arrow.Line(leftX, leftY, tailX, tailY, color);
-    arrow.Line(rightX, rightY, tailX, tailY, color);
-    arrow.Line(leftX, leftY, rightX, rightY, color);
+    // CheckObjectRoutines is the immediate-render stage used by the Coop
+    // marker implementation. View::Line() queues line primitives too late here;
+    // DrawPolySimple submits the textured quad directly before EndFrame.
+    const int sw = *(int*)((char*)renderer + 0x984);
+    const int sh = *(int*)((char*)renderer + 0x988);
+    if (sw < 320 || sw > 16384 || sh < 200 || sh > 16384) return;
+
+    const int oldZWrite = renderer->GetZBufferWriteEnabled();
+    const zTRnd_ZBufferCmp oldZCmp = renderer->GetZBufferCompare();
+    const zTRnd_AlphaBlendFunc oldAlpha = renderer->GetAlphaBlendFunc();
+    const int oldBilerp = renderer->GetBilerpFilterEnabled();
+    renderer->SetZBufferWriteEnabled(FALSE);
+    renderer->SetZBufferCompare(zRND_ZBUFFER_CMP_ALWAYS);
+    renderer->SetAlphaBlendFunc(zRND_ALPHA_FUNC_BLEND);
+    renderer->SetBilerpFilterEnabled(TRUE);
+    renderer->SetViewport(0, 0, sw, sh);
+    renderer->DrawPolySimple(texture, vertices, 4);
+    renderer->SetBilerpFilterEnabled(oldBilerp);
+    renderer->SetAlphaBlendFunc(oldAlpha);
+    renderer->SetZBufferCompare(oldZCmp);
+    renderer->SetZBufferWriteEnabled(oldZWrite);
 
     ++g_smoothArrowDraws;
     if (g_smoothArrowDraws <= 3 || g_smoothArrowDraws % 300 == 0) {
-        MapDiagLog("[arrow] smooth draw #%lu at=(%.3f, %.3f) view=%dx%d",
-            g_smoothArrowDraws, at.n[0], at.n[2], w, h);
+        MapDiagLog("[arrow] renderer draw #%lu at=(%.3f, %.3f) rect=%d,%d %dx%d tex=%p screen=%dx%d correction=%.3f",
+            g_smoothArrowDraws, at.n[0], at.n[2], x, y, w, h, texture, sw, sh, correction);
     }
 }
 
