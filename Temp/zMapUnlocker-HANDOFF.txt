@@ -321,3 +321,13 @@ Next test:
 - Added G2A oCGame::CheckObjectRoutines hook at SDK address 0x006CABB0. This engine stage is after zCViewDraw::Render and before EndFrame; MapDiagDrawSmoothArrow is called there so the replacement is drawn over the completed map every frame. Hook state is logged at startup.
 - This is based on the independently inspected Gothic II Coop marker implementation, which uses the same CheckObjectRoutines stage for map overlays. Still requires in-game verification.
 - Next test: build feature branch, open map, rotate through arbitrary angles, verify yellow arrow remains visible and tracks heading continuously; close/reopen map; verify MirrorWorld compatibility. Do not merge to main.
+
+## 2026-11-19 — CheckObjectRoutines compile correction
+
+- GitHub Actions run #47 for feature commit 95e2b300 failed during compilation.
+- Exact MSVC errors at Plugin_G2A.cpp:268: Gothic_II_Addon has no member named `game`; the identifier is undeclared.
+- SDK Globals_G2A.cpp confirms the G2A game-session pointer is `Gothic_II_Addon::ogame` (oCGame*&), not `game`.
+- Corrected only the self-instance comparison in Hook_Game_CheckObjectRoutines from `Gothic_II_Addon::game` to `Gothic_II_Addon::ogame`.
+- Feature commit with correction: 0f09be8aebb0784d0fa5984d5c85bfa9d2a19493.
+- No other source files or workflow files changed. The correction is source-verified but awaits a fresh G2A Actions build.
+- Next step: run the existing Build zMapUnlocker G2A plugin workflow on feature/zMapUnlocker-map-live-marker. If successful, continue the persistent-arrow in-game test. If it fails, inspect the new compiler log before making further changes.
