@@ -47,6 +47,20 @@ void __fastcall Hook_MapScreen_Show(void* self, void* edx, int showMap) {
     MapDiagLog("[hook] oCMapScreen::Show RETURN self=%p showMap=%d", self, showMap);
 }
 
+// zCRnd_D3D::Vid_Blit(int, tagRECT*, tagRECT*) — G2A: 0x00657670.
+// Renderer-side heartbeat, independent of game/input/application callbacks.
+int __fastcall Hook_Renderer_Vid_Blit(void* self, void* edx, int mode, tagRECT* src, tagRECT* dst);
+CInvoke<int(__fastcall*)(void*, void*, int, tagRECT*, tagRECT*)> Ivk_Renderer_Vid_Blit(
+    0x00657670, &Hook_Renderer_Vid_Blit, IvkEnabled(Engine_G2A));
+
+int __fastcall Hook_Renderer_Vid_Blit(void* self, void* edx, int mode, tagRECT* src, tagRECT* dst) {
+    static unsigned long count = 0;
+    ++count;
+    if (count == 1 || count % 300 == 0)
+        MapDiagLog("[hook] zCRnd_D3D::Vid_Blit count=%lu self=%p mode=%d", count, self, mode);
+    return Ivk_Renderer_Vid_Blit(self, edx, mode, src, dst);
+}
+
 // Independent per-frame probe: oCGame::Render() — G2A: 0x006C86A0.
 // This bypasses CApplication callbacks and verifies whether direct engine detours run.
 void __fastcall Hook_Game_Render(void* self, void* edx);
@@ -188,6 +202,19 @@ void Game_Entry() {
     MapDiagLog("[diag] Show pointer bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
         showPointerBytes[0], showPointerBytes[1], showPointerBytes[2], showPointerBytes[3],
         showPointerBytes[4], showPointerBytes[5], showPointerBytes[6], showPointerBytes[7]);
+
+    THookInfo& blitHookInfo = const_cast<THookInfo&>(Ivk_Renderer_Vid_Blit.GetHookInfo());
+    unsigned char* blitTarget = (unsigned char*)blitHookInfo.lpOriginal;
+    unsigned char* blitPointer = (unsigned char*)blitHookInfo.lpPointer;
+    MapDiagLog("[diag] Vid_Blit state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
+        (int)CCallBack::IsHooked(blitHookInfo), (int)CCallBack::IsExist(blitHookInfo),
+        blitHookInfo.lpOriginal, blitHookInfo.lpPointer, blitHookInfo.lpDetour);
+    MapDiagLog("[diag] Vid_Blit target bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
+        blitTarget[0], blitTarget[1], blitTarget[2], blitTarget[3],
+        blitTarget[4], blitTarget[5], blitTarget[6], blitTarget[7]);
+    MapDiagLog("[diag] Vid_Blit pointer bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
+        blitPointer[0], blitPointer[1], blitPointer[2], blitPointer[3],
+        blitPointer[4], blitPointer[5], blitPointer[6], blitPointer[7]);
 
     THookInfo& gameRenderHookInfo = const_cast<THookInfo&>(Ivk_Game_Render.GetHookInfo());
     MapDiagLog("[diag] oCGame::Render state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
