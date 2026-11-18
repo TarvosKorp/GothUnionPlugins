@@ -573,7 +573,7 @@ void Game_Entry() {
     MapDiagHookState("Input::GetToggled", const_cast<THookInfo&>(Ivk_Input_GetToggled.GetHookInfo()));
     MapDiagHookState("Input::GetMousePos", const_cast<THookInfo&>(Ivk_Input_GetMousePos.GetHookInfo()));
     MapDiagHookState("DocumentManager::HandleEvent", const_cast<THookInfo&>(Ivk_DocMan_HandleEvent.GetHookInfo()));
-    MapDiagHookState("Screen::Render", const_cast<THookInfo&>(Ivk_Screen_Render.GetHookInfo()));
+    MapDiagHookState("ViewArrow::Blit", const_cast<THookInfo&>(Ivk_ViewArrow_Blit.GetHookInfo()));
     MapDiagRuntimeProbe("Game_Entry");
 }
 
