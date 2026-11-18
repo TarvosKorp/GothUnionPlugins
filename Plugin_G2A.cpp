@@ -1,8 +1,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-// zMapUnlocker — пассивная диагностика UpdatePosition.
-// DocumentManager::Show отключён: его перехват сопровождался вылетом при открытии карты.
+// zMapUnlocker — диагностика хуков DocumentManager::Show и UpdatePosition.
 
 namespace GOTHIC_ENGINE {
 
@@ -98,6 +97,22 @@ void Game_Entry() {
     MapDiagLog("[diag] pointer bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
         pointerBytes[0], pointerBytes[1], pointerBytes[2], pointerBytes[3],
         pointerBytes[4], pointerBytes[5], pointerBytes[6], pointerBytes[7]);
+
+    THookInfo& showHookInfo = const_cast<THookInfo&>(Ivk_DocMan_Show.GetHookInfo());
+    bool32 showIsHooked = CCallBack::IsHooked(showHookInfo);
+    bool32 showIsExist = CCallBack::IsExist(showHookInfo);
+    MapDiagLog("[diag] DocumentManager::Show hookInfo original=%p pointer=%p detour=%p protected=%u",
+        showHookInfo.lpOriginal, showHookInfo.lpPointer, showHookInfo.lpDetour, showHookInfo.ulProtected);
+    MapDiagLog("[diag] DocumentManager::Show state isHooked=%d isExist=%d",
+        (int)showIsHooked, (int)showIsExist);
+    unsigned char* showOriginalBytes = (unsigned char*)showHookInfo.lpOriginal;
+    unsigned char* showPointerBytes = (unsigned char*)showHookInfo.lpPointer;
+    MapDiagLog("[diag] Show target bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
+        showOriginalBytes[0], showOriginalBytes[1], showOriginalBytes[2], showOriginalBytes[3],
+        showOriginalBytes[4], showOriginalBytes[5], showOriginalBytes[6], showOriginalBytes[7]);
+    MapDiagLog("[diag] Show pointer bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
+        showPointerBytes[0], showPointerBytes[1], showPointerBytes[2], showPointerBytes[3],
+        showPointerBytes[4], showPointerBytes[5], showPointerBytes[6], showPointerBytes[7]);
 
     // The 1.0k CreateRefApplication overload below receives 21 callbacks.
     // GAME_EVENTS_MAX belongs to the legacy 17-event enum, so it is NOT the
