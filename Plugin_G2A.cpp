@@ -64,32 +64,49 @@ void Game_Entry() {
         pointerBytes[0], pointerBytes[1], pointerBytes[2], pointerBytes[3],
         pointerBytes[4], pointerBytes[5], pointerBytes[6], pointerBytes[7]);
 
-    // Inspect the event table owned by the registered Union application.
-    // This distinguishes missing callback registration from callbacks that
-    // are registered but never dispatched by the engine.
+    // The 1.0k CreateRefApplication overload below receives 21 callbacks.
+    // GAME_EVENTS_MAX belongs to the legacy 17-event enum, so it is NOT the
+    // size of this application's callback table.
+    const int appEventCount = 21;
     if (!lpApplication) {
         MapDiagLog("[diag] application pointer is NULL");
     }
     else {
         TAppFunc* events = lpApplication->lpEvents;
-        MapDiagLog("[diag] application=%p eventTable=%p eventCount=%d",
-            lpApplication, events, (int)GAME_EVENTS_MAX);
+        MapDiagLog("[diag] application=%p eventTable=%p inspectedEventCount=%d",
+            lpApplication, events, appEventCount);
+
+        MapDiagLog("[diag] expected callbacks: entry=%p init=%p exit=%p preloop=%p loop=%p postloop=%p menuloop=%p",
+            (void*)Game_Entry, (void*)Game_Init, (void*)Game_Exit,
+            (void*)Game_PreLoop, (void*)Game_Loop, (void*)Game_PostLoop,
+            (void*)Game_MenuLoop);
+        MapDiagLog("[diag] expected callbacks: saveBegin=%p saveEnd=%p loadNewBegin=%p loadNewEnd=%p loadSaveBegin=%p loadSaveEnd=%p",
+            (void*)Game_SaveBegin, (void*)Game_SaveEnd,
+            (void*)Game_LoadBegin_NewGame, (void*)Game_LoadEnd_NewGame,
+            (void*)Game_LoadBegin_SaveGame, (void*)Game_LoadEnd_SaveGame);
+        MapDiagLog("[diag] expected callbacks: loadLevelBegin=%p loadLevelEnd=%p loadTriggerBegin=%p loadTriggerEnd=%p pause=%p unpause=%p defineExternals=%p applyOptions=%p",
+            (void*)Game_LoadBegin_ChangeLevel, (void*)Game_LoadEnd_ChangeLevel,
+            (void*)Game_LoadBegin_Trigger, (void*)Game_LoadEnd_Trigger,
+            (void*)Game_Pause, (void*)Game_Unpause,
+            (void*)Game_DefineExternals, (void*)Game_ApplyOptions);
 
         if (!events) {
             MapDiagLog("[diag] application event table is NULL");
         }
         else {
-            static const char* eventNames[GAME_EVENTS_MAX] = {
-                "GAME_ENTRY", "GAME_INIT", "GAME_EXIT", "GAME_LOOP",
+            static const char* eventNames[21] = {
+                "GAME_ENTRY", "GAME_INIT", "GAME_EXIT",
+                "GAME_PRE_LOOP", "GAME_LOOP", "GAME_POST_LOOP", "GAME_MENU_LOOP",
                 "GAME_SAVE_BEGIN", "GAME_SAVE_END",
                 "GAME_LOAD_BEGIN_NEWGAME", "GAME_LOAD_END_NEWGAME",
                 "GAME_LOAD_BEGIN_SAVEGAME", "GAME_LOAD_END_SAVEGAME",
                 "GAME_LOAD_BEGIN_CHANGELEVEL", "GAME_LOAD_END_CHANGELEVEL",
                 "GAME_LOAD_BEGIN_TRIGGER", "GAME_LOAD_END_TRIGGER",
-                "GAME_PAUSE", "GAME_UNPAUSE", "GAME_DEFINE_EXTERNALS"
+                "GAME_PAUSE", "GAME_UNPAUSE", "GAME_DEFINE_EXTERNALS",
+                "GAME_APPLY_OPTIONS"
             };
 
-            for (int i = 0; i < (int)GAME_EVENTS_MAX; ++i)
+            for (int i = 0; i < appEventCount; ++i)
                 MapDiagLog("[diag] event[%02d] %s=%p",
                     i, eventNames[i], (void*)events[i]);
         }
