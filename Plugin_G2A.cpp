@@ -180,7 +180,6 @@ static zCTexture* g_smoothArrowTexture = NULL;
 static int g_smoothArrowWidth = 0;
 static int g_smoothArrowHeight = 0;
 static float g_smoothArrowBaseAngle = 0.0f;
-static float g_smoothArrowBestArea = 0.0f;
 static float g_smoothArrowAngle = 1.57079632679f;
 static DWORD g_lastSmoothArrowAngleUpdate = 0;
 static bool g_smoothArrowTextureReady = false;
@@ -242,16 +241,18 @@ static void MapDiagDrawSmoothArrow() {
             // is unambiguous and does not introduce a 45-degree offset.
             const float pageStep = 0.78539816339f;
             const int pageIndex = (int)floorf(g_smoothArrowAngle / pageStep + 0.5f);
+            const float pageAngle = (float)pageIndex * pageStep;
             if ((pageIndex == 2 || pageIndex == -6) && !g_smoothArrowTextureReady) {
                 g_smoothArrowTexture = currentTexture;
                 g_smoothArrowWidth = currentW;
                 g_smoothArrowHeight = currentH;
                 g_smoothArrowBaseAngle = 1.57079632679f;
-                g_smoothArrowBestArea = (float)currentW * (float)currentH;
                 g_smoothArrowTextureReady = true;
                 MapDiagLog("[arrow] cached north/up artwork tex=%p size=%dx%d base=%.3f page=%d",
                     g_smoothArrowTexture, g_smoothArrowWidth, g_smoothArrowHeight,
                     g_smoothArrowBaseAngle, pageIndex);
+            } else if (!g_smoothArrowTextureReady) {
+                g_smoothArrowBaseAngle = pageAngle;
             }
         }
     }
@@ -316,9 +317,9 @@ static void MapDiagDrawSmoothArrow() {
     renderer->SetZBufferWriteEnabled(oldZWrite);
 
     ++g_smoothArrowDraws;
-    DWORD now = GetTickCount();
-    if (g_lastArrowDrawLog == 0 || now - g_lastArrowDrawLog >= 1000) {
-        g_lastArrowDrawLog = now;
+    DWORD drawNow = GetTickCount();
+    if (g_lastArrowDrawLog == 0 || drawNow - g_lastArrowDrawLog >= 1000) {
+        g_lastArrowDrawLog = drawNow;
         MapDiagLog("[arrow] renderer draw #%lu rect=%d,%d %dx%d tex=%p screen=%dx%d rotation=%.3f cachedNorth=%d",
             g_smoothArrowDraws, x, y, w, h, texture, sw, sh, rotation,
             (int)g_smoothArrowTextureReady);
@@ -504,7 +505,6 @@ static void MapDiagRefreshMapState() {
     g_smoothArrowWidth = 0;
     g_smoothArrowHeight = 0;
     g_smoothArrowBaseAngle = 1.57079632679f;
-    g_smoothArrowBestArea = 0.0f;
     g_smoothArrowAngle = 1.57079632679f;
     g_lastSmoothArrowAngleUpdate = 0;
     g_smoothArrowTextureReady = false;
