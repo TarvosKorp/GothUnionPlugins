@@ -36,17 +36,29 @@ void __fastcall Hook_DocMan_Show(void* self, void* edx) {
     MapDiagLog("[hook] DocumentManager::Show RETURN self=%p documentId=%d", self, id);
 }
 
-// oCGame::ShowDocumentMap / map-screen entry used by the working map plugin.
-// G2A: 0x0047F9C0. Keep this separate from DocumentManager::Show.
-int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a);
-CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_MapScreen_Show(
+// oCMapScreen::Show(int) — G2A: 0x0047F9C0, SDK declaration returns void.
+void __fastcall Hook_MapScreen_Show(void* self, void* edx, int showMap);
+CInvoke<void(__fastcall*)(void*, void*, int)> Ivk_MapScreen_Show(
     0x0047F9C0, &Hook_MapScreen_Show, IvkEnabled(Engine_G2A));
 
-int __fastcall Hook_MapScreen_Show(void* self, void* edx, int a) {
-    MapDiagLog("[hook] MapScreen::Show ENTER self=%p arg=%d", self, a);
-    int result = Ivk_MapScreen_Show(self, edx, a);
-    MapDiagLog("[hook] MapScreen::Show RETURN self=%p arg=%d result=%d", self, a, result);
-    return result;
+void __fastcall Hook_MapScreen_Show(void* self, void* edx, int showMap) {
+    MapDiagLog("[hook] oCMapScreen::Show ENTER self=%p showMap=%d", self, showMap);
+    Ivk_MapScreen_Show(self, edx, showMap);
+    MapDiagLog("[hook] oCMapScreen::Show RETURN self=%p showMap=%d", self, showMap);
+}
+
+// Independent per-frame probe: oCGame::Render() — G2A: 0x006C86A0.
+// This bypasses CApplication callbacks and verifies whether direct engine detours run.
+void __fastcall Hook_Game_Render(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_Game_Render(
+    0x006C86A0, &Hook_Game_Render, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_Game_Render(void* self, void* edx) {
+    static unsigned long count = 0;
+    ++count;
+    if (count == 1 || count % 300 == 0)
+        MapDiagLog("[hook] oCGame::Render count=%lu self=%p", count, self);
+    Ivk_Game_Render(self, edx);
 }
 
 // oCDocumentManager methods from Gothic II Addon SDK.
@@ -177,7 +189,17 @@ void Game_Entry() {
         showPointerBytes[0], showPointerBytes[1], showPointerBytes[2], showPointerBytes[3],
         showPointerBytes[4], showPointerBytes[5], showPointerBytes[6], showPointerBytes[7]);
 
+    THookInfo& gameRenderHookInfo = const_cast<THookInfo&>(Ivk_Game_Render.GetHookInfo());
+    MapDiagLog("[diag] oCGame::Render state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
+        (int)CCallBack::IsHooked(gameRenderHookInfo), (int)CCallBack::IsExist(gameRenderHookInfo),
+        gameRenderHookInfo.lpOriginal, gameRenderHookInfo.lpPointer, gameRenderHookInfo.lpDetour);
+
     THookInfo& mapScreenShowHookInfo = const_cast<THookInfo&>(Ivk_MapScreen_Show.GetHookInfo());
+    unsigned char* mapScreenBytes = (unsigned char*)mapScreenShowHookInfo.lpOriginal;
+    MapDiagLog("[diag] oCMapScreen::Show target bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
+        mapScreenBytes[0], mapScreenBytes[1], mapScreenBytes[2], mapScreenBytes[3],
+        mapScreenBytes[4], mapScreenBytes[5], mapScreenBytes[6], mapScreenBytes[7]);
+
     MapDiagLog("[diag] MapScreen::Show state isHooked=%d isExist=%d original=%p pointer=%p detour=%p",
         (int)CCallBack::IsHooked(mapScreenShowHookInfo), (int)CCallBack::IsExist(mapScreenShowHookInfo),
         mapScreenShowHookInfo.lpOriginal, mapScreenShowHookInfo.lpPointer, mapScreenShowHookInfo.lpDetour);
