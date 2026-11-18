@@ -1,0 +1,31 @@
+[plugin] Game_Entry
+[diag] UpdatePosition hookInfo original=0068D7B0 pointer=36590798 detour=71D911F0 protected=0
+[diag] UpdatePosition state isHooked=1 isExist=1
+[diag] target bytes=E9 3B 3A 70 71 CC 6A FF
+[diag] pointer bytes=64 A1 00 00 00 00 E9 13
+[diag] application=09217BC0 eventTable=095981A8 inspectedEventCount=21
+[diag] applicationList count=45 containsCurrent=1
+[diag] expected callbacks: entry=71D91230 init=71D91450 exit=71D91460 preloop=71D91470 loop=71D914B0 postloop=71D914F0 menuloop=71D91530
+[diag] expected callbacks: saveBegin=71D91570 saveEnd=71D91580 loadNewBegin=71D91590 loadNewEnd=71D915B0 loadSaveBegin=71D915D0 loadSaveEnd=71D915F0
+[diag] expected callbacks: loadLevelBegin=71D91610 loadLevelEnd=71D91630 loadTriggerBegin=71D91650 loadTriggerEnd=71D91660 pause=71D91670 unpause=71D91680 defineExternals=71D91690 applyOptions=71D916A0
+[diag] event[00] GAME_ENTRY=71D91230
+[diag] event[01] GAME_INIT=71D91450
+[diag] event[02] GAME_EXIT=71D91460
+[diag] event[03] GAME_LOOP=71D914B0
+[diag] event[04] GAME_SAVE_BEGIN=71D91570
+[diag] event[05] GAME_SAVE_END=71D91580
+[diag] event[06] GAME_LOAD_BEGIN_NEWGAME=71D91590
+[diag] event[07] GAME_LOAD_END_NEWGAME=71D915B0
+[diag] event[08] GAME_LOAD_BEGIN_SAVEGAME=71D915D0
+[diag] event[09] GAME_LOAD_END_SAVEGAME=71D915F0
+[diag] event[10] GAME_LOAD_BEGIN_CHANGELEVEL=71D91610
+[diag] event[11] GAME_LOAD_END_CHANGELEVEL=71D91630
+[diag] event[12] GAME_LOAD_BEGIN_TRIGGER=71D91650
+[diag] event[13] GAME_LOAD_END_TRIGGER=71D91660
+[diag] event[14] GAME_PAUSE=71D91670
+[diag] event[15] GAME_UNPAUSE=71D91680
+[diag] event[16] GAME_DEFINE_EXTERNALS=71D91690
+[diag] event[17] GAME_PRE_LOOP=71D91470
+[diag] event[18] GAME_POST_LOOP=71D914F0
+[diag] event[19] GAME_MENU_LOOP=71D91530
+[diag] event[20] GAME_APPLY_OPTIONS=71D916A0
