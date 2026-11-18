@@ -49,16 +49,16 @@ void __fastcall Hook_MapScreen_Show(void* self, void* edx, int showMap) {
 
 // zCRnd_D3D::Vid_Blit(int, tagRECT*, tagRECT*) — G2A: 0x00657670.
 // Renderer-side heartbeat, independent of game/input/application callbacks.
-int __fastcall Hook_Renderer_Vid_Blit(void* self, void* edx, int mode, tagRECT* src, tagRECT* dst);
-CInvoke<int(__fastcall*)(void*, void*, int, tagRECT*, tagRECT*)> Ivk_Renderer_Vid_Blit(
+void __fastcall Hook_Renderer_Vid_Blit(void* self, void* edx, int mode, tagRECT* src, tagRECT* dst);
+CInvoke<void(__fastcall*)(void*, void*, int, tagRECT*, tagRECT*)> Ivk_Renderer_Vid_Blit(
     0x00657670, &Hook_Renderer_Vid_Blit, IvkEnabled(Engine_G2A));
 
-int __fastcall Hook_Renderer_Vid_Blit(void* self, void* edx, int mode, tagRECT* src, tagRECT* dst) {
+void __fastcall Hook_Renderer_Vid_Blit(void* self, void* edx, int mode, tagRECT* src, tagRECT* dst) {
     static unsigned long count = 0;
     ++count;
     if (count == 1 || count % 300 == 0)
         MapDiagLog("[hook] zCRnd_D3D::Vid_Blit count=%lu self=%p mode=%d", count, self, mode);
-    return Ivk_Renderer_Vid_Blit(self, edx, mode, src, dst);
+    Ivk_Renderer_Vid_Blit(self, edx, mode, src, dst);
 }
 
 // Independent per-frame probe: oCGame::Render() — G2A: 0x006C86A0.
@@ -251,24 +251,35 @@ void Game_Entry() {
         (int)CCallBack::IsHooked(inputHookInfo), (int)CCallBack::IsExist(inputHookInfo),
         inputHookInfo.lpOriginal, inputHookInfo.lpPointer, inputHookInfo.lpDetour);
 
-    // Compare the installed hook with the function actually present in the
-    // live zinput object's virtual table (slot 24 in zCInput_Win32).
+    // Verify actual virtual dispatch targets using SDK declaration order:
+    // zCInput::ProcessInputEvents is slot 29; zCRenderer::Vid_Blit is slot 70.
     Gothic_II_Addon::zCInput* inputObject = Gothic_II_Addon::zinput;
     if (!inputObject) {
-        MapDiagLog("[diag] zinput object is NULL");
+        MapDiagLog("[diag] zinput object is NULL at Game_Entry");
     }
     else {
         void** inputVtable = *(void***)inputObject;
-        void* processInputSlot = inputVtable[24];
-        MapDiagLog("[diag] zinput=%p vtable=%p ProcessInputEvents[vtable+24]=%p",
-            inputObject, inputVtable, processInputSlot);
-
+        void* processInputSlot = inputVtable[29];
+        MapDiagLog("[diag] zinput=%p vtable=%p ProcessInputEvents[vtable+29]=%p expected=%p",
+            inputObject, inputVtable, processInputSlot, (void*)0x004D5700);
         unsigned char* slotBytes = (unsigned char*)processInputSlot;
         MapDiagLog("[diag] ProcessInputEvents vtable bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
-            slotBytes[0], slotBytes[1], slotBytes[2], slotBytes[3],
-            slotBytes[4], slotBytes[5], slotBytes[6], slotBytes[7]);
+            slotBytes[0], slotBytes[1], slotBytes[2], slotBytes[3], slotBytes[4], slotBytes[5], slotBytes[6], slotBytes[7]);
     }
 
+    Gothic_II_Addon::zCRenderer* rendererObject = Gothic_II_Addon::zrenderer;
+    if (!rendererObject) {
+        MapDiagLog("[diag] zrenderer object is NULL at Game_Entry");
+    }
+    else {
+        void** rendererVtable = *(void***)rendererObject;
+        void* vidBlitSlot = rendererVtable[70];
+        MapDiagLog("[diag] zrenderer=%p vtable=%p Vid_Blit[vtable+70]=%p expected=%p",
+            rendererObject, rendererVtable, vidBlitSlot, (void*)0x00657670);
+        unsigned char* slotBytes = (unsigned char*)vidBlitSlot;
+        MapDiagLog("[diag] Vid_Blit vtable bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
+            slotBytes[0], slotBytes[1], slotBytes[2], slotBytes[3], slotBytes[4], slotBytes[5], slotBytes[6], slotBytes[7]);
+    }
     // The 1.0k CreateRefApplication overload below receives 21 callbacks.
     // GAME_EVENTS_MAX belongs to the legacy 17-event enum, so it is NOT the
     // size of this application's callback table.
