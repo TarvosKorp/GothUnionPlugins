@@ -2,25 +2,28 @@
 #include <stdarg.h>
 #include <string.h>
 
-// zMapUnlocker — iteration 3: find WHICH layer blocks movement while a document/map is open.
+// zMapUnlocker — iteration 4: clear oCNpc::movlock while a document/map is open.
 //
-// Findings so far:
-//  * Log works (absolute path next to Gothic2.exe).
-//  * DocumentManager::HandleEvent receives DIK scancodes (W/A/S/D/Q/E/Esc). Returning 0
-//    for them (already done) changed nothing -> the HandleEvent callback chain is NOT what
-//    moves the hero. Movement is polled via zinput->GetState(GAME_*) (ids 1..4, 16..19 are
-//    queried on the very first frame).
+// Result of iteration 3 (log zMapUnlocker2.log):
+//  * While the document is open the hero has movlock=1 (bit reads as -1); after Esc it is 0.
+//    interactItem=NULL, bodyState=0, keyboard/mouse devices enabled -> NOT item-use, NOT device lock.
+//  * With movlock=1 the hero AI stops polling movement keys: GetState drops from ~17 to 4 calls
+//    per frame, and GetMousePos is read but nothing consumes it. Game_Loop keeps running (~55 fps).
+//  * Returning 0 from DocumentManager::HandleEvent was irrelevant (movement is polled).
 //
-// This build answers, in ONE run:
-//   A) Are GetState/GetMousePos/Game_Loop still polled while the doc is open? ([stats], per second)
-//   B) What is the hero's state while the doc is open? ([hero]: interactItem, states, movlock, bodystate)
-//   C) Are keyboard/mouse devices disabled? ([hero] kbd/mouse)
-//   D) EXPERIMENT: while the doc is open, physically held W/S/A/D/Q/E are injected into
-//      GetState(GAME_UP/DOWN/LEFT/RIGHT/STRAFELEFT/STRAFERIGHT). If the hero then walks,
-//      the input layer is the lever. If not, the hero state (interactItem/animation) blocks.
-//      Set MAPDIAG_FORCE_MOVE to 0 to disable the experiment.
+// This build: while a document is open (flag set by the first HandleEvent, cleared on Esc/load),
+// call player->SetMovLock(0) every frame from Game_PreLoop/Game_Loop. Diagnostics stay on, so
+// [stats] shows whether GetState polling returns to ~17/frame.
+// NOTE: the flag is set by the first key event, so press any key once after opening the map.
+// NOTE: this unlocks ALL documents (books/notes too). Map-only filtering is a later step.
+#ifndef MAPDIAG_UNLOCK
+#define MAPDIAG_UNLOCK 1
+#endif
 #ifndef MAPDIAG_FORCE_MOVE
-#define MAPDIAG_FORCE_MOVE 1
+#define MAPDIAG_FORCE_MOVE 0   // iteration-3 experiment, no longer needed
+#endif
+#ifndef MAPDIAG_PASS_KEYS
+#define MAPDIAG_PASS_KEYS 0    // do not leak WASD/QE events to other input callbacks
 #endif
 
 namespace GOTHIC_ENGINE {
@@ -239,13 +242,30 @@ int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
     static DWORD lastLog[256] = { 0 };
     unsigned int slot = (unsigned int)event & 0xFF;
     DWORD now = GetTickCount();
-    bool passMovement = MapDiagIsMovementKey(event);
+    bool passMovement = MAPDIAG_PASS_KEYS && MapDiagIsMovementKey(event);
     int result = passMovement ? 0 : originalResult;
     if (now - lastLog[slot] >= 200) {
         MapDiagLog("[map-input] HandleEvent event=0x%08X original=%d returned=%d", (unsigned)event, originalResult, result);
         lastLog[slot] = now;
     }
     return result;
+}
+
+
+// Clear the hero's movement lock while a document is open.
+static void MapDiagUnlock() {
+#if MAPDIAG_UNLOCK
+    if (!g_docOpen) return;
+    oCNpc* hero = Gothic_II_Addon::player;
+    if (!hero) return;
+    if (hero->IsMovLock()) {
+        hero->SetMovLock(0);
+        static unsigned long cleared = 0;
+        ++cleared;
+        if (cleared <= 3 || cleared % 300 == 0)
+            MapDiagLog("[unlock] SetMovLock(0) cleared=%lu now=%d", cleared, (int)hero->IsMovLock());
+    }
+#endif
 }
 
 // ---------------------------------------------------------------- hook state / runtime probes
@@ -293,7 +313,7 @@ extern CApplication* lpApplication;
 
 void Game_Entry() {
     MapDiagReset();
-    MapDiagLog("[plugin] Game_Entry (iteration 3, FORCE_MOVE=%d)", (int)MAPDIAG_FORCE_MOVE);
+    MapDiagLog("[plugin] Game_Entry (iteration 4, UNLOCK=%d)", (int)MAPDIAG_UNLOCK);
     MapDiagCwd("Game_Entry");
     MapDiagHookState("Input::GetState", const_cast<THookInfo&>(Ivk_Input_GetState.GetHookInfo()));
     MapDiagHookState("Input::GetToggled", const_cast<THookInfo&>(Ivk_Input_GetToggled.GetHookInfo()));
@@ -304,9 +324,10 @@ void Game_Entry() {
 
 void Game_Init() { MapDiagLog("[callback] Game_Init"); MapDiagRuntimeProbe("Game_Init"); }
 void Game_Exit() { MapDiagLog("[callback] Game_Exit"); }
-void Game_PreLoop() { ++g_cPre; MapDiagTick(); }
+void Game_PreLoop() { ++g_cPre; MapDiagUnlock(); MapDiagTick(); }
 void Game_Loop() {
     ++g_cLoop;
+    MapDiagUnlock();
     MapDiagTick();
 }
 void Game_PostLoop() { ++g_cPost; }
