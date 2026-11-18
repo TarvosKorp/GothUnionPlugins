@@ -15,7 +15,7 @@
 #elif ENGINE == Engine_G2A
 #include "Plugin_G2A.cpp"
 #else
-#error "zMirrorWorld: движок не выбран (ENGINE)"
+#error "zSamplePlugin: движок не выбран (ENGINE)"
 #endif
 #pragma endregion
 

@@ -28,12 +28,12 @@ jobs:
             "/p:Configuration=MP x4 MT Release" `
             /p:Platform=Win32 `
             /p:PlatformToolset=v143 `
-            "/p:TargetName=zMirrorWorld" `
+            "/p:TargetName=zSamplePlugin" `
             "/p:SolutionDir=$($PWD.Path)\"
 
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
-          name: zMirrorWorld-M4-dll
+          name: zSamplePlugin-M4-dll
           path: Bin/*.dll
           if-no-files-found: error

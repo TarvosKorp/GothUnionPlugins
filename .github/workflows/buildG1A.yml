@@ -28,12 +28,12 @@ jobs:
             "/p:Configuration=G1A MT Release" `
             /p:Platform=Win32 `
             /p:PlatformToolset=v143 `
-            "/p:TargetName=zMirrorWorldG1A" `
+            "/p:TargetName=zSamplePluginG1A" `
             "/p:SolutionDir=$($PWD.Path)\"
 
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
-          name: zMirrorWorld-G1A-dll
+          name: zSamplePlugin-G1A-dll
           path: Bin/*.dll
           if-no-files-found: error
