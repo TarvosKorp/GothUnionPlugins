@@ -1,47 +1,12 @@
 [plugin] Game_Entry
-[diag] UpdatePosition hookInfo original=0068D7B0 pointer=36590AB0 detour=71D91AF0 protected=0
-[diag] UpdatePosition state isHooked=1 isExist=1
-[diag] target bytes=E9 3B 43 70 71 CC 6A FF
-[diag] pointer bytes=64 A1 00 00 00 00 E9 FB
-[diag] DocumentManager::Show hookInfo original=0065F300 pointer=36590798 detour=71D916C0 protected=0
-[diag] DocumentManager::Show state isHooked=1 isExist=1
-[diag] Show target bytes=E9 BB 23 73 71 CC CC 8B
-[diag] Show pointer bytes=53 56 8B F1 8B 46 04 E9
-[diag] Vid_Blit state isHooked=1 isExist=1 original=00657670 pointer=36590828 detour=71D91750
-[diag] Vid_Blit target bytes=E9 DB A0 73 71 CC CC 64
-[diag] Vid_Blit pointer bytes=6A FF 68 CF 0B 81 00 E9
-[diag] oCGame::Render state isHooked=1 isExist=1 original=006C86A0 pointer=36590870 detour=71D917C0
-[diag] oCMapScreen::Show target bytes=E9 3B 1D 91 71 CC CC 64
-[diag] MapScreen::Show state isHooked=1 isExist=1 original=0047F9C0 pointer=365907E0 detour=71D91700
-[diag] CreateMap state isHooked=1 isExist=1 original=0065EEF0 pointer=365908B8 detour=71D91820
-[diag] UpdateMap state isHooked=1 isExist=1 original=0065F400 pointer=36590900 detour=71D91860
-[diag] HandleEvent state isHooked=1 isExist=1 original=0065F450 pointer=36590948 detour=71D918A0
-[diag] Input::ProcessInputEvents state isHooked=1 isExist=1 original=004D5700 pointer=36590990 detour=71D918F0
-[diag] zinput object is NULL at Game_Entry
-[diag] zrenderer object is NULL at Game_Entry
-[diag] application=0958E978 eventTable=0960CEB8 inspectedEventCount=21
-[diag] applicationList count=45 containsCurrent=1
-[diag] expected callbacks: entry=71D91B30 init=71D920B0 exit=71D920C0 preloop=71D920D0 loop=71D92110 postloop=71D92150 menuloop=71D92190
-[diag] expected callbacks: saveBegin=71D921D0 saveEnd=71D921E0 loadNewBegin=71D921F0 loadNewEnd=71D92210 loadSaveBegin=71D92230 loadSaveEnd=71D92250
-[diag] expected callbacks: loadLevelBegin=71D92270 loadLevelEnd=71D92290 loadTriggerBegin=71D922B0 loadTriggerEnd=71D922C0 pause=71D922D0 unpause=71D922E0 defineExternals=71D922F0 applyOptions=71D92300
-[diag] event[00] GAME_ENTRY=71D91B30
-[diag] event[01] GAME_INIT=71D920B0
-[diag] event[02] GAME_EXIT=71D920C0
-[diag] event[03] GAME_LOOP=71D92110
-[diag] event[04] GAME_SAVE_BEGIN=71D921D0
-[diag] event[05] GAME_SAVE_END=71D921E0
-[diag] event[06] GAME_LOAD_BEGIN_NEWGAME=71D921F0
-[diag] event[07] GAME_LOAD_END_NEWGAME=71D92210
-[diag] event[08] GAME_LOAD_BEGIN_SAVEGAME=71D92230
-[diag] event[09] GAME_LOAD_END_SAVEGAME=71D92250
-[diag] event[10] GAME_LOAD_BEGIN_CHANGELEVEL=71D92270
-[diag] event[11] GAME_LOAD_END_CHANGELEVEL=71D92290
-[diag] event[12] GAME_LOAD_BEGIN_TRIGGER=71D922B0
-[diag] event[13] GAME_LOAD_END_TRIGGER=71D922C0
-[diag] event[14] GAME_PAUSE=71D922D0
-[diag] event[15] GAME_UNPAUSE=71D922E0
-[diag] event[16] GAME_DEFINE_EXTERNALS=71D922F0
-[diag] event[17] GAME_PRE_LOOP=71D920D0
-[diag] event[18] GAME_POST_LOOP=71D92150
-[diag] event[19] GAME_MENU_LOOP=71D92190
-[diag] event[20] GAME_APPLY_OPTIONS=71D92300
+[hook-state] DocMan::Show hooked=1 exists=1 original=0065F300 trampoline=36590798 detour=71D916B0
+[hook-state] MapScreen::Show hooked=1 exists=1 original=0047F9C0 trampoline=365907E0 detour=71D916F0
+[hook-state] MapView::UpdatePosition hooked=1 exists=1 original=0068D7B0 trampoline=36590AB0 detour=71D91AE0
+[hook-state] Game::Render hooked=1 exists=1 original=006C86A0 trampoline=36590870 detour=71D917B0
+[hook-state] Renderer::Vid_Blit hooked=1 exists=1 original=00657670 trampoline=36590828 detour=71D91740
+[hook-state] Input::ProcessInputEvents hooked=1 exists=1 original=004D5700 trampoline=36590990 detour=71D918E0
+[hook-state] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=365909D8 detour=71D91940
+[hook-state] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=36590A20 detour=71D919D0
+[hook-state] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590A68 detour=71D91A40
+[runtime] Game_Entry zinput=NULL
+[runtime] Game_Entry zrenderer=NULL
