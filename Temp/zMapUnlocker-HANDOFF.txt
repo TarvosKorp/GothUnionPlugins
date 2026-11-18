@@ -387,3 +387,27 @@ Next test:
 4. Check whether the yellow arrow is continuously visible and follows the heading smoothly.
 5. Close and reopen the map once.
 6. Send the updated Temp/zMapUnlocker.log. The key records are [arrow] ViewArrow::Blit and [arrow] renderer draw, or [arrow] direct draw unavailable / invalid renderer dimensions.
+
+
+## 2026-11-19 — root cause found: G2A screen-dimension offsets
+
+User test after e026764bf6156a46bcdcc0bb02d14d3172901b08:
+- Fresh log proves ViewArrow::Blit is called continuously (e.g. #42, #97, #153) and map/mouse/marker paths remain functional.
+- The custom draw exits before DrawPolySimple with: [arrow] invalid renderer dimensions screen=0x1.
+- This is not a rendering-stage failure. The width/height fields were read at the G1 offsets +0x984/+0x988.
+- Inspected the same external Gothic Coop source used as the rendering reference, including Kern/CoopAddr.h. It explicitly defines engine-specific offsets: G1 +0x984/+0x988; G2A +0x98C/+0x990. Its comments explain that SDK field names are shifted and that the G2A values were verified from XD3D_SetMode at 0x006589F2.
+- Therefore the previous custom quad never reached DrawPolySimple; the invalid dimensions guard rejected it every time. This explains the invisible arrow across the recent tests.
+
+New feature commit:
+- efc6989f21269bb7b553c0f44687c1007f781af7.
+- Only Plugin_G2A.cpp changed in this commit.
+- Corrected screen dimension reads to G2A offsets +0x98C/+0x990.
+- Restored drawing to oCGame::CheckObjectRoutines (0x006CABB0), which Coop's source documents as being called by oCGame::Render after zCViewDraw::Render and before EndFrame. This is the established final overlay stage. ViewArrow::Blit remains only for hiding the native 8-way arrow and logging its calls.
+- Renderer draw diagnostics remain rate-limited. The new log should now either show valid screen dimensions and [arrow] renderer draw, or expose the next guard/texture issue.
+- Source re-fetched and checked. This commit has not yet been compiled or tested. Previous workflow run #50 built e026764 successfully, not this new commit.
+
+Next test:
+1. Build the current feature branch.
+2. Open the map and rotate the character through several directions.
+3. Check whether the replacement pointer appears and stays visible.
+4. Send the updated Temp/zMapUnlocker.log if it does not appear.
