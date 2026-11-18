@@ -18,7 +18,7 @@ static const char* MapDiagPath() {
         if (n == 0 || n >= MAX_PATH) {
             lstrcpyA(path, "zMapUnlocker.log");
         } else {
-            char* slash = strrchr(path, '\\\\');
+            char* slash = strrchr(path, '\\');
             if (slash) *(slash + 1) = 0;
             lstrcatA(path, "zMapUnlocker.log");
         }
@@ -46,7 +46,7 @@ void MapDiagLog(const char* format, ...) {
 
     FILE* file = fopen(MapDiagPath(), "a");
     if (!file) return;
-    fprintf(file, "%8lu | %s\\n", (unsigned long)GetTickCount(), line);
+    fprintf(file, "%8lu | %s\n", (unsigned long)GetTickCount(), line);
     fclose(file);
 }
 
