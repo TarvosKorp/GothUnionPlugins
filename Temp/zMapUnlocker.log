@@ -1,68 +1,104 @@
-141223937 | [plugin] Game_Entry (iteration 5, UNLOCK=1 MARKER=1 MOUSE=1)
-141223937 | [cwd] Game_Entry cwd='C:\Games\Gothic\Gothic 2 - Night of the Raven\System'
-141223937 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590828 detour=71D91F80
-141223937 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=36590870 detour=71D920A0
-141223937 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=365908B8 detour=71D92100
-141223937 | [hook] DocumentManager::HandleEvent hooked=1 exists=1 original=0065F450 trampoline=36590900 detour=71D92330
-141223937 | [hook] ViewArrow::Blit hooked=1 exists=1 original=006934A0 trampoline=36590798 detour=71D91F10
-141223937 | [hook] Game::CheckObjectRoutines hooked=1 exists=1 original=006CABB0 trampoline=365907E0 detour=71D91F50
-141223937 | [runtime] Game_Entry zinput=NULL
-141229609 | [callback] Game_DefineExternals
-141230750 | [callback] Game_Init
-141230750 | [runtime] Game_Init zinput=095A4458
-141233906 | [callback] Game_LoadBegin_SaveGame
-141236625 | [callback] Game_LoadEnd_SaveGame
-141236640 | [stats] doc=0 dt=5875 loop=0 pre=1 post=0 menu=189 GetState=0(nz=0) GetToggled=0 GetMousePos=0(nz=0)
-141236640 | [input] GetState doc=0 key=16 raw=0.000 returned=0.000
-141236843 | [input] GetState doc=0 key=5 raw=0.000 returned=0.000
-141237156 | [input] GetState doc=0 key=11 raw=0.000 returned=0.000
-141237343 | [input] GetState doc=0 key=8 raw=0.000 returned=0.000
-141237546 | [input] GetState doc=0 key=6 raw=0.000 returned=0.000
-141237750 | [input] GetState doc=0 key=3 raw=0.000 returned=0.000
-141237953 | [input] GetState doc=0 key=18 raw=0.000 returned=0.000
-141238203 | [input] GetMousePos doc=0 x=-4.400 y=0.000 z=0.000
-141238406 | [input] GetMousePos doc=0 x=0.000 y=0.000 z=0.000
-141238609 | [input] GetMousePos doc=0 x=-1.100 y=0.000 z=0.000
-141238984 | [doc] OPEN detected from ListDocuments mapView=352635E8
-141238984 | [docs] node view=352635E8 vptr=0083BACC isMap=1
-141238984 | [docs] mapView=352635E8
-141238984 | [hero] map-open player=28C77018 interactItem=34387318 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-141238984 | [callers] GetMousePos world: 0069AA31 x71 004A4C38 x248
-141238984 | [unlock] SetMovLock(0) cleared=1 now=0
-141238984 | [arrow] native arrow alpha disabled map=352635E8 view=352636E4 size=8192x8192
-141238984 | [marker] UpdatePosition #1 map=352635E8 hero=(1716, -913, -3158) at=(0.60, -0.80)
-141238984 | [hero] tick player=28C77018 interactItem=34387318 curState=-1 tgtState=-1 movlock=0 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-141239062 | [input] GetMousePos doc=1 x=1.650 y=-1.100 z=0.000
-141239062 | [mouse] turn #1 dx=1.650 deg=0.495
-141239078 | [mouse] turn #2 dx=3.300 deg=0.990
-141239109 | [mouse] turn #3 dx=4.400 deg=1.320
-141239109 | [marker] UpdatePosition #2 map=352635E8 hero=(1716, -913, -3158) at=(0.56, -0.83)
-141239125 | [mouse] turn #4 dx=5.500 deg=1.650
-141239140 | [mouse] turn #5 dx=5.500 deg=1.650
-141239218 | [marker] UpdatePosition #3 map=352635E8 hero=(1716, -913, -3158) at=(0.39, -0.92)
-141239265 | [input] GetMousePos doc=1 x=8.250 y=1.650 z=0.000
-141239468 | [input] GetMousePos doc=1 x=18.150 y=3.300 z=0.000
-141239687 | [input] GetMousePos doc=1 x=13.750 y=3.300 z=0.000
-141239890 | [input] GetMousePos doc=1 x=12.650 y=0.550 z=0.000
-141239984 | [stats] doc=1 dt=1000 loop=143 pre=169 post=169 menu=0 GetState=1390(nz=0) GetToggled=242 GetMousePos=410(nz=115)
-141239984 | [hero] tick player=28C77018 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-141240046 | [marker] UpdatePosition #10 map=352635E8 hero=(1716, -913, -3158) at=(-0.72, 0.69)
-141240093 | [input] GetState doc=1 key=19 raw=0.000 returned=0.000
-141240296 | [input] GetMousePos doc=1 x=-4.400 y=-2.750 z=0.000
-141240500 | [input] GetMousePos doc=1 x=-17.050 y=-4.950 z=0.000
-141240703 | [input] GetMousePos doc=1 x=-12.650 y=-0.550 z=0.000
-141240906 | [input] GetState doc=1 key=1 raw=0.000 returned=0.000
-141240984 | [stats] doc=1 dt=1000 loop=54 pre=53 post=53 menu=0 GetState=1007(nz=0) GetToggled=106 GetMousePos=160(nz=136)
-141240984 | [hero] tick player=28C77018 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-141241109 | [input] GetState doc=1 key=2 raw=0.000 returned=0.000
-141241187 | [marker] UpdatePosition #20 map=352635E8 hero=(1716, -913, -3158) at=(0.98, 0.22)
-141241312 | [input] GetState doc=1 key=4 raw=0.000 returned=0.000
-141241531 | [doc] ESC event original=1
-141241531 | [map-input] HandleEvent event=0x00000001 original=1 returned=1
-141241546 | [doc] CLOSE detected from ListDocuments
-141241546 | [hero] map-close player=28C77018 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-141241546 | [callers] GetMousePos map-open: 0069AA31 x88 004A4C38 x262
-141241734 | [input] GetMousePos doc=0 x=0.000 y=0.000 z=0.000
-141241781 | [callback] Game_Pause doc=0
-141243734 | [callback] Game_Unpause doc=0
-141243750 | [callback] Game_Exit
+141926953 | [plugin] Game_Entry (iteration 5, UNLOCK=1 MARKER=1 MOUSE=1)
+141926953 | [cwd] Game_Entry cwd='C:\Games\Gothic\Gothic 2 - Night of the Raven\System'
+141926953 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=365907E0 detour=71D91F80
+141926953 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=36590828 detour=71D920A0
+141926953 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590870 detour=71D92100
+141926953 | [hook] DocumentManager::HandleEvent hooked=1 exists=1 original=0065F450 trampoline=365908B8 detour=71D92330
+141926953 | [hook] ViewArrow::Blit hooked=1 exists=1 original=006934A0 trampoline=36590798 detour=71D91EE0
+141926953 | [runtime] Game_Entry zinput=NULL
+141932375 | [callback] Game_DefineExternals
+141933468 | [callback] Game_Init
+141933468 | [runtime] Game_Init zinput=095CF958
+141935328 | [callback] Game_LoadBegin_SaveGame
+141937968 | [callback] Game_LoadEnd_SaveGame
+141937984 | [input] GetState doc=0 key=16 raw=0.000 returned=0.000
+141938187 | [input] GetState doc=0 key=5 raw=0.000 returned=0.000
+141938500 | [stats] doc=0 dt=5000 loop=0 pre=28 post=27 menu=111 GetState=410(nz=0) GetToggled=52 GetMousePos=78(nz=0)
+141938500 | [input] GetState doc=0 key=11 raw=0.000 returned=0.000
+141938703 | [input] GetState doc=0 key=8 raw=0.000 returned=0.000
+141938906 | [input] GetState doc=0 key=6 raw=0.000 returned=0.000
+141939109 | [input] GetMousePos doc=0 x=1.100 y=0.000 z=0.000
+141939312 | [input] GetState doc=0 key=3 raw=0.000 returned=0.000
+141939515 | [input] GetState doc=0 key=18 raw=0.000 returned=0.000
+141939718 | [input] GetState doc=0 key=19 raw=0.000 returned=0.000
+141939921 | [input] GetState doc=0 key=1 raw=0.000 returned=0.000
+141940125 | [input] GetMousePos doc=0 x=2.750 y=0.550 z=0.000
+141940375 | [input] GetMousePos doc=0 x=1.100 y=1.100 z=0.000
+141941359 | [doc] OPEN detected from ListDocuments mapView=332484D8
+141941359 | [docs] node view=332484D8 vptr=0083BACC isMap=1
+141941359 | [docs] mapView=332484D8
+141941359 | [hero] map-open player=28A9FC20 interactItem=35166F68 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+141941359 | [callers] GetMousePos world: 0069AA31 x117 004A4C38 x324
+141941359 | [unlock] SetMovLock(0) cleared=1 now=0
+141941359 | [arrow] native arrow alpha disabled map=332484D8 view=332485D4 size=8192x8192
+141941359 | [marker] UpdatePosition #1 map=332484D8 hero=(1715, -913, -3157) at=(-0.74, -0.67)
+141941359 | [hero] tick player=28A9FC20 interactItem=35166F68 curState=-1 tgtState=-1 movlock=0 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+141941375 | [arrow] invalid renderer dimensions screen=0x1
+141941375 | [arrow] ViewArrow::Blit #1 self=332485D4 map=332484D8
+141941468 | [marker] UpdatePosition #2 map=332484D8 hero=(1715, -913, -3157) at=(-0.74, -0.67)
+141941593 | [marker] UpdatePosition #3 map=332484D8 hero=(1715, -913, -3157) at=(-0.74, -0.67)
+141941781 | [input] GetMousePos doc=1 x=-1.650 y=0.000 z=0.000
+141941781 | [mouse] turn #1 dx=-1.650 deg=-0.495
+141941812 | [mouse] turn #2 dx=-4.950 deg=-1.485
+141941828 | [mouse] turn #3 dx=-7.150 deg=-2.145
+141941859 | [mouse] turn #4 dx=-4.950 deg=-1.485
+141941875 | [mouse] turn #5 dx=-2.750 deg=-0.825
+141941984 | [input] GetMousePos doc=1 x=-2.750 y=0.000 z=0.000
+141942187 | [input] GetMousePos doc=1 x=-8.800 y=0.000 z=0.000
+141942359 | [stats] doc=1 dt=1000 loop=177 pre=177 post=177 menu=0 GetState=1830(nz=0) GetToggled=270 GetMousePos=447(nz=178)
+141942359 | [hero] tick player=28A9FC20 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+141942375 | [arrow] ViewArrow::Blit #42 self=332485D4 map=332484D8
+141942390 | [input] GetMousePos doc=1 x=-12.100 y=0.000 z=0.000
+141942421 | [marker] UpdatePosition #10 map=332484D8 hero=(1715, -912, -3157) at=(0.58, -0.81)
+141942593 | [input] GetMousePos doc=1 x=-10.450 y=1.650 z=0.000
+141942796 | [input] GetState doc=1 key=2 raw=0.000 returned=0.000
+141943000 | [input] GetMousePos doc=1 x=11.000 y=-1.650 z=0.000
+141943203 | [input] GetMousePos doc=1 x=11.000 y=0.550 z=0.000
+141943359 | [stats] doc=1 dt=1000 loop=55 pre=55 post=55 menu=0 GetState=1044(nz=0) GetToggled=110 GetMousePos=165(nz=150)
+141943359 | [hero] tick player=28A9FC20 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+141943375 | [arrow] ViewArrow::Blit #97 self=332485D4 map=332484D8
+141943421 | [input] GetMousePos doc=1 x=10.450 y=1.650 z=0.000
+141943531 | [marker] UpdatePosition #20 map=332484D8 hero=(1715, -913, -3157) at=(-0.95, 0.32)
+141943625 | [input] GetMousePos doc=1 x=7.700 y=1.100 z=0.000
+141943828 | [input] GetMousePos doc=1 x=3.850 y=0.000 z=0.000
+141943859 | [mouse] turn #100 dx=3.300 deg=0.990
+141944031 | [input] GetState doc=1 key=4 raw=0.000 returned=0.000
+141944234 | [input] GetMousePos doc=1 x=-6.600 y=-2.200 z=0.000
+141944359 | [stats] doc=1 dt=1000 loop=56 pre=56 post=56 menu=0 GetState=1064(nz=0) GetToggled=112 GetMousePos=168(nz=126)
+141944359 | [hero] tick player=28A9FC20 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+141944375 | [arrow] ViewArrow::Blit #153 self=332485D4 map=332484D8
+141944625 | [marker] UpdatePosition #30 map=332484D8 hero=(1715, -913, -3157) at=(-0.54, 0.84)
+141944640 | [input] GetToggled doc=1 key=22 value=1
+141944687 | [doc] CLOSE detected from ListDocuments
+141944687 | [hero] map-close player=28A9FC20 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+141944687 | [callers] GetMousePos map-open: 0069AA31 x133 004A4C38 x344
+141946828 | [doc] OPEN detected from ListDocuments mapView=34CCFFC8
+141946828 | [docs] node view=34CCFFC8 vptr=0083BACC isMap=1
+141946828 | [docs] mapView=34CCFFC8
+141946828 | [hero] map-open player=28A9FC20 interactItem=35166F68 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+141946828 | [callers] GetMousePos world: 0069AA31 x68 004A4C38 x254
+141946828 | [unlock] SetMovLock(0) cleared=2 now=0
+141946828 | [arrow] native arrow alpha disabled map=34CCFFC8 view=34CD00C4 size=8192x8192
+141946828 | [hero] tick player=28A9FC20 interactItem=35166F68 curState=-1 tgtState=-1 movlock=0 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+141946843 | [arrow] ViewArrow::Blit #170 self=34CD00C4 map=34CCFFC8
+141947500 | [input] GetMousePos doc=1 x=-1.650 y=1.100 z=0.000
+141947703 | [input] GetMousePos doc=1 x=-7.150 y=0.000 z=0.000
+141947828 | [stats] doc=1 dt=1000 loop=205 pre=205 post=205 menu=0 GetState=1921(nz=0) GetToggled=295 GetMousePos=499(nz=45)
+141947828 | [hero] tick player=28A9FC20 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+141947828 | [marker] UpdatePosition #40 map=34CCFFC8 hero=(1715, -912, -3157) at=(-0.93, 0.36)
+141947843 | [arrow] ViewArrow::Blit #229 self=34CD00C4 map=34CCFFC8
+141947906 | [input] GetMousePos doc=1 x=-6.600 y=0.000 z=0.000
+141948234 | [input] GetMousePos doc=1 x=0.000 y=-1.100 z=0.000
+141948437 | [input] GetMousePos doc=1 x=7.150 y=0.000 z=0.000
+141948828 | [stats] doc=1 dt=1000 loop=58 pre=57 post=57 menu=0 GetState=1101(nz=0) GetToggled=116 GetMousePos=174(nz=96)
+141948828 | [hero] tick player=28A9FC20 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+141948843 | [arrow] ViewArrow::Blit #286 self=34CD00C4 map=34CCFFC8
+141948953 | [marker] UpdatePosition #50 map=34CCFFC8 hero=(1715, -913, -3157) at=(-0.72, 0.70)
+141949109 | [doc] ESC event original=1
+141949109 | [map-input] HandleEvent event=0x00000001 original=1 returned=1
+141949156 | [doc] CLOSE detected from ListDocuments
+141949156 | [hero] map-close player=28A9FC20 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+141949156 | [callers] GetMousePos map-open: 0069AA31 x79 004A4C38 x272
+141949421 | [callback] Game_Pause doc=0
+141953109 | [callback] Game_Unpause doc=0
+141953125 | [callback] Game_Exit
