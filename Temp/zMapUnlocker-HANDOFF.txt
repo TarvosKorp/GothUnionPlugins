@@ -438,3 +438,28 @@ Next test:
 3. Check whether the arrow consistently keeps the larger diagonal artwork and whether the size/artwork jolts disappear.
 4. Close and reopen the map, then rotate again to verify the texture cache is initialized safely each time.
 5. Send the updated Temp/zMapUnlocker.log only if the arrow disappears, changes appearance unexpectedly, or the game behaves incorrectly. The key new line is [arrow] cached diagonal artwork; renderer draw lines report cached=1 after capture.
+
+
+## 2026-11-19 — use the north/up arrow tile and synchronize marker sampling
+
+User confirms the fixed-size diagonal-artwork version eliminated size jumps, but the pointer occasionally becomes offset by about 45 degrees. The likely cause is the diagonal page's intrinsic orientation/base-angle mapping. User requests the cardinal north/up tile instead and asks to equalize heading and position update rates around 20–30 Hz.
+
+Feature changes:
+- Initial implementation commit: e822c5e09fc2349136b79e79ec182003afbc916b.
+- Follow-up correction commit: d78937ff6450a948e3a0c6155a8672209de9b9fd.
+- Only Plugin_G2A.cpp changed.
+- The cache now waits for the north/up cardinal page (page index 2, with -6 accepted for angle wrap), caches its texture and dimensions, and uses an explicit +90-degree base orientation. It then rotates this one tile for all headings.
+- Before the north/up tile is encountered, the currently selected native page remains a temporary fallback with its own quantized base angle so the marker remains visible during initialization.
+- MapDiagMarker now calls UpdatePosition every 40 ms (25 Hz), instead of every 100 ms (10 Hz).
+- The custom arrow samples the hero heading at the same 40 ms cadence and reuses that sampled angle for per-frame drawing. This aligns marker position and arrow orientation updates at approximately 25 Hz. Mouse input itself remains processed by Game_PreLoop at the engine callback cadence; it is not artificially throttled.
+- The renderer still redraws the quad each render frame, but does not resample heading faster than 25 Hz.
+- The second commit fixes a duplicate local tick variable and preserves correct fallback orientation until the north tile has been cached.
+- No build has yet been run for these commits.
+
+Next test:
+1. Build the current feature branch.
+2. Open the map and rotate the character through north/up, then through a full turn.
+3. Check whether the pointer now remains aligned with the actual heading, without the 45-degree offset.
+4. Walk in a straight line and compare marker movement cadence with turning; both should now update around 25 times per second.
+5. Close and reopen the map and repeat briefly to verify the north tile is cached again after reopening.
+6. If the build fails or visual alignment is still wrong, send the new build result or fresh log.
