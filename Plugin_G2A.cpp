@@ -35,6 +35,29 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     MapDiagLog("[hook] UpdatePosition RETURN self=%p", self);
 }
 
+// Callback declarations are needed here because Game_Entry logs their addresses.
+void Game_Entry();
+void Game_Init();
+void Game_Exit();
+void Game_PreLoop();
+void Game_Loop();
+void Game_PostLoop();
+void Game_MenuLoop();
+void Game_SaveBegin();
+void Game_SaveEnd();
+void Game_LoadBegin_NewGame();
+void Game_LoadEnd_NewGame();
+void Game_LoadBegin_SaveGame();
+void Game_LoadEnd_SaveGame();
+void Game_LoadBegin_ChangeLevel();
+void Game_LoadEnd_ChangeLevel();
+void Game_LoadBegin_Trigger();
+void Game_LoadEnd_Trigger();
+void Game_Pause();
+void Game_Unpause();
+void Game_DefineExternals();
+void Game_ApplyOptions();
+
 TSaveLoadGameInfo& SaveLoadGameInfo = UnionCore::SaveLoadGameInfo;
 
 // The application object is defined below; Game_Entry inspects its event table.
