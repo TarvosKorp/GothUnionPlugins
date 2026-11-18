@@ -463,3 +463,8 @@ Next test:
 4. Walk in a straight line and compare marker movement cadence with turning; both should now update around 25 times per second.
 5. Close and reopen the map and repeat briefly to verify the north tile is cached again after reopening.
 6. If the build fails or visual alignment is still wrong, send the new build result or fresh log.
+
+
+Follow-up source correction:
+- Commit 468780b6c8c4450f150e28c8fd10dce5dbc7109b.
+- Corrected the fallback rotation to use the currently selected page's quantized base angle until the north/up texture has been captured. This prevents an initial orientation error during the short pre-cache period.
