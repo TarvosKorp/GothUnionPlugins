@@ -279,3 +279,12 @@ Next test:
 5. Close and reopen the map once to check cleanup/reinitialization.
 
 Important: this is an experimental rendering path. Do not merge to main until visually tested. If the arrow is invisible or offset, use the new [arrow] log entries and continue adjusting only Plugin_G2A.cpp.
+
+## 2026-11-19 — smooth-arrow compile correction
+
+- GitHub Actions run #43 failed at compile time in Plugin_G2A.cpp, before DLL creation.
+- MSVC errors: oCViewDocument has no SetTransparency() and no GetSize(); the attempted calls treated ViewArrow as zCView, but its actual inheritance chain is oCViewDocument -> zCViewDialog -> zCViewPrint -> zCViewFX -> zCViewDraw -> zCViewObject -> zCViewBase.
+- SDK inspection confirms the appropriate inherited members: zCViewDraw::SetTextureAlpha(int), zCViewObject::VirtualSize, and zCViewBase::Line(...).
+- Corrected feature commit: c6b99638cb9abf51c9c57725a2038b038c7544e6. Only Plugin_G2A.cpp changed. The stock arrow texture is now hidden with SetTextureAlpha(0); drawing dimensions come from ViewArrow.VirtualSize.X/Y.
+- This correction is source/API-based; it has not yet been compiled or tested in-game.
+- Next step: run the existing G2A build workflow for the current feature branch. If successful, test the smooth pointer visually as described above. Preserve the already confirmed live marker, immediate mouse turning, and MirrorWorld compatibility.
