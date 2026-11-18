@@ -186,7 +186,7 @@ void Game_Entry() {
 
     // Compare the installed hook with the function actually present in the
     // live zinput object's virtual table (slot 24 in zCInput_Win32).
-    zCInput* inputObject = Gothic_II_Addon::zinput;
+    Gothic_II_Addon::zCInput* inputObject = Gothic_II_Addon::zinput;
     if (!inputObject) {
         MapDiagLog("[diag] zinput object is NULL");
     }
