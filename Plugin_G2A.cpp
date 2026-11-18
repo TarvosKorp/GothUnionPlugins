@@ -99,6 +99,15 @@ static volatile bool g_docOpen = false;          // set by DocumentManager::Hand
 static unsigned long g_cLoop = 0, g_cPre = 0, g_cPost = 0, g_cMenu = 0;
 static unsigned long g_cGetState = 0, g_cGetStateNZ = 0, g_cGetMouse = 0, g_cGetMouseNZ = 0, g_cToggled = 0;
 static DWORD g_lastStats = 0, g_lastHero = 0;
+static DWORD g_lastInputLog = 0;
+
+// Keep all high-frequency input diagnostics under a shared ~5 lines/second limit.
+static bool MapDiagAllowInputLog() {
+    DWORD now = GetTickCount();
+    if (now - g_lastInputLog < 200) return false;
+    g_lastInputLog = now;
+    return true;
+}
 
 // mouse turn state
 static float g_frameDx = 0.0f;                         // largest |dx| seen this frame (from the GetMousePos hook)
@@ -201,7 +210,7 @@ float __fastcall Hook_Input_GetState(void* self, void* edx, unsigned short key) 
     unsigned int slot = key < 1024 ? (unsigned int)key : 1023;
     DWORD now = GetTickCount();
     bool changed = !seen[slot] || value != lastValue[slot];
-    if (changed || (value != 0.0f && now - lastLog[slot] >= 200)) {
+    if ((changed || (value != 0.0f && now - lastLog[slot] >= 200)) && MapDiagAllowInputLog()) {
         MapDiagLog("[input] GetState doc=%d key=%u raw=%.3f returned=%.3f",
             (int)g_docOpen, (unsigned)key, raw, value);
         lastLog[slot] = now;
@@ -220,12 +229,8 @@ CInvoke<int(__fastcall*)(void*, void*, unsigned short)> Ivk_Input_GetToggled(
 int __fastcall Hook_Input_GetToggled(void* self, void* edx, unsigned short key) {
     int value = Ivk_Input_GetToggled(self, edx, key);
     ++g_cToggled;
-    static DWORD lastLog[1024] = { 0 };
-    unsigned int slot = key < 1024 ? (unsigned int)key : 1023;
-    DWORD now = GetTickCount();
-    if (value != 0 && now - lastLog[slot] >= 200) {
+    if (value != 0 && MapDiagAllowInputLog()) {
         MapDiagLog("[input] GetToggled doc=%d key=%u value=%d", (int)g_docOpen, (unsigned)key, value);
-        lastLog[slot] = now;
     }
     return value;
 }
@@ -246,7 +251,7 @@ void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y
     DWORD now = GetTickCount();
     bool moving = x != 0.0f || y != 0.0f || z != 0.0f;
     if (moving) ++g_cGetMouseNZ;
-    if ((moving && (!wasMoving || now - lastLog >= 200)) || (!moving && wasMoving)) {
+    if (((moving && (!wasMoving || now - lastLog >= 200)) || (!moving && wasMoving)) && MapDiagAllowInputLog()) {
         MapDiagLog("[input] GetMousePos doc=%d x=%.3f y=%.3f z=%.3f", (int)g_docOpen, x, y, z);
         lastLog = now;
     }
@@ -271,7 +276,7 @@ static oCViewDocumentMap* MapDiagFindMapView(bool logIt) {
         unsigned int vptr = *(unsigned int*)view;
         bool isMap = MapDiagIsMapVptr(vptr);
         if (logIt)
-            MapDiagLog("[docs] node view=%p vptr=%08X isMap=%d ondesk=%d", view, vptr, (int)isMap, (int)view->ondesk);
+            MapDiagLog("[docs] node view=%p vptr=%08X isMap=%d", view, vptr, (int)isMap);
         if (isMap) found = (oCViewDocumentMap*)view;
     }
     if (logIt) MapDiagLog("[docs] mapView=%p", found);
@@ -321,7 +326,7 @@ int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
     DWORD now = GetTickCount();
     bool passMovement = MAPDIAG_PASS_KEYS && MapDiagIsMovementKey(event);
     int result = passMovement ? 0 : originalResult;
-    if (now - lastLog[slot] >= 200) {
+    if (now - lastLog[slot] >= 200 && MapDiagAllowInputLog()) {
         MapDiagLog("[map-input] HandleEvent event=0x%08X original=%d returned=%d", (unsigned)event, originalResult, result);
         lastLog[slot] = now;
     }
