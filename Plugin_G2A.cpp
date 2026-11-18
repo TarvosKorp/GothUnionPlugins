@@ -98,6 +98,9 @@ void Game_Entry() {
         TAppFunc* events = lpApplication->lpEvents;
         MapDiagLog("[diag] application=%p eventTable=%p inspectedEventCount=%d",
             lpApplication, events, appEventCount);
+        MapDiagLog("[diag] applicationList count=%u containsCurrent=%d",
+            (unsigned)CApplication::lstApps.GetNumInList(),
+            (int)CApplication::lstApps.IsInList(lpApplication));
 
         MapDiagLog("[diag] expected callbacks: entry=%p init=%p exit=%p preloop=%p loop=%p postloop=%p menuloop=%p",
             (void*)Game_Entry, (void*)Game_Init, (void*)Game_Exit,
@@ -117,15 +120,16 @@ void Game_Entry() {
             MapDiagLog("[diag] application event table is NULL");
         }
         else {
+            // Runtime layout keeps legacy EGameEvents first; newer callbacks are appended.
             static const char* eventNames[21] = {
-                "GAME_ENTRY", "GAME_INIT", "GAME_EXIT",
-                "GAME_PRE_LOOP", "GAME_LOOP", "GAME_POST_LOOP", "GAME_MENU_LOOP",
+                "GAME_ENTRY", "GAME_INIT", "GAME_EXIT", "GAME_LOOP",
                 "GAME_SAVE_BEGIN", "GAME_SAVE_END",
                 "GAME_LOAD_BEGIN_NEWGAME", "GAME_LOAD_END_NEWGAME",
                 "GAME_LOAD_BEGIN_SAVEGAME", "GAME_LOAD_END_SAVEGAME",
                 "GAME_LOAD_BEGIN_CHANGELEVEL", "GAME_LOAD_END_CHANGELEVEL",
                 "GAME_LOAD_BEGIN_TRIGGER", "GAME_LOAD_END_TRIGGER",
                 "GAME_PAUSE", "GAME_UNPAUSE", "GAME_DEFINE_EXTERNALS",
+                "GAME_PRE_LOOP", "GAME_POST_LOOP", "GAME_MENU_LOOP",
                 "GAME_APPLY_OPTIONS"
             };
 
