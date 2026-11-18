@@ -1,13 +1,42 @@
-// zMapUnlocker — изоляционный этап.
-// Все экспериментальные хуки временно отключены: предыдущая версия вылетала
-// при открытии карты до создания диагностического лога.
-// Следующий этап — возвращать перехваты по одному, начиная с UpdatePosition.
+#include <stdio.h>
+#include <stdarg.h>
+
+// zMapUnlocker — этап изоляции.
+// Восстановлен только перехват oCViewDocumentMap::UpdatePosition.
+// Никакие игровые события не блокируются; UI и input не опрашиваются из циклов.
+// Лог фиксирует вход и выход из оригинального метода, чтобы локализовать вылет.
 
 namespace GOTHIC_ENGINE {
 
+void MapDiagLog(const char* format, ...) {
+    FILE* file = fopen("zMapUnlocker.log", "a");
+    if (!file) return;
+
+    va_list args;
+    va_start(args, format);
+    vfprintf(file, format, args);
+    va_end(args);
+    fprintf(file, "\n");
+    fclose(file);
+}
+
+// Адрес и сигнатура подтверждены в SDK G2A:
+// oCViewDocumentMap::UpdatePosition() — 0x0068D7B0.
+void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
+    0x0068D7B0, &Hook_MapView_UpdatePosition, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
+    MapDiagLog("[hook] UpdatePosition ENTER self=%p", self);
+    Ivk_MapView_UpdatePosition(self, edx);
+    MapDiagLog("[hook] UpdatePosition RETURN self=%p", self);
+}
+
 TSaveLoadGameInfo& SaveLoadGameInfo = UnionCore::SaveLoadGameInfo;
 
-void Game_Entry() {}
+void Game_Entry() {
+    MapDiagLog("[plugin] Game_Entry");
+}
 void Game_Init() {}
 void Game_Exit() {}
 
