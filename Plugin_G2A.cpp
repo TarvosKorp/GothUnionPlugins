@@ -6,6 +6,12 @@
 
 namespace GOTHIC_ENGINE {
 
+void MapDiagReset() {
+    // Start every game session with a clean diagnostic log.
+    FILE* file = fopen("zMapUnlocker.log", "w");
+    if (file) fclose(file);
+}
+
 void MapDiagLog(const char* format, ...) {
     FILE* file = fopen("zMapUnlocker.log", "a");
     if (!file) return;
@@ -32,6 +38,9 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
 TSaveLoadGameInfo& SaveLoadGameInfo = UnionCore::SaveLoadGameInfo;
 
 void Game_Entry() {
+    // Truncate before writing any diagnostics for this session.
+    MapDiagReset();
+
     THookInfo& hookInfo = const_cast<THookInfo&>(Ivk_MapView_UpdatePosition.GetHookInfo());
     bool32 isHooked = CCallBack::IsHooked(hookInfo);
     bool32 isExist = CCallBack::IsExist(hookInfo);
@@ -43,7 +52,6 @@ void Game_Entry() {
         (int)isHooked, (int)isExist);
 
     // Inspect the target entry after Union reports the hook as installed.
-    // A patched entry should differ from the original function prologue.
     unsigned char* originalBytes = (unsigned char*)hookInfo.lpOriginal;
     unsigned char* pointerBytes = (unsigned char*)hookInfo.lpPointer;
     MapDiagLog("[diag] target bytes=%02X %02X %02X %02X %02X %02X %02X %02X",
