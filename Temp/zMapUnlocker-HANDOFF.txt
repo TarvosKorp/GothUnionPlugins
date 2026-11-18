@@ -311,3 +311,13 @@ Next test:
 3. Check whether the pointer remains visible continuously; rotate the character and check whether its direction follows smoothly.
 4. Close and reopen the map once.
 5. If it still disappears, send the updated System/zMapUnlocker.log. Look for [arrow] smooth draw records; they should now appear if ViewArrow::Blit is reached.
+
+## 2026-11-19 — persistent smooth-arrow rendering
+
+- User test after commit ec3d01f: replacement arrow appears briefly at map opening, then disappears. The log confirms ViewArrow::Blit is hooked and the smooth draw routine runs, but drawing from Blit is not a persistent per-frame overlay.
+- Direction data is continuous and correct: logged GetAtVectorWorld components change smoothly while turning.
+- New feature commit: 95e2b3003038f67bcfcf330511a88546b1ce8ce0.
+- Only Plugin_G2A.cpp changed. ViewArrow::Blit now only forces native arrow texture alpha to zero; it no longer draws the replacement.
+- Added G2A oCGame::CheckObjectRoutines hook at SDK address 0x006CABB0. This engine stage is after zCViewDraw::Render and before EndFrame; MapDiagDrawSmoothArrow is called there so the replacement is drawn over the completed map every frame. Hook state is logged at startup.
+- This is based on the independently inspected Gothic II Coop marker implementation, which uses the same CheckObjectRoutines stage for map overlays. Still requires in-game verification.
+- Next test: build feature branch, open map, rotate through arbitrary angles, verify yellow arrow remains visible and tracks heading continuously; close/reopen map; verify MirrorWorld compatibility. Do not merge to main.
