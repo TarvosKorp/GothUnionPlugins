@@ -31,10 +31,10 @@ SDK G2A
 
 ТЕКУЩЕЕ СОСТОЯНИЕ
 - Ветка: feature/zMapUnlocker-map-live-marker.
-- Последний коммит Plugin_G2A.cpp: 487a503334d6318047d1b76fbd9dbae2711eb7e0.
+- Последний коммит Plugin_G2A.cpp: 523b8511e6b27500861f4bf6610775b648db5bc1.
 - Изменён только Plugin_G2A.cpp.
 - Перехват DocumentManager::Show удалён.
-- Оставлен только UpdatePosition с логированием ENTER/RETURN. В Game_Entry дополнительно логируются THookInfo: lpOriginal, lpPointer, lpDetour, ulProtected.
+- Оставлен только UpdatePosition с логированием ENTER/RETURN. В Game_Entry логируются THookInfo (lpOriginal, lpPointer, lpDetour, ulProtected), а также CCallBack::IsHooked и IsExist.
 - Game_Loop, Game_MenuLoop и остальные callbacks пустые; ввод и UI не затрагиваются.
 - Лог: zMapUnlocker.log в рабочей директории игры.
 
@@ -45,7 +45,7 @@ SDK G2A
 4. Если будет вылет — положить свежий crash report туда же.
 
 ИНТЕРПРЕТАЦИЯ
-- Последний тест: без вылета, лог содержит три строки [plugin] Game_Entry из трёх сессий (файл работает в append-режиме); строк UpdatePosition нет. Поэтому добавлена диагностика THookInfo в Game_Entry. Следующий лог должен содержать строку [diag] UpdatePosition hookInfo ... . По lpOriginal/lpPointer/lpDetour проверим, что именно CInvoke разрешил и куда направил перехват.
+- Последний тест: без вылета, лог содержит три строки [plugin] Game_Entry из трёх сессий (файл работает в append-режиме); строк UpdatePosition нет. Поэтому добавлена диагностика THookInfo в Game_Entry. Пользователь сообщил: original=0068D7B0, pointer=36590798, detour=71D911D0, protected=0. Pointer отличается от исходного, но это само по себе не доказывает успешную регистрацию. Следующая диагностика дополнительно вызывает CCallBack::IsHooked и IsExist для THookInfo. Лог должен показать оба результата; если IsHooked=1, установка зарегистрирована, и дальше будем выяснять, почему выполнение не попадает в detour. Если 0 — исследовать регистрацию/установку.
 - UpdatePosition ENTER/RETURN: перехват работает.
 - ENTER без RETURN: локализовать сбой внутри оригинального UpdatePosition/его вызова.
 - Повторный вылет после удаления Show: гипотеза о Show как причине не подтверждается, потребуется изолировать установку UpdatePosition.
