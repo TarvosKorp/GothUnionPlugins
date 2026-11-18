@@ -250,3 +250,32 @@ Next test:
 - Send System/zMapUnlocker.log.
 - Look for [doc] OPEN detected from ListDocuments, [docs] isMap=1,
   [marker] UpdatePosition, and [doc] CLOSE.
+
+
+## 2026-11-19 — continuous marker experiment
+
+User confirmed iteration 5:
+- Mouse turning works immediately when the map opens.
+- The GPS marker updates live and at sufficient speed.
+- The marker remains dynamic with the MirrorWorld plugin enabled.
+- Remaining issue: native marker direction snaps to eight compass headings (45-degree increments).
+
+Feature branch commit:
+- 1e452cb2f8b381bedc453fe474c72feb4b1f3e22 — Add continuously oriented map marker overlay.
+
+This experiment:
+- Uses the existing oCViewDocumentMap::ViewArrow member (SDK offset 0xFC).
+- Sets its transparency to zero to hide the stock eight-page arrow.
+- Hooks zCView::Render() at G2A 0x007AC210.
+- After the root screen renders, draws a five-line triangular pointer through ViewArrow.Line(), oriented from player->GetAtVectorWorld() with continuous atan-equivalent vector geometry (no 45-degree quantization).
+- Uses map axes +Z=north/up, +X=east/right.
+- Logs arrow view dimensions and a small number of draw probes.
+
+Next test:
+1. Build the feature branch DLL.
+2. Open the world map and rotate the character smoothly with the mouse.
+3. Check whether the stock eight-step arrow is replaced by a smooth yellow pointer, whether it follows every turn, and whether it stays correctly centered.
+4. Also check that the map background, zoom, and MirrorWorld remain normal.
+5. Close and reopen the map once to check cleanup/reinitialization.
+
+Important: this is an experimental rendering path. Do not merge to main until visually tested. If the arrow is invisible or offset, use the new [arrow] log entries and continue adjusting only Plugin_G2A.cpp.
