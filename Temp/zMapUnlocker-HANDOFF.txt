@@ -31,21 +31,24 @@ SDK G2A
 
 ТЕКУЩЕЕ СОСТОЯНИЕ
 - Ветка: feature/zMapUnlocker-map-live-marker.
-- Последний коммит Plugin_G2A.cpp: 523b8511e6b27500861f4bf6610775b648db5bc1.
+- Последний коммит Plugin_G2A.cpp: 96ff838e0363ab79b53a42566186b47be45d5afb.
 - Изменён только Plugin_G2A.cpp.
 - Перехват DocumentManager::Show удалён.
-- Оставлен только UpdatePosition с логированием ENTER/RETURN. В Game_Entry логируются THookInfo (lpOriginal, lpPointer, lpDetour, ulProtected), а также CCallBack::IsHooked и IsExist.
+- Оставлен только UpdatePosition с логированием ENTER/RETURN. В Game_Entry логируются THookInfo (lpOriginal, lpPointer, lpDetour, ulProtected), CCallBack::IsHooked/IsExist, а также первые 8 байт по адресам lpOriginal и lpPointer.
 - Game_Loop, Game_MenuLoop и остальные callbacks пустые; ввод и UI не затрагиваются.
 - Лог: zMapUnlocker.log в рабочей директории игры.
 
 СЛЕДУЮЩИЙ ТЕСТ
 1. Собрать DLL из текущей feature-ветки.
 2. Запустить игру, открыть карту, подержать несколько секунд, закрыть Escape.
-3. Сообщить, вылетает ли игра. Для этого теста достаточно прислать содержимое zMapUnlocker.log прямо в чат; в Temp/main пока ничего не загружать, если лог пустой/не изменился.
+3. Сообщить, вылетает ли игра, и прислать содержимое zMapUnlocker.log прямо в чат.
 4. Если будет вылет — положить свежий crash report туда же.
 
 ИНТЕРПРЕТАЦИЯ
-- Последний тест: без вылета, лог содержит три строки [plugin] Game_Entry из трёх сессий (файл работает в append-режиме); строк UpdatePosition нет. Поэтому добавлена диагностика THookInfo в Game_Entry. Пользователь сообщил: original=0068D7B0, pointer=36590798, detour=71D911D0, protected=0. Pointer отличается от исходного, но это само по себе не доказывает успешную регистрацию. Следующая диагностика дополнительно вызывает CCallBack::IsHooked и IsExist для THookInfo. Лог должен показать оба результата; если IsHooked=1, установка зарегистрирована, и дальше будем выяснять, почему выполнение не попадает в detour. Если 0 — исследовать регистрацию/установку.
+- Последний тест: без вылета. Лог: original=0068D7B0, pointer=36590798, detour=71D911D0, protected=0; затем isHooked=1 и isExist=1. Это подтверждает, что Union считает хук существующим и установленным. По исходнику SDK CInvoke::Attach() при IVK_AUTO сначала получает Origin через CCallBack::Auto(), записывает его в lpOriginal/lpPointer и передаёт THookInfo в CCallBack::Attach(). Добавлена следующая диагностика: первые 8 байт по lpOriginal (точка входа) и lpPointer (указатель оригинального/trampoline-вызова). Это позволит проверить, изменён ли код по адресу входа и куда ведёт указатель. ENTER/RETURN всё ещё не наблюдались.
+- Если target bytes показывают JMP/переход, а ENTER не появляется — вероятно, тестовый сценарий не вызывает этот адрес либо вызывается другая реализация/адрес.
+- Если target bytes не выглядят как установленный переход — несмотря на IsHooked=1, исследовать фактический патч/состояние callback.
+- pointer bytes относятся к адресу оригинального/trampoline-вызова; сохранить для анализа.
 - UpdatePosition ENTER/RETURN: перехват работает.
 - ENTER без RETURN: локализовать сбой внутри оригинального UpdatePosition/его вызова.
 - Повторный вылет после удаления Show: гипотеза о Show как причине не подтверждается, потребуется изолировать установку UpdatePosition.
