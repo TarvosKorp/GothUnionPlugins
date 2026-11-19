@@ -560,7 +560,6 @@ static void MapDiagMarker() {
     warned = false;
     map->UpdatePosition();
     MapDiagPrepareSmoothArrow();
-    ++n;
     if (!g_markerLogged) {
         g_markerLogged = true;
         oCNpc* hero = Gothic_II_Addon::player;
