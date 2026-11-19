@@ -44,6 +44,26 @@ static int g_nativeAnchorY = 0;
 static int g_nativeAnchorCorrectionX = 0;
 static int g_nativeAnchorCorrectionY = 0;
 
+static bool IsMapDocument(oCViewDocument* view) {
+    if (!view) return false;
+    const unsigned int vptr = *(const unsigned int*)view;
+    return vptr == 0x82FD6C ||
+        vptr == 0x82FD3C ||
+        vptr == 0x82FD44;
+}
+
+static oCViewDocumentMap* FindMapView() {
+    oCDocumentManager& manager = oCDocumentManager::GetDocumentManager();
+    zCListSort<oCViewDocument>* node = manager.ListDocuments;
+    oCViewDocumentMap* found = NULL;
+    for (int guard = 0; node && guard < 32; node = node->next, ++guard) {
+        oCViewDocument* view = node->data;
+        if (IsMapDocument(view))
+            found = (oCViewDocumentMap*)view;
+    }
+    return found;
+}
+
 static void PrepareSmoothArrow() {
     if (!g_pluginEnabled || !g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView)
         return;
