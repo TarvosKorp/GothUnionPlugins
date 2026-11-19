@@ -46,18 +46,19 @@ static int g_nativeAnchorCorrectionY = 0;
 
 // G1 Addon map detection: capture the concrete map instance from its
 // dedicated UpdatePosition entry and track which document the manager shows.
+static oCViewDocumentMap* g_g1aMapViewCandidate = NULL;
 static bool g_g1aMapIsCurrentDocument = false;
 static bool g_g1aMapUpdateInShow = false;
 static int g_g1aDocumentShowDepth = 0;
 static bool g_drawingSmoothArrow = false;
 
 static oCViewDocumentMap* FindMapView() {
-    if (!g_g1aMapIsCurrentDocument || !g_mapView)
+    if (!g_g1aMapIsCurrentDocument || !g_g1aMapViewCandidate)
         return NULL;
     oCDocumentManager& manager = oCDocumentManager::GetDocumentManager();
     if (!manager.GetEnableHandleEvent())
         return NULL;
-    return g_mapView;
+    return g_g1aMapViewCandidate;
 }
 
 void __fastcall Hook_MapView_Dtor(void* self, void* edx);
@@ -65,7 +66,8 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_Dtor(
     0x007633E0, &Hook_MapView_Dtor, IvkEnabled(Engine_G1A));
 
 void __fastcall Hook_MapView_Dtor(void* self, void* edx) {
-    if (g_mapView == (oCViewDocumentMap*)self) {
+    if (g_g1aMapViewCandidate == (oCViewDocumentMap*)self) {
+        g_g1aMapViewCandidate = NULL;
         g_mapView = NULL;
         g_docOpen = false;
         g_g1aMapIsCurrentDocument = false;
@@ -89,8 +91,9 @@ void __fastcall Hook_MapScreen_Show(void* self, void* edx) {
     Ivk_MapScreen_Show(self, edx);
     --g_g1aDocumentShowDepth;
 
-    if (outer && g_g1aMapUpdateInShow) {
+    if (outer && g_g1aMapUpdateInShow && g_g1aMapViewCandidate) {
         g_g1aMapIsCurrentDocument = true;
+        g_mapView = g_g1aMapViewCandidate;
         if (!g_docOpen)
             g_mapOpenedAt = GetTickCount();
         g_docOpen = true;
@@ -117,10 +120,12 @@ void __fastcall Hook_DocMan_Show(void* self, void* edx) {
     oCViewDocument* document =
         ((oCDocumentManager*)self)->GetDocumentView(id);
     const bool isMap = g_g1aMapUpdateInShow ||
-        (document && g_mapView && (void*)document == (void*)g_mapView);
+        (document && g_g1aMapViewCandidate &&
+         (void*)document == (void*)g_g1aMapViewCandidate);
 
     g_g1aMapIsCurrentDocument = isMap;
     if (isMap) {
+        g_mapView = g_g1aMapViewCandidate;
         if (!g_docOpen)
             g_mapOpenedAt = GetTickCount();
         g_docOpen = true;
@@ -158,6 +163,7 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     if (map) {
         if (g_mapView != map) {
             g_mapView = map;
+            g_g1aMapViewCandidate = map;
             g_nativeAnchorMap = NULL;
             g_nativeAnchorCaptured = false;
             g_nativeAnchorCorrectionReady = false;
