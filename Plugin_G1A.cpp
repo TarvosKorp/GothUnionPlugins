@@ -134,7 +134,7 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
 
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     oCViewDocumentMap* map = (oCViewDocumentMap*)self;
-    if (map && g_pluginEnabled) {
+    if (map) {
         if (g_mapView != map) {
             g_mapView = map;
             g_nativeAnchorMap = NULL;
@@ -144,14 +144,16 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
             g_nativeAnchorCorrectionY = 0;
             g_arrowPreparedMap = NULL;
         }
-        if (!g_docOpen) {
-            g_docOpen = true;
-            g_mapOpenedAt = GetTickCount();
-            g_frameDx = 0.0f;
-        }
         if (g_g1aDocumentShowDepth > 0)
             g_g1aMapUpdateInShow = true;
-        map->ViewArrow.SetTextureAlpha(0);
+        if (g_pluginEnabled) {
+            if (!g_docOpen) {
+                g_docOpen = true;
+                g_mapOpenedAt = GetTickCount();
+                g_frameDx = 0.0f;
+            }
+            map->ViewArrow.SetTextureAlpha(0);
+        }
     }
 
     Ivk_MapView_UpdatePosition(self, edx);
