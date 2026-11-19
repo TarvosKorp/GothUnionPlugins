@@ -124,8 +124,6 @@ static void MapDiagHeroProbe(const char* why) {
 // has rendered its normal contents.
 static oCViewDocumentMap* g_arrowPreparedMap = NULL;
 static oCViewDocumentMap* g_earlyMapView = NULL;
-static unsigned long g_smoothArrowDraws = 0;
-static DWORD g_lastArrowDrawLog = 0;
 static zCTexture* g_smoothArrowTexture = NULL;
 static int g_smoothArrowWidth = 0;
 static int g_smoothArrowHeight = 0;
@@ -133,8 +131,6 @@ static float g_smoothArrowBaseAngle = 0.0f;
 static float g_smoothArrowAngle = 1.57079632679f;
 static DWORD g_lastSmoothArrowAngleUpdate = 0;
 static bool g_smoothArrowTextureReady = false;
-static unsigned long g_arrowBlitCalls = 0;
-static DWORD g_lastArrowBlitLog = 0;
 static bool g_captureNativeArrowBlit = false;
 static bool g_nativeArrowCenterValid = false;
 static float g_nativeArrowCenterX = 0.0f;
@@ -297,8 +293,6 @@ static void MapDiagDrawSmoothArrow() {
     renderer->SetZBufferCompare(oldZCmp);
     renderer->SetZBufferWriteEnabled(oldZWrite);
 
-    ++g_smoothArrowDraws;
-    DWORD drawNow = GetTickCount();
     if (!g_arrowDrawLogged) {
         g_arrowDrawLogged = true;
         MapDiagLog("[arrow] first draw rect=%d,%d %dx%d center=%.2f,%.2f anchor=%s screen=%dx%d rotation=%.3f",
@@ -366,7 +360,6 @@ void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
 
     if (isArrow) {
         g_captureNativeArrowBlit = false;
-        ++g_arrowBlitCalls;
         if (!g_arrowBlitLogged) {
             g_arrowBlitLogged = true;
             MapDiagLog("[arrow] first Blit self=%p map=%p anchor=%d center=%.2f,%.2f",
