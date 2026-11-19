@@ -25,7 +25,9 @@ static bool g_mapAlphaEnabled = true;
 static int g_mapTransparency = 50;
 static int g_mapCurrentAlpha = 255;
 
-// Smooth replacement for the engine's eight-direction map arrow.
+// ---------------------------------------------------------------- smooth map arrow
+// Smooth marker subsystem restored from the known-good 71f698b implementation.
+// Engine-specific hook addresses and renderer offsets remain version-specific.
 static oCViewDocumentMap* g_arrowPreparedMap = NULL;
 static zCTexture* g_smoothArrowTexture = NULL;
 static int g_smoothArrowWidth = 0;
@@ -34,9 +36,6 @@ static float g_smoothArrowAngle = 1.57079632679f;
 static DWORD g_lastSmoothArrowAngleUpdate = 0;
 static bool g_smoothArrowTextureReady = false;
 
-// Keep the first native arrow position as the anchor. Later engine refreshes
-// can shift PixelPosition slightly, so retain the correction measured from
-// the engine's own UpdatePosition calls.
 static oCViewDocumentMap* g_nativeAnchorMap = NULL;
 static bool g_nativeAnchorCaptured = false;
 static bool g_nativeAnchorCorrectionReady = false;
@@ -45,42 +44,21 @@ static int g_nativeAnchorY = 0;
 static int g_nativeAnchorCorrectionX = 0;
 static int g_nativeAnchorCorrectionY = 0;
 
-// Match the engine's native multiple-inheritance vtables exactly.
-// The document manager stores the zCObject-side pointer in ListDocuments.
-static bool IsMapDocument(oCViewDocument* view) {
-    if (!view) return false;
-    const unsigned int vptr = *(const unsigned int*)view;
-    return vptr == 0x7DF45C ||
-        vptr == 0x7DF42C ||
-        vptr == 0x7DF434;
-}
-
-static oCViewDocumentMap* FindMapView() {
-    oCDocumentManager& manager = oCDocumentManager::GetDocumentManager();
-    zCListSort<oCViewDocument>* node = manager.ListDocuments;
-    oCViewDocumentMap* found = NULL;
-    for (int guard = 0; node && guard < 32; node = node->next, ++guard) {
-        oCViewDocument* view = node->data;
-        if (IsMapDocument(view))
-            found = (oCViewDocumentMap*)view;
-    }
-    return found;
-}
-
 static void PrepareSmoothArrow() {
     if (!g_pluginEnabled || !g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView)
         return;
+
+    g_mapView->ViewArrow.SetTextureAlpha(0);
     g_arrowPreparedMap = g_mapView;
 
-    // Keep one reference to U.TGA for the plugin lifetime and reuse it
-    // whenever the map is reopened.
-    if (!g_smoothArrowTexture) {
-        zSTRING northName("U.TGA");
-        g_smoothArrowTexture = zCTexture::Load(northName, 0);
-        g_smoothArrowTextureReady = (g_smoothArrowTexture != NULL);
-        if (g_smoothArrowTextureReady) {
-            g_smoothArrowTexture->GetPixelSize(g_smoothArrowWidth, g_smoothArrowHeight);
-        }
+    zSTRING northName("U.TGA");
+    g_smoothArrowTexture = zCTexture::Load(northName, 0);
+    g_smoothArrowTextureReady = (g_smoothArrowTexture != NULL);
+    if (g_smoothArrowTextureReady) {
+        g_smoothArrowTexture->GetPixelSize(g_smoothArrowWidth, g_smoothArrowHeight);
+    } else {
+        g_smoothArrowWidth = 0;
+        g_smoothArrowHeight = 0;
     }
 }
 
@@ -91,6 +69,8 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     oCViewDocumentMap* map = (oCViewDocumentMap*)self;
     if (map && g_pluginEnabled)
+        map->ViewArrow.SetTextureAlpha(0);
+
     Ivk_MapView_UpdatePosition(self, edx);
 
     if (!map || !g_pluginEnabled)
@@ -126,70 +106,74 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
 }
 
 static void DrawSmoothArrow() {
-    if (!g_pluginEnabled || !g_docOpen || !g_mapView)
-        return;
-
+    if (!g_pluginEnabled || !g_docOpen || !g_mapView) return;
     oCNpc* hero = GOTHIC_ENGINE::player;
     zCRenderer* renderer = GOTHIC_ENGINE::zrenderer;
-    if (!hero || !renderer)
-        return;
+    if (!hero || !renderer) return;
 
     oCViewDocument& arrow = g_mapView->ViewArrow;
+    zCTexture* currentTexture = arrow.Texture;
     const int x = arrow.PixelPosition.X;
     const int y = arrow.PixelPosition.Y;
     const int currentW = arrow.PixelSize.X;
     const int currentH = arrow.PixelSize.Y;
-
-    if (currentW < 4 || currentH < 4)
+    if (!currentTexture || currentW < 4 || currentH < 4) {
         return;
+    }
 
+    // Sample heading at the same 25 Hz cadence as UpdatePosition().
+    // The artwork is always the explicitly loaded U.TGA (north/up).
     const DWORD now = GetTickCount();
     if (g_lastSmoothArrowAngleUpdate == 0 ||
         now - g_lastSmoothArrowAngleUpdate >= MAP_MARKER_UPDATE_MS) {
-        zVEC3 heading = hero->GetAtVectorWorld();
-        float dx = heading.n[0];
-        float dy = -heading.n[2];
-        const float length = sqrtf(dx * dx + dy * dy);
-        if (length >= 0.001f) {
-            dx /= length;
-            dy /= length;
+        zVEC3 at = hero->GetAtVectorWorld();
+        float dx = at.n[0];
+        float dy = -at.n[2];
+        const float len = sqrtf(dx * dx + dy * dy);
+        if (len >= 0.001f) {
+            dx /= len;
+            dy /= len;
             g_smoothArrowAngle = atan2f(dy, dx);
             g_lastSmoothArrowAngleUpdate = now;
         }
     }
 
+    // U.TGA is the north/up cardinal artwork: +90 degrees in this
+    // heading convention. Never fall back to the engine's changing 8-way page.
     if (!g_smoothArrowTextureReady || !g_smoothArrowTexture ||
         g_smoothArrowWidth < 4 || g_smoothArrowHeight < 4)
         return;
-
+    zCTexture* texture = g_smoothArrowTexture;
     const float rotation = g_smoothArrowAngle - 1.57079632679f;
     const float c = cosf(rotation);
     const float sn = sinf(rotation);
 
-    const int screenWidth = *(int*)((char*)renderer + MAP_RENDERER_WIDTH_OFFSET);
-    const int screenHeight = *(int*)((char*)renderer + MAP_RENDERER_HEIGHT_OFFSET);
-    if (screenWidth < 320 || screenWidth > 16384 ||
-        screenHeight < 200 || screenHeight > 16384)
+    // PixelPosition is the engine's marker anchor. The replacement needs the
+    // same compensation as the native marker, but that correction must follow
+    // the actual screen scale instead of remaining a fixed pixel displacement.
+    // 1920x1080 is the reference layout where the original correction is exact.
+    const int sw = *(int*)((char*)renderer + MAP_RENDERER_WIDTH_OFFSET);
+    const int sh = *(int*)((char*)renderer + MAP_RENDERER_HEIGHT_OFFSET);
+    if (sw < 320 || sw > 16384 || sh < 200 || sh > 16384)
         return;
-
+    // Reconstruct the native arrow's first position using the correction
+    // measured from its own UpdatePosition calls. This is independent of the
+    // display mode and automatically follows 800p, 1080p, 2K and 4K layouts.
     const int anchorOffsetX = g_nativeAnchorCorrectionReady
         ? g_nativeAnchorCorrectionX : currentW / 2;
     const int anchorOffsetY = g_nativeAnchorCorrectionReady
         ? g_nativeAnchorCorrectionY : currentH / 2;
-
     const float halfW = (float)currentW * 0.5f;
     const float halfH = (float)currentH * 0.5f;
     const float cx = (float)x + (float)anchorOffsetX + halfW;
     const float cy = (float)y + (float)anchorOffsetY + halfH;
-
-    // The marker is always half as transparent as the map itself.
+    // The marker receives half the map's current transparency, not half the configured target.
+    // Using the applied map alpha keeps both fades synchronized throughout the transition.
     const int markerAlpha = (255 + g_mapCurrentAlpha + 1) / 2;
-
     const float lx[4] = { -halfW, halfW, halfW, -halfW };
     const float ly[4] = { -halfH, -halfH, halfH, halfH };
     const float tu[4] = { 0.f, 1.f, 1.f, 0.f };
     const float tv[4] = { 0.f, 0.f, 1.f, 1.f };
-
     zTRndSimpleVertex vertices[4];
     for (int i = 0; i < 4; ++i) {
         vertices[i].pos.n[0] = cx + c * lx[i] - sn * ly[i];
@@ -200,35 +184,43 @@ static void DrawSmoothArrow() {
         vertices[i].color = zCOLOR(255, 255, 255, markerAlpha);
     }
 
+    // CheckObjectRoutines is the immediate-render stage used by the Coop
+    // marker implementation. View::Line() queues line primitives too late here;
+    // DrawPolySimple submits the textured quad directly before EndFrame.
+    // Renderer dimensions use the engine-specific offsets defined above.
+
     const int oldZWrite = renderer->GetZBufferWriteEnabled();
     const zTRnd_ZBufferCmp oldZCmp = renderer->GetZBufferCompare();
     const zTRnd_AlphaBlendFunc oldAlpha = renderer->GetAlphaBlendFunc();
     const int oldBilerp = renderer->GetBilerpFilterEnabled();
-
     renderer->SetZBufferWriteEnabled(FALSE);
     renderer->SetZBufferCompare(zRND_ZBUFFER_CMP_ALWAYS);
     renderer->SetAlphaBlendFunc(zRND_ALPHA_FUNC_BLEND);
     renderer->SetBilerpFilterEnabled(TRUE);
-    renderer->SetViewport(0, 0, screenWidth, screenHeight);
-    renderer->DrawPolySimple(g_smoothArrowTexture, vertices, 4);
+    renderer->SetViewport(0, 0, sw, sh);
+    renderer->DrawPolySimple(texture, vertices, 4);
     renderer->SetBilerpFilterEnabled(oldBilerp);
     renderer->SetAlphaBlendFunc(oldAlpha);
     renderer->SetZBufferCompare(oldZCmp);
     renderer->SetZBufferWriteEnabled(oldZWrite);
+
 }
 
-// zCViewPrint::Blit() — hide the stock eight-way arrow before it is rendered.
+
+// Hide the native eight-way arrow immediately before its own blit.
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
     0x00756970, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G1));
 
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
-    // Keep the engine's native arrow visible until the replacement renderer
-    // has been verified in-game. A failed custom draw must never hide both.
+    if (g_pluginEnabled && g_docOpen && g_mapView &&
+        self == (void*)&g_mapView->ViewArrow) {
+        ((oCViewDocument*)self)->SetTextureAlpha(0);
+    }
     Ivk_ViewArrow_Blit(self, edx);
 }
 
-// oCGame::CheckObjectRoutines() — submit the replacement marker in the map render stage.
+// Draw the smooth replacement in the render stage used by 71f698b.
 void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_Game_CheckObjectRoutines(
     0x00640160, &Hook_Game_CheckObjectRoutines, IvkEnabled(Engine_G1));
@@ -238,6 +230,7 @@ void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx) {
         DrawSmoothArrow();
     Ivk_Game_CheckObjectRoutines(self, edx);
 }
+
 
 // Collect the horizontal mouse delta while the map is open.
 void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y, float& z);
