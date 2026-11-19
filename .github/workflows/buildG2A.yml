@@ -1,4 +1,4 @@
-name: Build zMapUnlocker G2A plugin
+name: Build zDynaMap G2A plugin
 
 on:
   workflow_dispatch:      # ручной запуск кнопкой «Run workflow»
@@ -28,12 +28,19 @@ jobs:
             "/p:Configuration=G2A MT Release" `
             /p:Platform=Win32 `
             /p:PlatformToolset=v143 `
-            "/p:TargetName=zMapUnlockerG2A" `
+            "/p:TargetName=zDynaMapG2A" `
             "/p:SolutionDir=$($PWD.Path)\"
+
+      - name: Include zDynaMap Union menu configuration
+        shell: pwsh
+        run: |
+          Copy-Item -Force 'Plugin.d' 'Bin/zDynaMap.d'
 
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
-          name: zMapUnlocker-G2A-dll
-          path: Bin/*.dll
+          name: zDynaMap-G2A-dll
+          path: |
+          Bin/*.dll
+          Bin/zDynaMap.d
           if-no-files-found: error

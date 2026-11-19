@@ -39,9 +39,16 @@ jobs:
               "/p:SolutionDir=$($PWD.Path)\"
           }
 
+      - name: Include zDynaMap Union menu configuration
+        shell: pwsh
+        run: |
+          Copy-Item -Force 'Plugin.d' 'Bin/zDynaMap.d'
+
       - name: Upload DLLs (one archive)
         uses: actions/upload-artifact@v4
         with:
           name: zSamplePlugin-all-dlls
-          path: Bin/*.dll
+          path: |
+          Bin/*.dll
+          Bin/zDynaMap.d
           if-no-files-found: error

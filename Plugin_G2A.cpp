@@ -4,7 +4,7 @@
 #include <math.h>
 #include <intrin.h>
 
-// zMapUnlocker — iteration 5: live GPS marker + own horizontal mouse turn while a map is open.
+// zDynaMap — live GPS marker, movement unlock, mouse turn and configurable map fade.
 //
 // Results so far (logs 1-3):
 //  * Log path bug fixed (absolute path). movlock=1 while a document is open; clearing it every
@@ -39,7 +39,10 @@
 #define MAPDIAG_MARKER_MS 40      // 25 updates per second; synchronized with arrow heading sampling
 #endif
 #ifndef MAPDIAG_MAP_FADE_MS
-#define MAPDIAG_MAP_FADE_MS 300   // smooth transition to/from 50% map opacity
+#define MAPDIAG_MAP_FADE_MS 300   // smooth transition to/from the selected map opacity
+#endif
+#ifndef MAPDIAG_MAP_OPEN_GRACE_MS
+#define MAPDIAG_MAP_OPEN_GRACE_MS 500 // let the engine finish showing the map before movement fade
 #endif
 #ifndef MAPDIAG_MOUSE_TURN
 #define MAPDIAG_MOUSE_TURN 1
@@ -58,11 +61,11 @@ static const char* MapDiagPath() {
         ready = true;
         DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
         if (n == 0 || n >= MAX_PATH) {
-            lstrcpyA(path, "zMapUnlocker.log");
+            lstrcpyA(path, "zDynaMap.log");
         } else {
             char* slash = strrchr(path, '\\');
             if (slash) *(slash + 1) = 0;
-            lstrcatA(path, "zMapUnlocker.log");
+            lstrcatA(path, "zDynaMap.log");
         }
     }
     return path;
@@ -81,7 +84,7 @@ void MapDiagLog(const char* format, ...) {
     va_end(args);
     line[sizeof(line) - 1] = 0;
 
-    OutputDebugStringA("[zMapUnlocker] ");
+    OutputDebugStringA("[zDynaMap] ");
     OutputDebugStringA(line);
     OutputDebugStringA("\n");
 
@@ -102,6 +105,8 @@ static volatile bool g_docOpen = false;          // synchronized from the live d
 static DWORD g_mapOpenedAt = 0;
 static oCViewDocumentMap* g_mapView = NULL;
 static float g_frameDx = 0.0f;
+static bool g_pluginEnabled = true;
+static int g_mapAlphaMode = 1; // 0=off, 1=30%, 2=50%, 3=70% transparency
 
 // Mouse turn state.
 static float g_degPerUnit = MAPDIAG_MOUSE_DEG_PER_UNIT;
@@ -144,7 +149,7 @@ static bool g_arrowGeometryLogged = false;
 static zCTexture* g_lastNativeArrowTexture = NULL;
 
 static void MapDiagPrepareSmoothArrow() {
-    if (!g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView) return;
+    if (!g_pluginEnabled || !g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView) return;
     // Hide the engine's eight-page arrow and load its canonical north-facing
     // artwork directly. Never depend on whichever page the hero happened to
     // be facing when the map was opened.
@@ -193,7 +198,7 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     zCPosition beforeMapPixelSize;
     if (map) {
         g_earlyMapView = map;
-        map->ViewArrow.SetTextureAlpha(0);
+        if (g_pluginEnabled) map->ViewArrow.SetTextureAlpha(0);
         beforeVirtualPos = map->ViewArrow.VirtualPosition;
         beforeVirtualSize = map->ViewArrow.VirtualSize;
         beforePixelPos = map->ViewArrow.PixelPosition;
@@ -226,7 +231,7 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
 }
 
 static void MapDiagDrawSmoothArrow() {
-    if (!g_docOpen || !g_mapView) return;
+    if (!g_pluginEnabled || !g_docOpen || !g_mapView) return;
     oCNpc* hero = Gothic_II_Addon::player;
     zCRenderer* renderer = Gothic_II_Addon::zrenderer;
     if (!hero || !renderer) return;
@@ -304,13 +309,24 @@ static void MapDiagDrawSmoothArrow() {
     const float c = cosf(rotation);
     const float sn = sinf(rotation);
 
-    // PixelPosition is the native marker's anchor coordinate, not the
-    // top-left of the replacement quad. The engine's first map update reports
-    // 989,651; its subsequent refresh stores 981,643 (anchor minus 8,8).
-    // DrawPolySimple needs the original anchor restored as the quad's top-left
-    // reference, so shift the replacement by one full marker dimension.
-    const float cx = (float)x + (float)currentW;
-    const float cy = (float)y + (float)currentH;
+    // PixelPosition is the engine's marker anchor. The replacement needs the
+    // same compensation as the native marker, but that correction must follow
+    // the actual screen scale instead of remaining a fixed pixel displacement.
+    // 1920x1080 is the reference layout where the original correction is exact.
+    const int sw = *(int*)((char*)renderer + 0x98C);
+    const int sh = *(int*)((char*)renderer + 0x990);
+    if (sw < 320 || sw > 16384 || sh < 200 || sh > 16384) {
+        static bool badScreenLogged = false;
+        if (!badScreenLogged) {
+            badScreenLogged = true;
+            MapDiagLog("[arrow] invalid renderer dimensions screen=%dx%d", sw, sh);
+        }
+        return;
+    }
+    const float scaleX = (float)sw / 1920.0f;
+    const float scaleY = (float)sh / 1080.0f;
+    const float cx = (float)x + (float)currentW * scaleX;
+    const float cy = (float)y + (float)currentH * scaleY;
     const float halfW = (float)w * 0.46f;
     const float halfH = (float)h * 0.46f;
     const float lx[4] = { -halfW, halfW, halfW, -halfW };
@@ -330,18 +346,7 @@ static void MapDiagDrawSmoothArrow() {
     // CheckObjectRoutines is the immediate-render stage used by the Coop
     // marker implementation. View::Line() queues line primitives too late here;
     // DrawPolySimple submits the textured quad directly before EndFrame.
-    // G2A layout differs from G1: zCRnd_D3D screen width/height are
-    // at +0x98C/+0x990. +0x984/+0x988 are the G1 offsets.
-    const int sw = *(int*)((char*)renderer + 0x98C);
-    const int sh = *(int*)((char*)renderer + 0x990);
-    if (sw < 320 || sw > 16384 || sh < 200 || sh > 16384) {
-        static bool badScreenLogged = false;
-        if (!badScreenLogged) {
-            badScreenLogged = true;
-            MapDiagLog("[arrow] invalid renderer dimensions screen=%dx%d", sw, sh);
-        }
-        return;
-    }
+    // G2A renderer dimensions are read from +0x98C/+0x990 above.
 
     const int oldZWrite = renderer->GetZBufferWriteEnabled();
     const zTRnd_ZBufferCmp oldZCmp = renderer->GetZBufferCompare();
@@ -376,7 +381,7 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
     0x006934A0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
-    bool isArrow = g_docOpen && g_mapView &&
+    bool isArrow = g_pluginEnabled && g_docOpen && g_mapView &&
         self == (void*)&g_mapView->ViewArrow;
     static unsigned long loggedBlits = 0;
     int beforeX = 0, beforeY = 0;
@@ -561,7 +566,7 @@ int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
 // Clear the hero's movement lock while a document is open.
 static void MapDiagUnlock() {
 #if MAPDIAG_UNLOCK
-    if (!g_docOpen) return;
+    if (!g_pluginEnabled || !g_docOpen) return;
     oCNpc* hero = Gothic_II_Addon::player;
     if (!hero) return;
     if (hero->IsMovLock()) {
@@ -578,7 +583,7 @@ static void MapDiagUnlock() {
 // 10 Hz: ask the engine to recompute the GPS marker (position + heading) of the open map.
 static void MapDiagMarker() {
 #if MAPDIAG_MARKER
-    if (!g_docOpen) return;
+    if (!g_pluginEnabled || !g_docOpen) return;
     static DWORD last = 0;
     static bool warned = false;
     DWORD now = GetTickCount();
@@ -613,7 +618,7 @@ static void MapDiagMarker() {
 // Own horizontal mouse turn while the map is open (the game's own mouse turn is gated).
 static void MapDiagMouseTurn() {
 #if MAPDIAG_MOUSE_TURN
-    if (!g_docOpen) { g_frameDx = 0.0f; return; }
+    if (!g_pluginEnabled || !g_docOpen) { g_frameDx = 0.0f; return; }
 
     // live tuning (edge-triggered)
     static bool prevAdd = false, prevSub = false, prevMul = false;
@@ -659,8 +664,7 @@ static void MapDiagFadeMap() {
         alpha = 255;
         lastTick = now;
         fadeLogged = false;
-        if (g_mapView)
-            originalMapBlend = g_mapView->TextureFuncAlpha;
+        if (g_mapView) originalMapBlend = g_mapView->TextureFuncAlpha;
     }
     if (!g_mapView) return;
 
@@ -682,22 +686,37 @@ static void MapDiagFadeMap() {
         (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0 ||
         (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
 
-    const int target = moving ? 128 : 255;
+    int movingAlpha = 255;
+    if (g_mapAlphaMode == 1) movingAlpha = 178;      // 30% transparent
+    else if (g_mapAlphaMode == 2) movingAlpha = 128; // 50% transparent
+    else if (g_mapAlphaMode == 3) movingAlpha = 77;  // 70% transparent
+
+    // The map itself fades in when opened. Ignore movement during this grace
+    // period, then fade only if the master switch and transparency mode allow it.
+    const bool graceFinished = g_mapOpenedAt != 0 &&
+        (DWORD)(now - g_mapOpenedAt) >= MAPDIAG_MAP_OPEN_GRACE_MS;
+    const int target = (g_pluginEnabled && g_mapAlphaMode != 0 &&
+        moving && graceFinished) ? movingAlpha : 255;
+
     DWORD elapsed = now - lastTick;
     lastTick = now;
     if (elapsed > 50) elapsed = 50;
-
-    if (alpha < target) {
-        alpha += (int)((127 * elapsed + MAPDIAG_MAP_FADE_MS - 1) / MAPDIAG_MAP_FADE_MS);
-        if (alpha > target) alpha = target;
-    } else if (alpha > target) {
-        alpha -= (int)((127 * elapsed + MAPDIAG_MAP_FADE_MS - 1) / MAPDIAG_MAP_FADE_MS);
-        if (alpha < target) alpha = target;
+    if (alpha != target && elapsed != 0) {
+        const int range = (target < 255) ? (255 - target) : 255;
+        int step = (range * (int)elapsed + MAPDIAG_MAP_FADE_MS - 1) /
+            MAPDIAG_MAP_FADE_MS;
+        if (step < 1) step = 1;
+        if (alpha < target) {
+            alpha += step;
+            if (alpha > target) alpha = target;
+        } else {
+            alpha -= step;
+            if (alpha < target) alpha = target;
+        }
     }
 
-    // SetTextureAlpha alone does not guarantee blending with every view's
-    // original material mode. Force alpha blending during the transition and
-    // restore each view's exact pre-fade mode once fully opaque again.
+    // Preserve the map's original blend modes when fully opaque. The GPS
+    // overlay is a separate draw and therefore remains fully opaque.
     const zTRnd_AlphaBlendFunc blend = (alpha < 255)
         ? zRND_ALPHA_FUNC_BLEND : originalMapBlend;
     g_mapView->SetTextureAlphaBlendFunc(blend);
@@ -709,11 +728,11 @@ static void MapDiagFadeMap() {
         page->SetTextureAlpha(alpha);
     }
 
-    if (moving && !fadeLogged) {
+    if (moving && graceFinished && g_pluginEnabled && g_mapAlphaMode != 0 && !fadeLogged) {
         fadeLogged = true;
-        MapDiagLog("[map-fade] movement key held; fading document to 50%% opacity");
+        MapDiagLog("[map-fade] movement detected; selected transparency mode=%d", g_mapAlphaMode);
     }
-    if (!moving && alpha == 255)
+    if ((!moving || !graceFinished || !g_pluginEnabled || g_mapAlphaMode == 0) && alpha == 255)
         fadeLogged = false;
 }
 
@@ -773,7 +792,35 @@ void Game_Entry() {
     MapDiagRuntimeProbe("Game_Entry");
 }
 
-void Game_Init() { }
+int Change_DynaMap(zCOptionEntry& entry) {
+    g_pluginEnabled = entry.varValueTemp.ToInt32() != 0;
+    if (g_mapView) {
+        if (!g_pluginEnabled) {
+            g_mapView->ViewArrow.SetTextureAlpha(255);
+        } else {
+            g_mapOpenedAt = GetTickCount();
+            g_arrowPreparedMap = NULL;
+        }
+    }
+    return 0;
+}
+
+int Change_DynaMapAlpha(zCOptionEntry& entry) {
+    int value = entry.varValueTemp.ToInt32();
+    if (value < 0) value = 0;
+    if (value > 3) value = 3;
+    g_mapAlphaMode = value;
+    return 0;
+}
+
+void Game_Init() {
+    if (!zoptions) return;
+    zoptions->InsertChangeHandler("zDynaMap", "DynaMap", Change_DynaMap);
+    zoptions->InsertChangeHandler("zDynaMap", "DynaMapAlpha", Change_DynaMapAlpha);
+    g_pluginEnabled = zoptions->ReadInt("zDynaMap", "DynaMap", 1) != 0;
+    g_mapAlphaMode = zoptions->ReadInt("zDynaMap", "DynaMapAlpha", 1);
+    if (g_mapAlphaMode < 0 || g_mapAlphaMode > 3) g_mapAlphaMode = 1;
+}
 void Game_Exit() { MapDiagLog("[plugin] Game_Exit"); }
 void Game_PreLoop() { MapDiagRefreshMapState(); MapDiagUnlock(); MapDiagMouseTurn(); MapDiagMarker(); MapDiagFadeMap(); }
 void Game_Loop() { MapDiagUnlock(); }
