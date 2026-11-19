@@ -348,9 +348,25 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
     bool isArrow = g_docOpen && g_mapView &&
         self == (void*)&g_mapView->ViewArrow;
-    if (isArrow)
-        ((oCViewDocument*)self)->SetTextureAlpha(0);
+    static unsigned long loggedBlits = 0;
+    int beforeX = 0, beforeY = 0;
+    if (isArrow) {
+        oCViewDocument* arrow = (oCViewDocument*)self;
+        beforeX = arrow->PixelPosition.X;
+        beforeY = arrow->PixelPosition.Y;
+        arrow->SetTextureAlpha(0);
+    }
     Ivk_ViewArrow_Blit(self, edx);
+    if (isArrow && loggedBlits < 12) {
+        ++loggedBlits;
+        oCViewDocument* arrow = (oCViewDocument*)self;
+        MapDiagLog("[arrow-blit] call=%lu pos=%d,%d->%d,%d size=%d,%d virtualPos=%d,%d virtualSize=%d,%d",
+            loggedBlits, beforeX, beforeY,
+            arrow->PixelPosition.X, arrow->PixelPosition.Y,
+            arrow->PixelSize.X, arrow->PixelSize.Y,
+            arrow->VirtualPosition.X, arrow->VirtualPosition.Y,
+            arrow->VirtualSize.X, arrow->VirtualSize.Y);
+    }
 }
 
 // oCGame::CheckObjectRoutines() — G2A 0x006CABB0.
