@@ -645,6 +645,9 @@ static void MapDiagMouseTurn() {
 // overlay remains at full opacity.
 static void MapDiagFadeMap() {
     static oCViewDocumentMap* lastMap = NULL;
+    static oCViewDocument* lastPage = NULL;
+    static zTRnd_AlphaBlendFunc originalMapBlend = zRND_ALPHA_FUNC_MAT_DEFAULT;
+    static zTRnd_AlphaBlendFunc originalPageBlend = zRND_ALPHA_FUNC_MAT_DEFAULT;
     static int alpha = 255;
     static DWORD lastTick = 0;
     static bool fadeLogged = false;
@@ -652,11 +655,20 @@ static void MapDiagFadeMap() {
     const DWORD now = GetTickCount();
     if (g_mapView != lastMap) {
         lastMap = g_mapView;
+        lastPage = NULL;
         alpha = 255;
         lastTick = now;
         fadeLogged = false;
+        if (g_mapView)
+            originalMapBlend = g_mapView->TextureFuncAlpha;
     }
     if (!g_mapView) return;
+
+    oCViewDocument* page = g_mapView->ViewPageMap;
+    if (page && page != lastPage) {
+        lastPage = page;
+        originalPageBlend = page->TextureFuncAlpha;
+    }
 
     const bool moving =
         (GetAsyncKeyState('W') & 0x8000) != 0 ||
@@ -683,9 +695,19 @@ static void MapDiagFadeMap() {
         if (alpha < target) alpha = target;
     }
 
+    // SetTextureAlpha alone does not guarantee blending with every view's
+    // original material mode. Force alpha blending during the transition and
+    // restore each view's exact pre-fade mode once fully opaque again.
+    const zTRnd_AlphaBlendFunc blend = (alpha < 255)
+        ? zRND_ALPHA_FUNC_BLEND : originalMapBlend;
+    g_mapView->SetTextureAlphaBlendFunc(blend);
     g_mapView->SetTextureAlpha(alpha);
-    if (g_mapView->ViewPageMap)
-        g_mapView->ViewPageMap->SetTextureAlpha(alpha);
+    if (page) {
+        const zTRnd_AlphaBlendFunc pageBlend = (alpha < 255)
+            ? zRND_ALPHA_FUNC_BLEND : originalPageBlend;
+        page->SetTextureAlphaBlendFunc(pageBlend);
+        page->SetTextureAlpha(alpha);
+    }
 
     if (moving && !fadeLogged) {
         fadeLogged = true;
