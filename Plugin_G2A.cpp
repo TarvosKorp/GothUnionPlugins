@@ -71,7 +71,6 @@ static void PrepareSmoothArrow() {
     if (!g_pluginEnabled || !g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView)
         return;
 
-    g_mapView->ViewArrow.SetTextureAlpha(0);
     g_arrowPreparedMap = g_mapView;
 
     // Keep one reference to U.TGA for the plugin lifetime and reuse it
@@ -92,9 +91,6 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
 
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     oCViewDocumentMap* map = (oCViewDocumentMap*)self;
-    if (map && g_pluginEnabled)
-        map->ViewArrow.SetTextureAlpha(0);
-
     Ivk_MapView_UpdatePosition(self, edx);
 
     if (!map || !g_pluginEnabled)
@@ -139,13 +135,12 @@ static void DrawSmoothArrow() {
         return;
 
     oCViewDocument& arrow = g_mapView->ViewArrow;
-    zCTexture* currentTexture = arrow.Texture;
     const int x = arrow.PixelPosition.X;
     const int y = arrow.PixelPosition.Y;
     const int currentW = arrow.PixelSize.X;
     const int currentH = arrow.PixelSize.Y;
 
-    if (!currentTexture || currentW < 4 || currentH < 4)
+    if (currentW < 4 || currentH < 4)
         return;
 
     const DWORD now = GetTickCount();
@@ -228,10 +223,6 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
     0x006934A0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
-    if (g_pluginEnabled && g_docOpen && g_mapView &&
-        self == (void*)&g_mapView->ViewArrow) {
-        ((oCViewDocument*)self)->SetTextureAlpha(0);
-    }
     Ivk_ViewArrow_Blit(self, edx);
 }
 
@@ -241,9 +232,9 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_Game_CheckObjectRoutines(
     0x006CABB0, &Hook_Game_CheckObjectRoutines, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx) {
+    Ivk_Game_CheckObjectRoutines(self, edx);
     if (self == GOTHIC_ENGINE::ogame)
         DrawSmoothArrow();
-    Ivk_Game_CheckObjectRoutines(self, edx);
 }
 
 // Collect the horizontal mouse delta while the map is open.
