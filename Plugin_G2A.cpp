@@ -201,7 +201,7 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
         beforeMapPixelSize = map->PixelSize;
     }
     Ivk_MapView_UpdatePosition(self, edx);
-    if (map && loggedCalls < 6) {
+    if (map && loggedCalls < 2) {
         ++loggedCalls;
         oCNpc* hero = Gothic_II_Addon::player;
         zVEC3 heroPos = hero ? hero->GetPositionWorld() : zVEC3(0, 0, 0);
@@ -586,22 +586,7 @@ static void MapDiagMarker() {
         return;
     }
     warned = false;
-    static unsigned long loggedRefreshes = 0;
-    int beforeX = map->ViewArrow.PixelPosition.X;
-    int beforeY = map->ViewArrow.PixelPosition.Y;
     map->UpdatePosition();
-    if (loggedRefreshes < 6) {
-        ++loggedRefreshes;
-        oCNpc* probeHero = Gothic_II_Addon::player;
-        float px = 0, py = 0, pz = 0;
-        if (probeHero) probeHero->GetPositionWorld(px, py, pz);
-        MapDiagLog("[update-refresh] call=%lu map=%p arrowPos=%d,%d->%d,%d arrowSize=%d,%d mapPos=%d,%d mapSize=%d,%d hero=(%.0f,%.0f,%.0f)",
-            loggedRefreshes, map, beforeX, beforeY,
-            map->ViewArrow.PixelPosition.X, map->ViewArrow.PixelPosition.Y,
-            map->ViewArrow.PixelSize.X, map->ViewArrow.PixelSize.Y,
-            map->PixelPosition.X, map->PixelPosition.Y,
-            map->PixelSize.X, map->PixelSize.Y, px, py, pz);
-    }
     MapDiagPrepareSmoothArrow();
     if (!g_markerLogged) {
         g_markerLogged = true;
