@@ -76,6 +76,27 @@ void __fastcall Hook_MapView_Dtor(void* self, void* edx) {
     Ivk_MapView_Dtor(self, edx);
 }
 
+void __fastcall Hook_MapScreen_Show(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapScreen_Show(
+    0x00482100, &Hook_MapScreen_Show, IvkEnabled(Engine_G1A));
+
+void __fastcall Hook_MapScreen_Show(void* self, void* edx) {
+    const bool outer = (g_g1aDocumentShowDepth == 0);
+    if (outer)
+        g_g1aMapUpdateInShow = false;
+
+    ++g_g1aDocumentShowDepth;
+    Ivk_MapScreen_Show(self, edx);
+    --g_g1aDocumentShowDepth;
+
+    if (outer && g_g1aMapUpdateInShow) {
+        g_g1aMapIsCurrentDocument = true;
+        if (!g_docOpen)
+            g_mapOpenedAt = GetTickCount();
+        g_docOpen = true;
+    }
+}
+
 void __fastcall Hook_DocMan_Show(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_DocMan_Show(
     0x00761B30, &Hook_DocMan_Show, IvkEnabled(Engine_G1A));
