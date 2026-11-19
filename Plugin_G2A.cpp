@@ -180,23 +180,45 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     oCViewDocumentMap* map = (oCViewDocumentMap*)self;
     static unsigned long loggedCalls = 0;
-    int beforeX = 0, beforeY = 0, afterX = 0, afterY = 0;
+    zCPosition beforeVirtualPos = { 0, 0 };
+    zCPosition beforeVirtualSize = { 0, 0 };
+    zCPosition beforePixelPos = { 0, 0 };
+    zCPosition beforePixelSize = { 0, 0 };
+    zCPosition beforeMapVirtualPos = { 0, 0 };
+    zCPosition beforeMapVirtualSize = { 0, 0 };
+    zCPosition beforeMapPixelPos = { 0, 0 };
+    zCPosition beforeMapPixelSize = { 0, 0 };
     if (map) {
         g_earlyMapView = map;
         map->ViewArrow.SetTextureAlpha(0);
-        beforeX = map->ViewArrow.PixelPosition.X;
-        beforeY = map->ViewArrow.PixelPosition.Y;
+        beforeVirtualPos = map->ViewArrow.VirtualPosition;
+        beforeVirtualSize = map->ViewArrow.VirtualSize;
+        beforePixelPos = map->ViewArrow.PixelPosition;
+        beforePixelSize = map->ViewArrow.PixelSize;
+        beforeMapVirtualPos = map->VirtualPosition;
+        beforeMapVirtualSize = map->VirtualSize;
+        beforeMapPixelPos = map->PixelPosition;
+        beforeMapPixelSize = map->PixelSize;
     }
     Ivk_MapView_UpdatePosition(self, edx);
     if (map && loggedCalls < 6) {
         ++loggedCalls;
-        afterX = map->ViewArrow.PixelPosition.X;
-        afterY = map->ViewArrow.PixelPosition.Y;
-        MapDiagLog("[update-hook] call=%lu map=%p arrowPos=%d,%d->%d,%d arrowSize=%d,%d mapPos=%d,%d mapSize=%d,%d",
-            loggedCalls, map, beforeX, beforeY, afterX, afterY,
-            map->ViewArrow.PixelSize.X, map->ViewArrow.PixelSize.Y,
-            map->PixelPosition.X, map->PixelPosition.Y,
-            map->PixelSize.X, map->PixelSize.Y);
+        oCNpc* hero = Gothic_II_Addon::player;
+        zVEC3 heroPos = hero ? hero->GetPositionWorld() : zVEC3(0, 0, 0);
+        MapDiagLog("[update-hook] call=%lu map=%p hero=%p heroPos=(%.1f,%.1f,%.1f) levelCoords=(%.1f,%.1f,%.1f,%.1f)",
+            loggedCalls, map, hero, heroPos.n[0], heroPos.n[1], heroPos.n[2],
+            map->LevelCoords.n[0], map->LevelCoords.n[1], map->LevelCoords.n[2], map->LevelCoords.n[3]);
+        MapDiagLog("[update-hook] arrow virtualPos=%d,%d->%d,%d virtualSize=%d,%d->%d,%d pixelPos=%d,%d->%d,%d pixelSize=%d,%d->%d,%d",
+            beforeVirtualPos.X, beforeVirtualPos.Y, map->ViewArrow.VirtualPosition.X, map->ViewArrow.VirtualPosition.Y,
+            beforeVirtualSize.X, beforeVirtualSize.Y, map->ViewArrow.VirtualSize.X, map->ViewArrow.VirtualSize.Y,
+            beforePixelPos.X, beforePixelPos.Y, map->ViewArrow.PixelPosition.X, map->ViewArrow.PixelPosition.Y,
+            beforePixelSize.X, beforePixelSize.Y, map->ViewArrow.PixelSize.X, map->ViewArrow.PixelSize.Y);
+        MapDiagLog("[update-hook] map virtualPos=%d,%d->%d,%d virtualSize=%d,%d->%d,%d pixelPos=%d,%d->%d,%d pixelSize=%d,%d->%d,%d parent=%p",
+            beforeMapVirtualPos.X, beforeMapVirtualPos.Y, map->VirtualPosition.X, map->VirtualPosition.Y,
+            beforeMapVirtualSize.X, beforeMapVirtualSize.Y, map->VirtualSize.X, map->VirtualSize.Y,
+            beforeMapPixelPos.X, beforeMapPixelPos.Y, map->PixelPosition.X, map->PixelPosition.Y,
+            beforeMapPixelSize.X, beforeMapPixelSize.Y, map->PixelSize.X, map->PixelSize.Y,
+            map->ViewArrow.ViewParent);
     }
 }
 
