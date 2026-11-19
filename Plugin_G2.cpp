@@ -70,8 +70,6 @@ static oCViewDocumentMap* FindMapView() {
 static void PrepareSmoothArrow() {
     if (!g_pluginEnabled || !g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView)
         return;
-
-    g_mapView->ViewArrow.SetTextureAlpha(0);
     g_arrowPreparedMap = g_mapView;
 
     // Keep one reference to U.TGA for the plugin lifetime and reuse it
@@ -93,7 +91,6 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     oCViewDocumentMap* map = (oCViewDocumentMap*)self;
     if (map && g_pluginEnabled)
-        map->ViewArrow.SetTextureAlpha(0);
     Ivk_MapView_UpdatePosition(self, edx);
 
     if (!map || !g_pluginEnabled)
@@ -226,10 +223,8 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
     0x007A36F0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2));
 
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
-    if (g_pluginEnabled && g_docOpen && g_mapView &&
-        self == (void*)&g_mapView->ViewArrow) {
-        ((oCViewDocument*)self)->SetTextureAlpha(0);
-    }
+    // Keep the engine's native arrow visible until the replacement renderer
+    // has been verified in-game. A failed custom draw must never hide both.
     Ivk_ViewArrow_Blit(self, edx);
 }
 
