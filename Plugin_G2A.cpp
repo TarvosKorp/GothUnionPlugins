@@ -109,6 +109,7 @@ static float g_frameDx = 0.0f;
 static bool g_pluginEnabled = true;
 static bool g_mapAlphaEnabled = true;
 static int g_mapTransparency = 50; // 20-80%, in 5% increments
+static int g_mapCurrentAlpha = 255; // Actual map opacity, used to keep the marker half as transparent.
 
 // Mouse turn state.
 static float g_degPerUnit = MAPDIAG_MOUSE_DEG_PER_UNIT;
@@ -379,6 +380,9 @@ static void MapDiagDrawSmoothArrow() {
     const float halfH = (float)currentH * 0.5f;
     const float cx = (float)x + (float)anchorOffsetX + halfW;
     const float cy = (float)y + (float)anchorOffsetY + halfH;
+    // The marker receives half the map's current transparency, not half the configured target.
+    // Using the applied map alpha keeps both fades synchronized throughout the transition.
+    const int markerAlpha = (255 + g_mapCurrentAlpha + 1) / 2;
     const float lx[4] = { -halfW, halfW, halfW, -halfW };
     const float ly[4] = { -halfH, -halfH, halfH, halfH };
     const float tu[4] = { 0.f, 1.f, 1.f, 0.f };
@@ -390,7 +394,7 @@ static void MapDiagDrawSmoothArrow() {
         vertices[i].z = 1.f;
         vertices[i].uv.n[0] = tu[i];
         vertices[i].uv.n[1] = tv[i];
-        vertices[i].color = zCOLOR(255, 255, 255);
+        vertices[i].color = zCOLOR(255, 255, 255, markerAlpha);
     }
 
     // CheckObjectRoutines is the immediate-render stage used by the Coop
@@ -725,6 +729,7 @@ static void MapDiagFadeMap() {
         lastMap = g_mapView;
         lastPage = NULL;
         alpha = 255;
+        g_mapCurrentAlpha = 255;
         lastTick = now;
         fadeLogged = false;
         if (g_mapView) originalMapBlend = g_mapView->TextureFuncAlpha;
@@ -775,6 +780,8 @@ static void MapDiagFadeMap() {
             if (alpha < target) alpha = target;
         }
     }
+
+    g_mapCurrentAlpha = alpha;
 
     // Preserve the map's original blend modes when fully opaque. The GPS
     // overlay is a separate draw and therefore remains fully opaque.
