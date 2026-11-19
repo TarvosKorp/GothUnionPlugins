@@ -137,6 +137,7 @@ static bool g_arrowDrawLogged = false;
 static bool g_arrowBlitLogged = false;
 static bool g_markerLogged = false;
 static bool g_arrowGeometryLogged = false;
+static zCTexture* g_lastNativeArrowTexture = NULL;
 
 static void MapDiagPrepareSmoothArrow() {
     if (!g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView) return;
@@ -208,6 +209,19 @@ static void MapDiagDrawSmoothArrow() {
             g_mapView->PixelPosition.X, g_mapView->PixelPosition.Y,
             g_mapView->PixelSize.X, g_mapView->PixelSize.Y);
     }
+    // The engine selects one of its eight native arrow pages as the hero turns.
+    // Record each page transition together with the final pixel anchor. This lets
+    // us distinguish a coordinate shift from per-page artwork/pivot differences.
+    if (currentTexture != g_lastNativeArrowTexture) {
+        g_lastNativeArrowTexture = currentTexture;
+        int nativeW = 0, nativeH = 0;
+        if (currentTexture) currentTexture->GetPixelSize(nativeW, nativeH);
+        MapDiagLog("[arrow-page] texture=%p textureSize=%dx%d pixelPos=%d,%d pixelSize=%d,%d virtualPos=%d,%d virtualSize=%d,%d",
+            currentTexture, nativeW, nativeH, x, y, currentW, currentH,
+            arrow.VirtualPosition.X, arrow.VirtualPosition.Y,
+            arrow.VirtualSize.X, arrow.VirtualSize.Y);
+    }
+
     if (!currentTexture || currentW < 4 || currentH < 4) {
         static bool missingLogged = false;
         if (!missingLogged) {
