@@ -188,28 +188,14 @@ static DWORD g_lastArrowBlitLog = 0;
 
 static void MapDiagPrepareSmoothArrow() {
     if (!g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView) return;
-    // Hide the engine's eight-page arrow and load its canonical north-facing
-    // artwork directly. Never depend on whichever page the hero happened to
-    // be facing when the map was opened.
+    // ViewArrow is an oCViewDocument (zCViewDraw -> zCViewObject),
+    // not a zCView. Hide its page texture through the inherited draw API.
     g_mapView->ViewArrow.SetTextureAlpha(0);
     g_arrowPreparedMap = g_mapView;
-
-    zSTRING northName("U.TGA");
-    g_smoothArrowTexture = zCTexture::Load(northName, 0);
-    g_smoothArrowTextureReady = (g_smoothArrowTexture != NULL);
-    g_smoothArrowBaseAngle = 1.57079632679f;
-    if (g_smoothArrowTextureReady) {
-        g_smoothArrowTexture->GetPixelSize(g_smoothArrowWidth, g_smoothArrowHeight);
-    } else {
-        g_smoothArrowWidth = 0;
-        g_smoothArrowHeight = 0;
-    }
-
     int w = g_mapView->ViewArrow.VirtualSize.X;
     int h = g_mapView->ViewArrow.VirtualSize.Y;
-    MapDiagLog("[arrow] native arrow hidden map=%p view=%p virtual=%dx%d canonical=U.TGA texture=%p textureSize=%dx%d ready=%d",
-        g_mapView, &g_mapView->ViewArrow, w, h, g_smoothArrowTexture,
-        g_smoothArrowWidth, g_smoothArrowHeight, (int)g_smoothArrowTextureReady);
+    MapDiagLog("[arrow] native arrow alpha disabled map=%p view=%p size=%dx%d",
+        g_mapView, &g_mapView->ViewArrow, w, h);
 }
 
 static void MapDiagDrawSmoothArrow() {
@@ -235,7 +221,7 @@ static void MapDiagDrawSmoothArrow() {
     }
 
     // Sample heading at the same 25 Hz cadence as UpdatePosition().
-    // The artwork is always the explicitly loaded U.TGA (north/up).
+    // The renderer may draw every frame, but it reuses this synchronized sample.
     const DWORD now = GetTickCount();
     if (g_lastSmoothArrowAngleUpdate == 0 ||
         now - g_lastSmoothArrowAngleUpdate >= MAPDIAG_MARKER_MS) {
@@ -248,15 +234,35 @@ static void MapDiagDrawSmoothArrow() {
             dy /= len;
             g_smoothArrowAngle = atan2f(dy, dx);
             g_lastSmoothArrowAngleUpdate = now;
+
+            // The north/up page is the cardinal page at +90 degrees
+            // (page index 2). Cache that artwork and rotate it through all
+            // headings; unlike the diagonal page, its intrinsic orientation
+            // is unambiguous and does not introduce a 45-degree offset.
+            const float pageStep = 0.78539816339f;
+            const int pageIndex = (int)floorf(g_smoothArrowAngle / pageStep + 0.5f);
+            const float pageAngle = (float)pageIndex * pageStep;
+            if ((pageIndex == 2 || pageIndex == -6) && !g_smoothArrowTextureReady) {
+                g_smoothArrowTexture = currentTexture;
+                g_smoothArrowWidth = currentW;
+                g_smoothArrowHeight = currentH;
+                g_smoothArrowBaseAngle = 1.57079632679f;
+                g_smoothArrowTextureReady = true;
+                MapDiagLog("[arrow] cached north/up artwork tex=%p size=%dx%d base=%.3f page=%d",
+                    g_smoothArrowTexture, g_smoothArrowWidth, g_smoothArrowHeight,
+                    g_smoothArrowBaseAngle, pageIndex);
+            } else if (!g_smoothArrowTextureReady) {
+                g_smoothArrowBaseAngle = pageAngle;
+            }
         }
     }
 
-    // U.TGA is the north/up cardinal artwork: +90 degrees in this
-    // heading convention. The engine's current eight-way page is irrelevant.
+    // Until the north/up page has been observed, use the current page as a
+    // temporary fallback. Afterwards, keep that one texture permanently.
     zCTexture* texture = g_smoothArrowTextureReady ? g_smoothArrowTexture : currentTexture;
     const int w = g_smoothArrowTextureReady ? g_smoothArrowWidth : currentW;
     const int h = g_smoothArrowTextureReady ? g_smoothArrowHeight : currentH;
-    const float rotation = g_smoothArrowAngle - 1.57079632679f;
+    const float rotation = g_smoothArrowAngle - g_smoothArrowBaseAngle;
     const float c = cosf(rotation);
     const float sn = sinf(rotation);
 
