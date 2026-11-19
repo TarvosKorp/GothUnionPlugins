@@ -185,6 +185,11 @@ static DWORD g_lastSmoothArrowAngleUpdate = 0;
 static bool g_smoothArrowTextureReady = false;
 static unsigned long g_arrowBlitCalls = 0;
 static DWORD g_lastArrowBlitLog = 0;
+static bool g_captureNativeArrowBlit = false;
+static bool g_nativeArrowCenterValid = false;
+static float g_nativeArrowCenterX = 0.0f;
+static float g_nativeArrowCenterY = 0.0f;
+static DWORD g_lastNativeArrowGeometryLog = 0;
 
 static void MapDiagPrepareSmoothArrow() {
     if (!g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView) return;
@@ -263,8 +268,15 @@ static void MapDiagDrawSmoothArrow() {
     const float c = cosf(rotation);
     const float sn = sinf(rotation);
 
-    const float cx = (float)x + (float)currentW * 0.5f;
-    const float cy = (float)y + (float)currentH * 0.5f;
+    // Prefer the actual center submitted by the engine for its native arrow.
+    // PixelPosition/PixelSize describe the view rectangle, which may not be the
+    // exact quad center used by zCViewPrint::Blit.
+    const float cx = g_nativeArrowCenterValid
+        ? g_nativeArrowCenterX
+        : (float)x + (float)currentW * 0.5f;
+    const float cy = g_nativeArrowCenterValid
+        ? g_nativeArrowCenterY
+        : (float)y + (float)currentH * 0.5f;
     const float halfW = (float)w * 0.46f;
     const float halfH = (float)h * 0.46f;
     const float lx[4] = { -halfW, halfW, halfW, -halfW };
@@ -322,6 +334,44 @@ static void MapDiagDrawSmoothArrow() {
     }
 }
 
+// Capture the geometry submitted by the engine while ViewArrow::Blit is active.
+// This gives us the real vanilla anchor rather than inferring it from view bounds.
+void __fastcall Hook_MapDiag_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
+CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_MapDiag_DrawPolySimple(
+    0x0064AC30, &Hook_MapDiag_DrawPolySimple, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_MapDiag_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
+    if (g_captureNativeArrowBlit && verts && count >= 3 && count <= 8) {
+        float minX = 1.0e30f, minY = 1.0e30f;
+        float maxX = -1.0e30f, maxY = -1.0e30f;
+        for (int i = 0; i < count; ++i) {
+            const float vx = verts[i].pos.n[0];
+            const float vy = verts[i].pos.n[1];
+            if (vx < minX) minX = vx;
+            if (vx > maxX) maxX = vx;
+            if (vy < minY) minY = vy;
+            if (vy > maxY) maxY = vy;
+        }
+        const float width = maxX - minX;
+        const float height = maxY - minY;
+        // Ignore borders/lines and any unexpected large primitives.
+        if (width >= 4.0f && width <= 128.0f && height >= 4.0f && height <= 128.0f) {
+            g_nativeArrowCenterX = (minX + maxX) * 0.5f;
+            g_nativeArrowCenterY = (minY + maxY) * 0.5f;
+            g_nativeArrowCenterValid = true;
+            const DWORD now = GetTickCount();
+            if (g_lastNativeArrowGeometryLog == 0 || now - g_lastNativeArrowGeometryLog >= 1000) {
+                g_lastNativeArrowGeometryLog = now;
+                zSTRING texName = tex ? tex->GetObjectName() : zSTRING("<null>");
+                MapDiagLog("[arrow-anchor] native quad tex='%s' bounds=%.2f,%.2f..%.2f,%.2f center=%.2f,%.2f size=%.2fx%.2f count=%d",
+                    texName.ToChar(), minX, minY, maxX, maxY,
+                    g_nativeArrowCenterX, g_nativeArrowCenterY, width, height, count);
+            }
+        }
+    }
+    Ivk_MapDiag_DrawPolySimple(self, edx, tex, verts, count);
+}
+
 // zCViewPrint::Blit() — G2A 0x006934A0.
 // ViewArrow inherits this exact Blit implementation. Draw the replacement
 // immediately after its own native page has been blitted, not after root screen.
@@ -330,15 +380,28 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
     0x006934A0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
-    bool isArrow = g_docOpen && g_mapView &&
-        self == (void*)&g_mapView->ViewArrow;
+    oCViewDocumentMap* candidateMap = (oCViewDocumentMap*)((char*)self - 0xFC);
+    const unsigned int candidateVptr = candidateMap ? *(unsigned int*)candidateMap : 0;
+    const bool isMapArrow = candidateVptr == 0x0083BACC ||
+        candidateVptr == 0x0083BA9C || candidateVptr == 0x0083BAA4;
+    const bool isArrow = isMapArrow ||
+        (g_docOpen && g_mapView && self == (void*)&g_mapView->ViewArrow);
 
-    if (isArrow)
+    if (isArrow) {
         ((oCViewDocument*)self)->SetTextureAlpha(0);
+        if (isMapArrow) {
+            g_mapView = candidateMap;
+            g_arrowPreparedMap = candidateMap;
+            g_docOpen = true;
+        }
+        g_captureNativeArrowBlit = true;
+        g_nativeArrowCenterValid = false;
+    }
 
     Ivk_ViewArrow_Blit(self, edx);
 
     if (isArrow) {
+        g_captureNativeArrowBlit = false;
         ++g_arrowBlitCalls;
         DWORD now = GetTickCount();
         if (g_lastArrowBlitLog == 0 || now - g_lastArrowBlitLog >= 1000) {
