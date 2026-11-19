@@ -332,8 +332,10 @@ CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Iv
 
 void __fastcall Hook_Rnd_DrawPolySimple(
     void* self, void* edx, zCTexture* texture, zTRndSimpleVertex* vertices, int count) {
-    if (g_pluginEnabled && g_docOpen && g_mapView && !g_drawingSmoothArrow &&
-        texture && texture == g_mapView->ViewArrow.Texture)
+    // Keep stock-arrow suppression independent from docOpen. On a reused
+    // map document, its first blit can precede the next document-state refresh.
+    if (g_pluginEnabled && g_g1aMapViewCandidate && !g_drawingSmoothArrow &&
+        texture && texture == g_g1aMapViewCandidate->ViewArrow.Texture)
         return;
     Ivk_Rnd_DrawPolySimple(self, edx, texture, vertices, count);
 }
