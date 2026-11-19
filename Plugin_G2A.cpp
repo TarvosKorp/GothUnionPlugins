@@ -345,9 +345,10 @@ static void MapDiagDrawSmoothArrow() {
     DWORD drawNow = GetTickCount();
     if (g_lastArrowDrawLog == 0 || drawNow - g_lastArrowDrawLog >= 1000) {
         g_lastArrowDrawLog = drawNow;
-        MapDiagLog("[arrow] renderer draw #%lu rect=%d,%d %dx%d tex=%p screen=%dx%d rotation=%.3f cachedNorth=%d",
-            g_smoothArrowDraws, x, y, w, h, texture, sw, sh, rotation,
-            (int)g_smoothArrowTextureReady);
+        MapDiagLog("[arrow] renderer draw #%lu rect=%d,%d %dx%d center=%.2f,%.2f anchor=%s tex=%p screen=%dx%d rotation=%.3f canonical=%d",
+            g_smoothArrowDraws, x, y, w, h, cx, cy,
+            g_nativeArrowCenterValid ? "native" : "view-fallback",
+            texture, sw, sh, rotation, (int)g_smoothArrowTextureReady);
     }
 }
 
@@ -414,8 +415,9 @@ void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
         DWORD now = GetTickCount();
         if (g_lastArrowBlitLog == 0 || now - g_lastArrowBlitLog >= 1000) {
             g_lastArrowBlitLog = now;
-            MapDiagLog("[arrow] ViewArrow::Blit #%lu self=%p map=%p",
-                g_arrowBlitCalls, self, g_mapView);
+            MapDiagLog("[arrow] ViewArrow::Blit #%lu self=%p map=%p anchor=%d center=%.2f,%.2f",
+                g_arrowBlitCalls, self, g_mapView, (int)g_nativeArrowCenterValid,
+                g_nativeArrowCenterX, g_nativeArrowCenterY);
         }
     }
 }
@@ -756,6 +758,8 @@ void Game_Entry() {
     MapDiagHookState("Input::GetMousePos", const_cast<THookInfo&>(Ivk_Input_GetMousePos.GetHookInfo()));
     MapDiagHookState("DocumentManager::HandleEvent", const_cast<THookInfo&>(Ivk_DocMan_HandleEvent.GetHookInfo()));
     MapDiagHookState("ViewArrow::Blit", const_cast<THookInfo&>(Ivk_ViewArrow_Blit.GetHookInfo()));
+    MapDiagHookState("Renderer::DrawPolySimple", const_cast<THookInfo&>(Ivk_MapDiag_DrawPolySimple.GetHookInfo()));
+    MapDiagHookState("MapView::UpdatePosition", const_cast<THookInfo&>(Ivk_MapView_UpdatePosition.GetHookInfo()));
     MapDiagHookState("Game::CheckObjectRoutines", const_cast<THookInfo&>(Ivk_Game_CheckObjectRoutines.GetHookInfo()));
     MapDiagRuntimeProbe("Game_Entry");
 }
