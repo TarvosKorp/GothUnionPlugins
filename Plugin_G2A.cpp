@@ -217,6 +217,23 @@ static void MapDiagPrepareSmoothArrow() {
         g_smoothArrowWidth, g_smoothArrowHeight, (int)g_smoothArrowTextureReady);
 }
 
+
+// Catch the engine's first map-position update. It runs before the map's
+// ViewArrow is blitted, so the stock arrow can be hidden before its first frame.
+void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
+    0x0068D7B0, &Hook_MapView_UpdatePosition, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
+    oCViewDocumentMap* map = (oCViewDocumentMap*)self;
+    if (map) {
+        g_mapView = map;
+        g_docOpen = true;
+        map->ViewArrow.SetTextureAlpha(0);
+    }
+    Ivk_MapView_UpdatePosition(self, edx);
+}
+
 static void MapDiagDrawSmoothArrow() {
     if (!g_docOpen || !g_mapView) return;
     oCNpc* hero = Gothic_II_Addon::player;
@@ -380,19 +397,11 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
     0x006934A0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
-    oCViewDocumentMap* candidateMap = (oCViewDocumentMap*)((char*)self - 0xFC);
-    const unsigned int candidateVptr = candidateMap ? *(unsigned int*)candidateMap : 0;
-    const bool isMapArrow = candidateVptr == 0x0083BACC ||
-        candidateVptr == 0x0083BA9C || candidateVptr == 0x0083BAA4;
-    const bool isArrow = isMapArrow ||
-        (g_docOpen && g_mapView && self == (void*)&g_mapView->ViewArrow);
+    const bool isArrow = g_docOpen && g_mapView &&
+        self == (void*)&g_mapView->ViewArrow;
 
     if (isArrow) {
         ((oCViewDocument*)self)->SetTextureAlpha(0);
-        if (isMapArrow) {
-            g_mapView = candidateMap;
-            g_docOpen = true;
-        }
         g_captureNativeArrowBlit = true;
         g_nativeArrowCenterValid = false;
     }
