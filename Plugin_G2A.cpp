@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <math.h>
+#include <stdlib.h>
 #include <intrin.h>
 
 // zDynaMap — live GPS marker, movement unlock, mouse turn and configurable map fade.
@@ -873,7 +874,7 @@ int Change_DynaMapAlpha(zCOptionEntry& entry) {
 int Change_DynaMapTransparency(zCOptionEntry& entry) {
     // Gothic sliders store normalized real values from 0.0 to 1.0.
     // Thirteen positions map to 20,25,...,80 percent transparency.
-    float sliderValue = entry.varValueTemp.ToFloat();
+    float sliderValue = (float)atof(entry.varValueTemp.ToChar());
     if (sliderValue < 0.0f) sliderValue = 0.0f;
     if (sliderValue > 1.0f) sliderValue = 1.0f;
     const int step = (int)(sliderValue * 12.0f + 0.5f);
