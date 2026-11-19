@@ -252,10 +252,13 @@ static void MapDiagDrawSmoothArrow() {
     }
 
     // U.TGA is the north/up cardinal artwork: +90 degrees in this
-    // heading convention. The engine's current eight-way page is irrelevant.
-    zCTexture* texture = g_smoothArrowTextureReady ? g_smoothArrowTexture : currentTexture;
-    const int w = g_smoothArrowTextureReady ? g_smoothArrowWidth : currentW;
-    const int h = g_smoothArrowTextureReady ? g_smoothArrowHeight : currentH;
+    // heading convention. Never fall back to the engine's changing 8-way page.
+    if (!g_smoothArrowTextureReady || !g_smoothArrowTexture ||
+        g_smoothArrowWidth < 4 || g_smoothArrowHeight < 4)
+        return;
+    zCTexture* texture = g_smoothArrowTexture;
+    const int w = g_smoothArrowWidth;
+    const int h = g_smoothArrowHeight;
     const float rotation = g_smoothArrowAngle - 1.57079632679f;
     const float c = cosf(rotation);
     const float sn = sinf(rotation);
