@@ -131,19 +131,8 @@ static float g_smoothArrowBaseAngle = 0.0f;
 static float g_smoothArrowAngle = 1.57079632679f;
 static DWORD g_lastSmoothArrowAngleUpdate = 0;
 static bool g_smoothArrowTextureReady = false;
-static bool g_captureNativeArrowBlit = false;
-static bool g_drawingSmoothArrow = false;
-static bool g_diagMapPageSeen = false;
-static bool g_diagMapPageLogged = false;
-static bool g_diagSmoothArrowLogged = false;
-static float g_diagMapLeft = 0.0f;
-static float g_diagMapRight = 0.0f;
-static unsigned long g_diagDrawSequence = 0;
-static int g_diagDrawHookDepth = 0;
-static bool g_nativeArrowCenterValid = false;
-static float g_nativeArrowCenterX = 0.0f;
-static float g_nativeArrowCenterY = 0.0f;
-static bool g_nativeArrowGeometryLogged = false;
+static unsigned long g_smoothArrowDraws = 0;
+static DWORD g_lastArrowDrawLog = 0;
 static bool g_arrowDrawLogged = false;
 static bool g_arrowBlitLogged = false;
 static bool g_markerLogged = false;
@@ -155,12 +144,6 @@ static void MapDiagPrepareSmoothArrow() {
     // be facing when the map was opened.
     g_mapView->ViewArrow.SetTextureAlpha(0);
     g_arrowPreparedMap = g_mapView;
-    g_nativeArrowGeometryLogged = false;
-    g_diagMapPageSeen = false;
-    g_diagMapPageLogged = false;
-    g_diagSmoothArrowLogged = false;
-    g_diagMapLeft = 0.0f;
-    g_diagMapRight = 0.0f;
     g_arrowDrawLogged = false;
     g_arrowBlitLogged = false;
     g_markerLogged = false;
@@ -199,15 +182,13 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     Ivk_MapView_UpdatePosition(self, edx);
 }
 
-static void MapDiagDrawSmoothArrow(oCViewDocumentMap* map) {
-    // Use the exact map instance whose ViewArrow::Blit is currently executing.
-    // g_earlyMapView may still point to a previous map document after close/reopen.
-    if (!map) return;
+static void MapDiagDrawSmoothArrow() {
+    if (!g_docOpen || !g_mapView) return;
     oCNpc* hero = Gothic_II_Addon::player;
     zCRenderer* renderer = Gothic_II_Addon::zrenderer;
     if (!hero || !renderer) return;
 
-    oCViewDocument& arrow = map->ViewArrow;
+    oCViewDocument& arrow = g_mapView->ViewArrow;
     zCTexture* currentTexture = arrow.Texture;
     const int x = arrow.PixelPosition.X;
     const int y = arrow.PixelPosition.Y;
@@ -252,15 +233,8 @@ static void MapDiagDrawSmoothArrow(oCViewDocumentMap* map) {
     const float c = cosf(rotation);
     const float sn = sinf(rotation);
 
-    // Prefer the actual center submitted by the engine for its native arrow.
-    // PixelPosition/PixelSize describe the view rectangle, which may not be the
-    // exact quad center used by zCViewPrint::Blit.
-    const float cx = g_nativeArrowCenterValid
-        ? g_nativeArrowCenterX
-        : (float)x + (float)currentW * 0.5f;
-    const float cy = g_nativeArrowCenterValid
-        ? g_nativeArrowCenterY
-        : (float)y + (float)currentH * 0.5f;
+    const float cx = (float)x + (float)currentW * 0.5f;
+    const float cy = (float)y + (float)currentH * 0.5f;
     const float halfW = (float)w * 0.46f;
     const float halfH = (float)h * 0.46f;
     const float lx[4] = { -halfW, halfW, halfW, -halfW };
@@ -302,147 +276,49 @@ static void MapDiagDrawSmoothArrow(oCViewDocumentMap* map) {
     renderer->SetAlphaBlendFunc(zRND_ALPHA_FUNC_BLEND);
     renderer->SetBilerpFilterEnabled(TRUE);
     renderer->SetViewport(0, 0, sw, sh);
-    // Mark only our own submission so the renderer hook can distinguish it
-    // from the native arrow and the map page.
-    const bool wasDrawingSmoothArrow = g_drawingSmoothArrow;
-    g_drawingSmoothArrow = true;
     renderer->DrawPolySimple(texture, vertices, 4);
-    g_drawingSmoothArrow = wasDrawingSmoothArrow;
     renderer->SetBilerpFilterEnabled(oldBilerp);
     renderer->SetAlphaBlendFunc(oldAlpha);
     renderer->SetZBufferCompare(oldZCmp);
     renderer->SetZBufferWriteEnabled(oldZWrite);
 
-    if (!g_arrowDrawLogged) {
-        g_arrowDrawLogged = true;
-        MapDiagLog("[arrow] first draw rect=%d,%d %dx%d center=%.2f,%.2f anchor=%s screen=%dx%d rotation=%.3f",
-            x, y, w, h, cx, cy,
-            g_nativeArrowCenterValid ? "native" : "view-fallback",
-            sw, sh, rotation);
+    ++g_smoothArrowDraws;
+    DWORD drawNow = GetTickCount();
+    if (g_lastArrowDrawLog == 0 || drawNow - g_lastArrowDrawLog >= 1000) {
+        g_lastArrowDrawLog = drawNow;
+        MapDiagLog("[arrow] renderer draw #%lu rect=%d,%d %dx%d tex=%p screen=%dx%d rotation=%.3f cachedNorth=%d",
+            g_smoothArrowDraws, x, y, w, h, texture, sw, sh, rotation,
+            (int)g_smoothArrowTextureReady);
     }
-}
-
-// Capture the geometry submitted by the engine while ViewArrow::Blit is active.
-// This gives us the real vanilla anchor rather than inferring it from view bounds.
-void __fastcall Hook_MapDiag_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count);
-CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Ivk_MapDiag_DrawPolySimple(
-    0x0064AC30, &Hook_MapDiag_DrawPolySimple, IvkEnabled(Engine_G2A));
-
-void __fastcall Hook_MapDiag_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
-    const int hookDepth = ++g_diagDrawHookDepth;
-    const unsigned long sequence = ++g_diagDrawSequence;
-
-    // Observe the map-page and replacement-arrow calls at the exact shared
-    // DrawPolySimple hook point. MirrorWorld uses the same target and applies
-    // its X transform only after it has recognized the map page.
-    if (g_docOpen && verts && count > 0 && count <= 64) {
-        float minX = 1.0e30f, minY = 1.0e30f;
-        float maxX = -1.0e30f, maxY = -1.0e30f;
-        for (int i = 0; i < count; ++i) {
-            const float vx = verts[i].pos.n[0];
-            const float vy = verts[i].pos.n[1];
-            if (vx < minX) minX = vx;
-            if (vx > maxX) maxX = vx;
-            if (vy < minY) minY = vy;
-            if (vy > maxY) maxY = vy;
-        }
-        zSTRING textureName = tex ? tex->GetObjectName() : zSTRING("<null>");
-        const char* textureText = textureName.ToChar();
-        const bool namedMapPage = textureText && _strnicmp(textureText, "MAP", 3) == 0;
-        zCRenderer* diagRenderer = Gothic_II_Addon::zrenderer;
-        const int screenW = diagRenderer ? *(int*)((char*)diagRenderer + 0x98C) : 0;
-        const int screenH = diagRenderer ? *(int*)((char*)diagRenderer + 0x990) : 0;
-        const bool largeMapQuad = !g_diagMapPageSeen && screenW > 0 && screenH > 0 &&
-            (maxX - minX) >= 0.3f * (float)screenW && (maxY - minY) >= 0.4f * (float)screenH;
-        if (!g_diagMapPageSeen && (namedMapPage || largeMapQuad)) {
-            g_diagMapPageSeen = true;
-            g_diagMapLeft = minX;
-            g_diagMapRight = maxX;
-            if (!g_diagMapPageLogged) {
-                g_diagMapPageLogged = true;
-                MapDiagLog("[draw-chain] map-page seq=%lu depth=%d tex='%s' bounds=%.2f,%.2f..%.2f,%.2f count=%d detect=%s",
-                    sequence, hookDepth, textureText ? textureText : "<null>",
-                    minX, minY, maxX, maxY, count, namedMapPage ? "name" : "large-quad");
-            }
-        }
-        if (g_drawingSmoothArrow && !g_diagSmoothArrowLogged) {
-            g_diagSmoothArrowLogged = true;
-            const bool inside = g_diagMapPageSeen &&
-                minX >= g_diagMapLeft - 1.0f && maxX <= g_diagMapRight + 1.0f;
-            MapDiagLog("[draw-chain] smooth-arrow seq=%lu depth=%d tex='%s' bounds=%.2f,%.2f..%.2f,%.2f mapPageSeen=%d mapX=%.2f..%.2f inside=%d count=%d",
-                sequence, hookDepth, textureText ? textureText : "<null>",
-                minX, minY, maxX, maxY, (int)g_diagMapPageSeen,
-                g_diagMapLeft, g_diagMapRight, (int)inside, count);
-        }
-    }
-
-    if (g_captureNativeArrowBlit && verts && count >= 3 && count <= 8) {
-        float minX = 1.0e30f, minY = 1.0e30f;
-        float maxX = -1.0e30f, maxY = -1.0e30f;
-        for (int i = 0; i < count; ++i) {
-            const float vx = verts[i].pos.n[0];
-            const float vy = verts[i].pos.n[1];
-            if (vx < minX) minX = vx;
-            if (vx > maxX) maxX = vx;
-            if (vy < minY) minY = vy;
-            if (vy > maxY) maxY = vy;
-        }
-        const float width = maxX - minX;
-        const float height = maxY - minY;
-        // Ignore borders/lines and any unexpected large primitives.
-        if (width >= 4.0f && width <= 128.0f && height >= 4.0f && height <= 128.0f) {
-            g_nativeArrowCenterX = (minX + maxX) * 0.5f;
-            g_nativeArrowCenterY = (minY + maxY) * 0.5f;
-            g_nativeArrowCenterValid = true;
-            if (!g_nativeArrowGeometryLogged) {
-                g_nativeArrowGeometryLogged = true;
-                zSTRING texName = tex ? tex->GetObjectName() : zSTRING("<null>");
-                MapDiagLog("[arrow-anchor] native quad tex='%s' bounds=%.2f,%.2f..%.2f,%.2f center=%.2f,%.2f size=%.2fx%.2f count=%d",
-                    texName.ToChar(), minX, minY, maxX, maxY,
-                    g_nativeArrowCenterX, g_nativeArrowCenterY, width, height, count);
-            }
-        }
-    }
-    Ivk_MapDiag_DrawPolySimple(self, edx, tex, verts, count);
-    --g_diagDrawHookDepth;
 }
 
 // zCViewPrint::Blit() — G2A 0x006934A0.
-// ViewArrow inherits this exact Blit implementation. Draw the replacement
-// immediately after its own native page has been blitted, not after root screen.
+// Keep the native eight-way arrow fully transparent. The replacement is drawn
+// separately at CheckObjectRoutines, as in the last confirmed working build.
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
     0x006934A0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
-    oCViewDocumentMap* arrowMap = NULL;
-    if (g_mapView && self == (void*)&g_mapView->ViewArrow)
-        arrowMap = g_mapView;
-    else if (g_earlyMapView && self == (void*)&g_earlyMapView->ViewArrow)
-        arrowMap = g_earlyMapView;
-    const bool isArrow = arrowMap != NULL;
-
-    if (isArrow) {
+    bool isArrow = g_docOpen && g_mapView &&
+        self == (void*)&g_mapView->ViewArrow;
+    if (isArrow)
         ((oCViewDocument*)self)->SetTextureAlpha(0);
-        g_captureNativeArrowBlit = true;
-        g_nativeArrowCenterValid = false;
-    }
-
     Ivk_ViewArrow_Blit(self, edx);
+}
 
-    if (isArrow) {
-        g_captureNativeArrowBlit = false;
-        if (!g_arrowBlitLogged) {
-            g_arrowBlitLogged = true;
-            MapDiagLog("[arrow] first Blit self=%p map=%p anchor=%d center=%.2f,%.2f",
-                self, g_mapView ? g_mapView : g_earlyMapView, (int)g_nativeArrowCenterValid,
-                g_nativeArrowCenterX, g_nativeArrowCenterY);
-        }
-        // Submit the replacement at the exact point where the stock arrow is
-        // rendered. MirrorWorld processes map quads in this UI draw phase;
-        // CheckObjectRoutines is too late for its per-map-quad transform.
-        MapDiagDrawSmoothArrow(arrowMap);
-    }
+// oCGame::CheckObjectRoutines() — G2A 0x006CABB0.
+// Restore the render stage used by the confirmed 29b411d implementation.
+// The plugin no longer hooks DrawPolySimple; its quad now passes through the
+// renderer hook installed by MirrorWorld instead of competing with it.
+void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_Game_CheckObjectRoutines(
+    0x006CABB0, &Hook_Game_CheckObjectRoutines, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx) {
+    if (self == Gothic_II_Addon::ogame)
+        MapDiagDrawSmoothArrow();
+    Ivk_Game_CheckObjectRoutines(self, edx);
 }
 
 // ---------------------------------------------------------------- input hooks
@@ -716,7 +592,7 @@ void Game_Entry() {
     MapDiagHookState("Input::GetMousePos", const_cast<THookInfo&>(Ivk_Input_GetMousePos.GetHookInfo()));
     MapDiagHookState("DocumentManager::HandleEvent", const_cast<THookInfo&>(Ivk_DocMan_HandleEvent.GetHookInfo()));
     MapDiagHookState("ViewArrow::Blit", const_cast<THookInfo&>(Ivk_ViewArrow_Blit.GetHookInfo()));
-    MapDiagHookState("Renderer::DrawPolySimple", const_cast<THookInfo&>(Ivk_MapDiag_DrawPolySimple.GetHookInfo()));
+    MapDiagHookState("Game::CheckObjectRoutines", const_cast<THookInfo&>(Ivk_Game_CheckObjectRoutines.GetHookInfo()));
     MapDiagHookState("MapView::UpdatePosition", const_cast<THookInfo&>(Ivk_MapView_UpdatePosition.GetHookInfo()));
     MapDiagRuntimeProbe("Game_Entry");
 }
