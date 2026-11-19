@@ -300,6 +300,14 @@ static void RefreshMapState() {
         g_nativeAnchorCorrectionY = 0;
     }
 
+    // Match 71f698b: every open/close transition invalidates the cached
+    // replacement texture. Otherwise a reopen can draw immediately with the
+    // previous session's ready flag and stale marker geometry, before the
+    // 250 ms opening grace period and the first fresh UpdatePosition().
+    g_smoothArrowTexture = NULL;
+    g_smoothArrowWidth = 0;
+    g_smoothArrowHeight = 0;
+    g_smoothArrowTextureReady = false;
     g_smoothArrowAngle = 1.57079632679f;
     g_lastSmoothArrowAngleUpdate = 0;
 }
