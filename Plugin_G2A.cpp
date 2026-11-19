@@ -349,8 +349,9 @@ void __fastcall Hook_MapDiag_DrawPolySimple(void* self, void* edx, zCTexture* te
         zSTRING textureName = tex ? tex->GetObjectName() : zSTRING("<null>");
         const char* textureText = textureName.ToChar();
         const bool namedMapPage = textureText && _strnicmp(textureText, "MAP", 3) == 0;
-        const int screenW = *(int*)((char*)Gothic_II_Addon::zrenderer + 0x98C);
-        const int screenH = *(int*)((char*)Gothic_II_Addon::zrenderer + 0x990);
+        zCRenderer* diagRenderer = Gothic_II_Addon::zrenderer;
+        const int screenW = diagRenderer ? *(int*)((char*)diagRenderer + 0x98C) : 0;
+        const int screenH = diagRenderer ? *(int*)((char*)diagRenderer + 0x990) : 0;
         const bool largeMapQuad = !g_diagMapPageSeen && screenW > 0 && screenH > 0 &&
             (maxX - minX) >= 0.3f * (float)screenW && (maxY - minY) >= 0.4f * (float)screenH;
         if (!g_diagMapPageSeen && (namedMapPage || largeMapQuad)) {
