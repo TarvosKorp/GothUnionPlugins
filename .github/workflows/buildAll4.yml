@@ -36,12 +36,19 @@ jobs:
               /p:Platform=Win32 `
               /p:PlatformToolset=v143 `
               "/p:TargetName=$($v.dll)" `
-              "/p:SolutionDir=$($PWD.Path)\"
+              "/p:SolutionDir=$($PWD.Path)\\"
           }
+
+      - name: Include zSamplePlugin Union menu configuration
+        shell: pwsh
+        run: |
+          Copy-Item -Force 'Plugin.d' 'Bin/zSamplePlagin.d'
 
       - name: Upload DLLs (one archive)
         uses: actions/upload-artifact@v4
         with:
           name: zSamplePlugin-all-dlls
-          path: Bin/*.dll
+          path: |
+            Bin/*.dll
+            Bin/zSamplePlagin.d
           if-no-files-found: error

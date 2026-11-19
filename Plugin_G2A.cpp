@@ -3,8 +3,20 @@
 
 namespace GOTHIC_ENGINE {
 
+static bool g_samplePluginEnabled = true;
+
 void Game_Entry() {}
-void Game_Init() {}
+
+int Change_SamplePluginEnabled(zCOptionEntry& entry) {
+    g_samplePluginEnabled = entry.varValueTemp.ToInt32() != 0;
+    return 0;
+}
+
+void Game_Init() {
+    if (!zoptions) return;
+    zoptions->InsertChangeHandler("zSamplePlugin", "Enabled", Change_SamplePluginEnabled);
+    g_samplePluginEnabled = zoptions->ReadInt("zSamplePlugin", "Enabled", 1) != 0;
+}
 void Game_Exit() {}
 
 void Game_PreLoop() {}
