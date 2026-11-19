@@ -468,3 +468,11 @@ Next test:
 Follow-up source correction:
 - Commit 468780b6c8c4450f150e28c8fd10dce5dbc7109b.
 - Corrected the fallback rotation to use the currently selected page's quantized base angle until the north/up texture has been captured. This prevents an initial orientation error during the short pre-cache period.
+
+## 2026-11-19 — diagnostic log cleanup
+- User noted that zMapUnlocker.log had become unnecessarily verbose and asked to retain only useful diagnostics at lower frequency.
+- Feature commit 30d25aade1a65adffc283dc4642aeee7ea8618d2 removes per-input GetState/GetToggled/GetMousePos records, callback/statistics spam, caller histograms, repeated hero probes, and frequent marker/mouse-turn samples.
+- Feature commit 2e61ed29cd532462043ee0f93b7b7719dbf90919 removes now-unused diagnostic counters.
+- Retained: startup hook states (including DrawPolySimple and MapView::UpdatePosition), map open/close, one hero state snapshot per transition, arrow texture preparation, first native anchor candidate, first ViewArrow::Blit, first custom draw with chosen anchor source, and one-time failure warnings. Marker position/heading is logged once per map opening. No per-frame or per-second arrow/input spam.
+- The log is still reset at Game_Entry. The old Temp/zMapUnlocker.log is a historical copy and is not the fresh runtime log from the user's latest test.
+- Next test: build latest feature branch, launch game, open map once without MirrorWorld and once with MirrorWorld, then send the fresh System/zMapUnlocker.log. The current task is to diagnose anchor coordinate mismatch and MirrorWorld interaction.
