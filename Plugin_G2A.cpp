@@ -96,6 +96,7 @@ void MapDiagCwd(const char* stage) {
 
 // ---------------------------------------------------------------- shared state
 static volatile bool g_docOpen = false;          // synchronized from the live document list
+static DWORD g_mapOpenedAt = 0;
 static oCViewDocumentMap* g_mapView = NULL;
 static float g_frameDx = 0.0f;
 
@@ -462,6 +463,7 @@ static void MapDiagRefreshMapState() {
     g_mapView = current;
     g_earlyMapView = current;
     g_docOpen = (current != NULL);
+    g_mapOpenedAt = g_docOpen ? now : 0;
     g_frameDx = 0.0f;
     if (!current) g_arrowPreparedMap = NULL;
     g_smoothArrowTexture = NULL;
@@ -534,6 +536,10 @@ static void MapDiagMarker() {
     static DWORD last = 0;
     static bool warned = false;
     DWORD now = GetTickCount();
+    // The engine already performs the initial UpdatePosition while opening the map.
+    // Do not issue our own refresh during that same opening transition: the log showed
+    // that an immediate second call moves the arrow anchor by exactly 8x8 pixels.
+    if (g_mapOpenedAt != 0 && now - g_mapOpenedAt < 250) return;
     if (now - last < MAPDIAG_MARKER_MS) return;
     last = now;
     oCViewDocumentMap* map = g_mapView;
