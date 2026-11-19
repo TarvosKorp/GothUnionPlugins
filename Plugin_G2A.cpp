@@ -702,7 +702,8 @@ static void MapDiagFadeMap() {
     lastTick = now;
     if (elapsed > 50) elapsed = 50;
     if (alpha != target && elapsed != 0) {
-        const int range = (target < 255) ? (255 - target) : 255;
+        int range = 255 - movingAlpha;
+        if (range < 1) range = 255;
         int step = (range * (int)elapsed + MAPDIAG_MAP_FADE_MS - 1) /
             MAPDIAG_MAP_FADE_MS;
         if (step < 1) step = 1;

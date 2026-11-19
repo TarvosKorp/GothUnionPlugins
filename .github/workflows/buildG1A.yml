@@ -41,6 +41,6 @@ jobs:
         with:
           name: zSamplePlugin-G1A-dll
           path: |
-          Bin/*.dll
-          Bin/zDynaMap.d
+            Bin/*.dll
+            Bin/zDynaMap.d
           if-no-files-found: error
