@@ -136,6 +136,7 @@ static DWORD g_lastArrowDrawLog = 0;
 static bool g_arrowDrawLogged = false;
 static bool g_arrowBlitLogged = false;
 static bool g_markerLogged = false;
+static bool g_arrowGeometryLogged = false;
 
 static void MapDiagPrepareSmoothArrow() {
     if (!g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView) return;
@@ -147,6 +148,7 @@ static void MapDiagPrepareSmoothArrow() {
     g_arrowDrawLogged = false;
     g_arrowBlitLogged = false;
     g_markerLogged = false;
+    g_arrowGeometryLogged = false;
 
     zSTRING northName("U.TGA");
     g_smoothArrowTexture = zCTexture::Load(northName, 0);
@@ -194,6 +196,18 @@ static void MapDiagDrawSmoothArrow() {
     const int y = arrow.PixelPosition.Y;
     const int currentW = arrow.PixelSize.X;
     const int currentH = arrow.PixelSize.Y;
+    if (!g_arrowGeometryLogged) {
+        g_arrowGeometryLogged = true;
+        MapDiagLog("[arrow-geometry] map=%p arrow=%p virtualPos=%d,%d virtualSize=%d,%d pixelPos=%d,%d pixelSize=%d,%d mapVirtualPos=%d,%d mapVirtualSize=%d,%d mapPixelPos=%d,%d mapPixelSize=%d,%d",
+            g_mapView, &arrow,
+            arrow.VirtualPosition.X, arrow.VirtualPosition.Y,
+            arrow.VirtualSize.X, arrow.VirtualSize.Y,
+            x, y, currentW, currentH,
+            g_mapView->VirtualPosition.X, g_mapView->VirtualPosition.Y,
+            g_mapView->VirtualSize.X, g_mapView->VirtualSize.Y,
+            g_mapView->PixelPosition.X, g_mapView->PixelPosition.Y,
+            g_mapView->PixelSize.X, g_mapView->PixelSize.Y);
+    }
     if (!currentTexture || currentW < 4 || currentH < 4) {
         static bool missingLogged = false;
         if (!missingLogged) {
