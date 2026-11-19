@@ -216,10 +216,13 @@ static void MapDiagDrawSmoothArrow() {
         g_lastNativeArrowTexture = currentTexture;
         int nativeW = 0, nativeH = 0;
         if (currentTexture) currentTexture->GetPixelSize(nativeW, nativeH);
-        MapDiagLog("[arrow-page] texture=%p textureSize=%dx%d pixelPos=%d,%d pixelSize=%d,%d virtualPos=%d,%d virtualSize=%d,%d",
+        zVEC3 pageHeading = hero->GetAtVectorWorld();
+        const float pageAngle = atan2f(-pageHeading.n[2], pageHeading.n[0]);
+        MapDiagLog("[arrow-page] texture=%p textureSize=%dx%d pixelPos=%d,%d pixelSize=%d,%d virtualPos=%d,%d virtualSize=%d,%d heroHeading=(%.3f,%.3f) angle=%.3f",
             currentTexture, nativeW, nativeH, x, y, currentW, currentH,
             arrow.VirtualPosition.X, arrow.VirtualPosition.Y,
-            arrow.VirtualSize.X, arrow.VirtualSize.Y);
+            arrow.VirtualSize.X, arrow.VirtualSize.Y,
+            pageHeading.n[0], pageHeading.n[2], pageAngle);
     }
 
     if (!currentTexture || currentW < 4 || currentH < 4) {
