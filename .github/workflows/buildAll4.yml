@@ -36,7 +36,7 @@ jobs:
               /p:Platform=Win32 `
               /p:PlatformToolset=v143 `
               "/p:TargetName=$($v.dll)" `
-              "/p:SolutionDir=$($PWD.Path)\\"
+              "/p:SolutionDir=$($PWD.Path)\"
           }
 
       - name: Include zSamplePlugin Union menu configuration
