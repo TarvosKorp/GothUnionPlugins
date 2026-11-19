@@ -18,6 +18,8 @@ static const unsigned int MAP_RENDERER_HEIGHT_OFFSET = 0x990;
 static volatile bool g_docOpen = false;
 static DWORD g_mapOpenedAt = 0;
 static oCViewDocumentMap* g_mapView = NULL;
+// Persistent identity for suppressing the stock arrow even before docOpen is refreshed.
+static oCViewDocumentMap* g_nativeMapView = NULL;
 static float g_frameDx = 0.0f;
 
 static bool g_pluginEnabled = true;
@@ -88,6 +90,7 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
 
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     oCViewDocumentMap* map = (oCViewDocumentMap*)self;
+    if (map) g_nativeMapView = map;
     if (map && g_pluginEnabled) {
         // Register the map before the engine's first opening-frame render.
         // This lets the arrow blit hook suppress the native marker immediately.
@@ -251,8 +254,10 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
     0x007A36F0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2));
 
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
-    if (g_pluginEnabled && g_docOpen && g_mapView &&
-        self == (void*)&g_mapView->ViewArrow) {
+    // Do not gate this on g_docOpen: the document-list refresh can lag behind
+    // the first blit when an existing map view is reopened.
+    if (g_pluginEnabled && g_nativeMapView &&
+        self == (void*)&g_nativeMapView->ViewArrow) {
         ((oCViewDocument*)self)->SetTextureAlpha(0);
     }
     Ivk_ViewArrow_Blit(self, edx);
