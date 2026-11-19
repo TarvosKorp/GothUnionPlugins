@@ -132,6 +132,14 @@ static float g_smoothArrowAngle = 1.57079632679f;
 static DWORD g_lastSmoothArrowAngleUpdate = 0;
 static bool g_smoothArrowTextureReady = false;
 static bool g_captureNativeArrowBlit = false;
+static bool g_drawingSmoothArrow = false;
+static bool g_diagMapPageSeen = false;
+static bool g_diagMapPageLogged = false;
+static bool g_diagSmoothArrowLogged = false;
+static float g_diagMapLeft = 0.0f;
+static float g_diagMapRight = 0.0f;
+static unsigned long g_diagDrawSequence = 0;
+static int g_diagDrawHookDepth = 0;
 static bool g_nativeArrowCenterValid = false;
 static float g_nativeArrowCenterX = 0.0f;
 static float g_nativeArrowCenterY = 0.0f;
@@ -148,6 +156,11 @@ static void MapDiagPrepareSmoothArrow() {
     g_mapView->ViewArrow.SetTextureAlpha(0);
     g_arrowPreparedMap = g_mapView;
     g_nativeArrowGeometryLogged = false;
+    g_diagMapPageSeen = false;
+    g_diagMapPageLogged = false;
+    g_diagSmoothArrowLogged = false;
+    g_diagMapLeft = 0.0f;
+    g_diagMapRight = 0.0f;
     g_arrowDrawLogged = false;
     g_arrowBlitLogged = false;
     g_markerLogged = false;
@@ -289,7 +302,12 @@ static void MapDiagDrawSmoothArrow(oCViewDocumentMap* map) {
     renderer->SetAlphaBlendFunc(zRND_ALPHA_FUNC_BLEND);
     renderer->SetBilerpFilterEnabled(TRUE);
     renderer->SetViewport(0, 0, sw, sh);
+    // Mark only our own submission so the renderer hook can distinguish it
+    // from the native arrow and the map page.
+    const bool wasDrawingSmoothArrow = g_drawingSmoothArrow;
+    g_drawingSmoothArrow = true;
     renderer->DrawPolySimple(texture, vertices, 4);
+    g_drawingSmoothArrow = wasDrawingSmoothArrow;
     renderer->SetBilerpFilterEnabled(oldBilerp);
     renderer->SetAlphaBlendFunc(oldAlpha);
     renderer->SetZBufferCompare(oldZCmp);
@@ -311,6 +329,52 @@ CInvoke<void(__fastcall*)(void*, void*, zCTexture*, zTRndSimpleVertex*, int)> Iv
     0x0064AC30, &Hook_MapDiag_DrawPolySimple, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_MapDiag_DrawPolySimple(void* self, void* edx, zCTexture* tex, zTRndSimpleVertex* verts, int count) {
+    const int hookDepth = ++g_diagDrawHookDepth;
+    const unsigned long sequence = ++g_diagDrawSequence;
+
+    // Observe the map-page and replacement-arrow calls at the exact shared
+    // DrawPolySimple hook point. MirrorWorld uses the same target and applies
+    // its X transform only after it has recognized the map page.
+    if (g_docOpen && verts && count > 0 && count <= 64) {
+        float minX = 1.0e30f, minY = 1.0e30f;
+        float maxX = -1.0e30f, maxY = -1.0e30f;
+        for (int i = 0; i < count; ++i) {
+            const float vx = verts[i].pos.n[0];
+            const float vy = verts[i].pos.n[1];
+            if (vx < minX) minX = vx;
+            if (vx > maxX) maxX = vx;
+            if (vy < minY) minY = vy;
+            if (vy > maxY) maxY = vy;
+        }
+        zSTRING textureName = tex ? tex->GetObjectName() : zSTRING("<null>");
+        const char* textureText = textureName.ToChar();
+        const bool namedMapPage = textureText && _strnicmp(textureText, "MAP", 3) == 0;
+        const int screenW = *(int*)((char*)Gothic_II_Addon::zrenderer + 0x98C);
+        const int screenH = *(int*)((char*)Gothic_II_Addon::zrenderer + 0x990);
+        const bool largeMapQuad = !g_diagMapPageSeen && screenW > 0 && screenH > 0 &&
+            (maxX - minX) >= 0.3f * (float)screenW && (maxY - minY) >= 0.4f * (float)screenH;
+        if (!g_diagMapPageSeen && (namedMapPage || largeMapQuad)) {
+            g_diagMapPageSeen = true;
+            g_diagMapLeft = minX;
+            g_diagMapRight = maxX;
+            if (!g_diagMapPageLogged) {
+                g_diagMapPageLogged = true;
+                MapDiagLog("[draw-chain] map-page seq=%lu depth=%d tex='%s' bounds=%.2f,%.2f..%.2f,%.2f count=%d detect=%s",
+                    sequence, hookDepth, textureText ? textureText : "<null>",
+                    minX, minY, maxX, maxY, count, namedMapPage ? "name" : "large-quad");
+            }
+        }
+        if (g_drawingSmoothArrow && !g_diagSmoothArrowLogged) {
+            g_diagSmoothArrowLogged = true;
+            const bool inside = g_diagMapPageSeen &&
+                minX >= g_diagMapLeft - 1.0f && maxX <= g_diagMapRight + 1.0f;
+            MapDiagLog("[draw-chain] smooth-arrow seq=%lu depth=%d tex='%s' bounds=%.2f,%.2f..%.2f,%.2f mapPageSeen=%d mapX=%.2f..%.2f inside=%d count=%d",
+                sequence, hookDepth, textureText ? textureText : "<null>",
+                minX, minY, maxX, maxY, (int)g_diagMapPageSeen,
+                g_diagMapLeft, g_diagMapRight, (int)inside, count);
+        }
+    }
+
     if (g_captureNativeArrowBlit && verts && count >= 3 && count <= 8) {
         float minX = 1.0e30f, minY = 1.0e30f;
         float maxX = -1.0e30f, maxY = -1.0e30f;
@@ -339,6 +403,7 @@ void __fastcall Hook_MapDiag_DrawPolySimple(void* self, void* edx, zCTexture* te
         }
     }
     Ivk_MapDiag_DrawPolySimple(self, edx, tex, verts, count);
+    --g_diagDrawHookDepth;
 }
 
 // zCViewPrint::Blit() — G2A 0x006934A0.
