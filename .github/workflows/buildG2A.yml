@@ -31,9 +31,16 @@ jobs:
             "/p:TargetName=zSamplePluginG2A" `
             "/p:SolutionDir=$($PWD.Path)\"
 
+      - name: Include zSamplePlugin Union menu configuration
+        shell: pwsh
+        run: |
+          Copy-Item -Force 'Plugin.d' 'Bin/zSamplePlagin.d'
+
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
           name: zSamplePlugin-G2A-dll
-          path: Bin/*.dll
+          path: |
+            Bin/*.dll
+            Bin/zSamplePlagin.d
           if-no-files-found: error
