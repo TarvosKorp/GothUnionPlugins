@@ -1,37 +1,37 @@
-189443875 | [plugin] Game_Entry UNLOCK=1 MARKER=1 MOUSE=1
-189443875 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590870 detour=71202180
-189443875 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365908B8 detour=712021A0
-189443875 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590900 detour=712021B0
-189443875 | [hook] DocumentManager::HandleEvent hooked=1 exists=1 original=0065F450 trampoline=36590948 detour=71202210
-189443875 | [hook] ViewArrow::Blit hooked=1 exists=1 original=006934A0 trampoline=365907E0 detour=71202110
-189443875 | [hook] Game::CheckObjectRoutines hooked=1 exists=1 original=006CABB0 trampoline=36590828 detour=71202150
-189443875 | [hook] MapView::UpdatePosition hooked=1 exists=1 original=0068D7B0 trampoline=36590798 detour=712018E0
-189443875 | [runtime] Game_Entry zinput=NULL
-189460562 | [update-hook] call=1 map=33D1C138 arrowPos=0,0->989,651 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080
-189460562 | [doc] OPEN mapView=33D1C138
-189460562 | [docs] mapView=33D1C138 vptr=0083BACC
-189460562 | [hero] map-open player=27F61038 interactItem=33D9E430 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-189460562 | [unlock] movement lock cleared
-189460562 | [update-hook] call=2 map=33D1C138 arrowPos=989,651->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080
-189460562 | [update-refresh] call=1 map=33D1C138 arrowPos=989,651->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5078)
-189460562 | [arrow] native arrow hidden map=33D1C138 view=33D1C234 virtual=8192x8192 canonical=U.TGA texture=30A17368 textureSize=16x16 ready=1
-189460562 | [marker] first update map=33D1C138 hero=(-42,-945,-5078) heading=(0.02,-1.00)
-189460593 | [arrow-geometry] map=33D1C138 arrow=33D1C234 virtualPos=0,0 virtualSize=8192,8192 pixelPos=981,643 pixelSize=16,16 mapVirtualPos=0,0 mapVirtualSize=8192,8192 mapPixelPos=0,0 mapPixelSize=1920,1080
-189460593 | [arrow-page] texture=30A17368 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.019,-1.000) angle=1.552
-189460593 | [arrow] renderer draw #1 rect=981,643 16x16 tex=30A17368 screen=1920x1080 rotation=-0.019 cachedNorth=1
-189460609 | [update-hook] call=3 map=33D1C138 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080
-189460609 | [update-refresh] call=2 map=33D1C138 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5078)
-189460656 | [update-hook] call=4 map=33D1C138 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080
-189460656 | [update-refresh] call=3 map=33D1C138 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5078)
-189460718 | [update-hook] call=5 map=33D1C138 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080
-189460718 | [update-refresh] call=4 map=33D1C138 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5078)
-189460781 | [update-hook] call=6 map=33D1C138 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080
-189460781 | [update-refresh] call=5 map=33D1C138 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5078)
-189460828 | [update-refresh] call=6 map=33D1C138 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5078)
-189461609 | [arrow] renderer draw #49 rect=981,643 16x16 tex=30A17368 screen=1920x1080 rotation=-0.019 cachedNorth=1
-189462609 | [arrow] renderer draw #101 rect=981,643 16x16 tex=30A17368 screen=1920x1080 rotation=-0.019 cachedNorth=1
-189463609 | [arrow] renderer draw #153 rect=981,643 16x16 tex=30A17368 screen=1920x1080 rotation=-0.019 cachedNorth=1
-189464328 | [doc] ESC close event original=1
-189464343 | [doc] CLOSE
-189464343 | [hero] map-close player=27F61038 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-189467781 | [plugin] Game_Exit
+189933906 | [plugin] Game_Entry UNLOCK=1 MARKER=1 MOUSE=1
+189933906 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590870 detour=71202180
+189933906 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365908B8 detour=712021A0
+189933906 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590900 detour=712021B0
+189933906 | [hook] DocumentManager::HandleEvent hooked=1 exists=1 original=0065F450 trampoline=36590948 detour=71202210
+189933906 | [hook] ViewArrow::Blit hooked=1 exists=1 original=006934A0 trampoline=365907E0 detour=71202110
+189933906 | [hook] Game::CheckObjectRoutines hooked=1 exists=1 original=006CABB0 trampoline=36590828 detour=71202150
+189933906 | [hook] MapView::UpdatePosition hooked=1 exists=1 original=0068D7B0 trampoline=36590798 detour=712018E0
+189933906 | [runtime] Game_Entry zinput=NULL
+189950640 | [update-hook] call=1 map=3406B150 arrowPos=0,0->989,651 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080
+189950671 | [doc] OPEN mapView=3406B150
+189950671 | [docs] mapView=3406B150 vptr=0083BACC
+189950671 | [hero] map-open player=28044498 interactItem=3437A590 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+189950671 | [unlock] movement lock cleared
+189950687 | [arrow-geometry] map=3406B150 arrow=3406B24C virtualPos=0,0 virtualSize=8192,8192 pixelPos=989,651 pixelSize=16,16 mapVirtualPos=0,0 mapVirtualSize=8192,8192 mapPixelPos=0,0 mapPixelSize=1920,1080
+189950687 | [arrow-page] texture=322F8848 textureSize=16x16 pixelPos=989,651 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.001,-1.000) angle=1.570
+189950921 | [update-hook] call=2 map=3406B150 arrowPos=989,651->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080
+189950921 | [update-refresh] call=1 map=3406B150 arrowPos=989,651->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5079)
+189950921 | [arrow] native arrow hidden map=3406B150 view=3406B24C virtual=8192x8192 canonical=U.TGA texture=322F8848 textureSize=16x16 ready=1
+189950921 | [marker] first update map=3406B150 hero=(-42,-945,-5079) heading=(0.00,-1.00)
+189950937 | [arrow-geometry] map=3406B150 arrow=3406B24C virtualPos=0,0 virtualSize=8192,8192 pixelPos=981,643 pixelSize=16,16 mapVirtualPos=0,0 mapVirtualSize=8192,8192 mapPixelPos=0,0 mapPixelSize=1920,1080
+189950937 | [arrow] renderer draw #1 rect=981,643 16x16 tex=322F8848 screen=1920x1080 rotation=-0.001 cachedNorth=1
+189950968 | [update-hook] call=3 map=3406B150 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080
+189950968 | [update-refresh] call=2 map=3406B150 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5079)
+189951015 | [update-hook] call=4 map=3406B150 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080
+189951015 | [update-refresh] call=3 map=3406B150 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5079)
+189951078 | [update-hook] call=5 map=3406B150 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080
+189951078 | [update-refresh] call=4 map=3406B150 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5079)
+189951125 | [update-hook] call=6 map=3406B150 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080
+189951125 | [update-refresh] call=5 map=3406B150 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5079)
+189951171 | [update-refresh] call=6 map=3406B150 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5079)
+189951937 | [arrow] renderer draw #53 rect=981,643 16x16 tex=322F8848 screen=1920x1080 rotation=-0.001 cachedNorth=1
+189952937 | [arrow] renderer draw #105 rect=981,643 16x16 tex=322F8848 screen=1920x1080 rotation=-0.001 cachedNorth=1
+189953359 | [doc] ESC close event original=1
+189953406 | [doc] CLOSE
+189953406 | [hero] map-close player=28044498 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+189955921 | [plugin] Game_Exit
