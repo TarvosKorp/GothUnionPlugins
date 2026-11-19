@@ -88,13 +88,31 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
 
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     oCViewDocumentMap* map = (oCViewDocumentMap*)self;
-    if (map && g_pluginEnabled)
+    if (map && g_pluginEnabled) {
+        // Register the map before the engine's first opening-frame render.
+        // This lets the arrow blit hook suppress the native marker immediately.
+        if (g_mapView != map) {
+            g_mapView = map;
+            g_docOpen = true;
+            g_mapOpenedAt = GetTickCount();
+            g_frameDx = 0.0f;
+            g_arrowPreparedMap = NULL;
+        } else if (!g_docOpen) {
+            g_docOpen = true;
+            g_mapOpenedAt = GetTickCount();
+            g_frameDx = 0.0f;
+        }
         map->ViewArrow.SetTextureAlpha(0);
+    }
 
     Ivk_MapView_UpdatePosition(self, edx);
 
     if (!map || !g_pluginEnabled)
         return;
+
+    // UpdatePosition restores the native texture alpha; suppress it again
+    // before the first subsequent view blit.
+    map->ViewArrow.SetTextureAlpha(0);
 
     if (g_nativeAnchorMap != map) {
         g_nativeAnchorMap = map;
