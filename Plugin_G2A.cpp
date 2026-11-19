@@ -36,7 +36,7 @@
 #define MAPDIAG_MARKER 1
 #endif
 #ifndef MAPDIAG_MARKER_MS
-#define MAPDIAG_MARKER_MS 100     // 10 updates per second
+#define MAPDIAG_MARKER_MS 40      // 25 updates per second; synchronized with arrow heading sampling
 #endif
 #ifndef MAPDIAG_MOUSE_TURN
 #define MAPDIAG_MOUSE_TURN 1
@@ -167,6 +167,196 @@ static void MapDiagTick() {
         g_lastHero = now;
         MapDiagHeroProbe("tick");
     }
+}
+
+// ---------------------------------------------------------------- smooth map arrow
+// The stock map arrow is an eight-page document. Hide only that small arrow view
+// and draw a continuously oriented pointer into the same view after the screen
+// has rendered its normal contents.
+static oCViewDocumentMap* g_arrowPreparedMap = NULL;
+static unsigned long g_smoothArrowDraws = 0;
+static DWORD g_lastArrowDrawLog = 0;
+static zCTexture* g_smoothArrowTexture = NULL;
+static int g_smoothArrowWidth = 0;
+static int g_smoothArrowHeight = 0;
+static float g_smoothArrowBaseAngle = 0.0f;
+static float g_smoothArrowAngle = 1.57079632679f;
+static DWORD g_lastSmoothArrowAngleUpdate = 0;
+static bool g_smoothArrowTextureReady = false;
+static unsigned long g_arrowBlitCalls = 0;
+static DWORD g_lastArrowBlitLog = 0;
+
+static void MapDiagPrepareSmoothArrow() {
+    if (!g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView) return;
+    // Hide the engine's eight-page arrow and load its canonical north-facing
+    // artwork directly. Never depend on whichever page the hero happened to
+    // be facing when the map was opened.
+    g_mapView->ViewArrow.SetTextureAlpha(0);
+    g_arrowPreparedMap = g_mapView;
+
+    zSTRING northName("U.TGA");
+    g_smoothArrowTexture = zCTexture::Load(northName, 0);
+    g_smoothArrowTextureReady = (g_smoothArrowTexture != NULL);
+    g_smoothArrowBaseAngle = 1.57079632679f;
+    if (g_smoothArrowTextureReady) {
+        g_smoothArrowTexture->GetPixelSize(g_smoothArrowWidth, g_smoothArrowHeight);
+    } else {
+        g_smoothArrowWidth = 0;
+        g_smoothArrowHeight = 0;
+    }
+
+    int w = g_mapView->ViewArrow.VirtualSize.X;
+    int h = g_mapView->ViewArrow.VirtualSize.Y;
+    MapDiagLog("[arrow] native arrow hidden map=%p view=%p virtual=%dx%d canonical=U.TGA texture=%p textureSize=%dx%d ready=%d",
+        g_mapView, &g_mapView->ViewArrow, w, h, g_smoothArrowTexture,
+        g_smoothArrowWidth, g_smoothArrowHeight, (int)g_smoothArrowTextureReady);
+}
+
+static void MapDiagDrawSmoothArrow() {
+    if (!g_docOpen || !g_mapView) return;
+    oCNpc* hero = Gothic_II_Addon::player;
+    zCRenderer* renderer = Gothic_II_Addon::zrenderer;
+    if (!hero || !renderer) return;
+
+    oCViewDocument& arrow = g_mapView->ViewArrow;
+    zCTexture* currentTexture = arrow.Texture;
+    const int x = arrow.PixelPosition.X;
+    const int y = arrow.PixelPosition.Y;
+    const int currentW = arrow.PixelSize.X;
+    const int currentH = arrow.PixelSize.Y;
+    if (!currentTexture || currentW < 4 || currentH < 4) {
+        static bool missingLogged = false;
+        if (!missingLogged) {
+            missingLogged = true;
+            MapDiagLog("[arrow] direct draw unavailable texture=%p pixel=%d,%d %dx%d virtual=%dx%d",
+                currentTexture, x, y, currentW, currentH, arrow.VirtualSize.X, arrow.VirtualSize.Y);
+        }
+        return;
+    }
+
+    // Sample heading at the same 25 Hz cadence as UpdatePosition().
+    // The artwork is always the explicitly loaded U.TGA (north/up).
+    const DWORD now = GetTickCount();
+    if (g_lastSmoothArrowAngleUpdate == 0 ||
+        now - g_lastSmoothArrowAngleUpdate >= MAPDIAG_MARKER_MS) {
+        zVEC3 at = hero->GetAtVectorWorld();
+        float dx = at.n[0];
+        float dy = -at.n[2];
+        const float len = sqrtf(dx * dx + dy * dy);
+        if (len >= 0.001f) {
+            dx /= len;
+            dy /= len;
+            g_smoothArrowAngle = atan2f(dy, dx);
+            g_lastSmoothArrowAngleUpdate = now;
+        }
+    }
+
+    // U.TGA is the north/up cardinal artwork: +90 degrees in this
+    // heading convention. The engine's current eight-way page is irrelevant.
+    zCTexture* texture = g_smoothArrowTextureReady ? g_smoothArrowTexture : currentTexture;
+    const int w = g_smoothArrowTextureReady ? g_smoothArrowWidth : currentW;
+    const int h = g_smoothArrowTextureReady ? g_smoothArrowHeight : currentH;
+    const float rotation = g_smoothArrowAngle - 1.57079632679f;
+    const float c = cosf(rotation);
+    const float sn = sinf(rotation);
+
+    const float cx = (float)x + (float)currentW * 0.5f;
+    const float cy = (float)y + (float)currentH * 0.5f;
+    const float halfW = (float)w * 0.46f;
+    const float halfH = (float)h * 0.46f;
+    const float lx[4] = { -halfW, halfW, halfW, -halfW };
+    const float ly[4] = { -halfH, -halfH, halfH, halfH };
+    const float tu[4] = { 0.f, 1.f, 1.f, 0.f };
+    const float tv[4] = { 0.f, 0.f, 1.f, 1.f };
+    zTRndSimpleVertex vertices[4];
+    for (int i = 0; i < 4; ++i) {
+        vertices[i].pos.n[0] = cx + c * lx[i] - sn * ly[i];
+        vertices[i].pos.n[1] = cy + sn * lx[i] + c * ly[i];
+        vertices[i].z = 1.f;
+        vertices[i].uv.n[0] = tu[i];
+        vertices[i].uv.n[1] = tv[i];
+        vertices[i].color = zCOLOR(255, 255, 255);
+    }
+
+    // CheckObjectRoutines is the immediate-render stage used by the Coop
+    // marker implementation. View::Line() queues line primitives too late here;
+    // DrawPolySimple submits the textured quad directly before EndFrame.
+    // G2A layout differs from G1: zCRnd_D3D screen width/height are
+    // at +0x98C/+0x990. +0x984/+0x988 are the G1 offsets.
+    const int sw = *(int*)((char*)renderer + 0x98C);
+    const int sh = *(int*)((char*)renderer + 0x990);
+    if (sw < 320 || sw > 16384 || sh < 200 || sh > 16384) {
+        static bool badScreenLogged = false;
+        if (!badScreenLogged) {
+            badScreenLogged = true;
+            MapDiagLog("[arrow] invalid renderer dimensions screen=%dx%d", sw, sh);
+        }
+        return;
+    }
+
+    const int oldZWrite = renderer->GetZBufferWriteEnabled();
+    const zTRnd_ZBufferCmp oldZCmp = renderer->GetZBufferCompare();
+    const zTRnd_AlphaBlendFunc oldAlpha = renderer->GetAlphaBlendFunc();
+    const int oldBilerp = renderer->GetBilerpFilterEnabled();
+    renderer->SetZBufferWriteEnabled(FALSE);
+    renderer->SetZBufferCompare(zRND_ZBUFFER_CMP_ALWAYS);
+    renderer->SetAlphaBlendFunc(zRND_ALPHA_FUNC_BLEND);
+    renderer->SetBilerpFilterEnabled(TRUE);
+    renderer->SetViewport(0, 0, sw, sh);
+    renderer->DrawPolySimple(texture, vertices, 4);
+    renderer->SetBilerpFilterEnabled(oldBilerp);
+    renderer->SetAlphaBlendFunc(oldAlpha);
+    renderer->SetZBufferCompare(oldZCmp);
+    renderer->SetZBufferWriteEnabled(oldZWrite);
+
+    ++g_smoothArrowDraws;
+    DWORD drawNow = GetTickCount();
+    if (g_lastArrowDrawLog == 0 || drawNow - g_lastArrowDrawLog >= 1000) {
+        g_lastArrowDrawLog = drawNow;
+        MapDiagLog("[arrow] renderer draw #%lu rect=%d,%d %dx%d tex=%p screen=%dx%d rotation=%.3f cachedNorth=%d",
+            g_smoothArrowDraws, x, y, w, h, texture, sw, sh, rotation,
+            (int)g_smoothArrowTextureReady);
+    }
+}
+
+// zCViewPrint::Blit() — G2A 0x006934A0.
+// ViewArrow inherits this exact Blit implementation. Draw the replacement
+// immediately after its own native page has been blitted, not after root screen.
+void __fastcall Hook_ViewArrow_Blit(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
+    0x006934A0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
+    bool isArrow = g_docOpen && g_mapView &&
+        self == (void*)&g_mapView->ViewArrow;
+
+    if (isArrow)
+        ((oCViewDocument*)self)->SetTextureAlpha(0);
+
+    Ivk_ViewArrow_Blit(self, edx);
+
+    if (isArrow) {
+        ++g_arrowBlitCalls;
+        DWORD now = GetTickCount();
+        if (g_lastArrowBlitLog == 0 || now - g_lastArrowBlitLog >= 1000) {
+            g_lastArrowBlitLog = now;
+            MapDiagLog("[arrow] ViewArrow::Blit #%lu self=%p map=%p",
+                g_arrowBlitCalls, self, g_mapView);
+        }
+    }
+}
+
+// oCGame::CheckObjectRoutines() — G2A 0x006CABB0.
+// oCGame::Render calls this after zCViewDraw::Render and before EndFrame.
+// Coop's proven map-overlay implementation uses this exact stage.
+void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx);
+CInvoke<void(__fastcall*)(void*, void*)> Ivk_Game_CheckObjectRoutines(
+    0x006CABB0, &Hook_Game_CheckObjectRoutines, IvkEnabled(Engine_G2A));
+
+void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx) {
+    if (self == Gothic_II_Addon::ogame)
+        MapDiagDrawSmoothArrow();
+    Ivk_Game_CheckObjectRoutines(self, edx);
 }
 
 // ---------------------------------------------------------------- input hooks
@@ -303,6 +493,14 @@ static void MapDiagRefreshMapState() {
     g_mapView = current;
     g_docOpen = (current != NULL);
     g_frameDx = 0.0f;
+    if (!current) g_arrowPreparedMap = NULL;
+    g_smoothArrowTexture = NULL;
+    g_smoothArrowWidth = 0;
+    g_smoothArrowHeight = 0;
+    g_smoothArrowBaseAngle = 1.57079632679f;
+    g_smoothArrowAngle = 1.57079632679f;
+    g_lastSmoothArrowAngleUpdate = 0;
+    g_smoothArrowTextureReady = false;
 
     if (g_docOpen) {
         g_lastStats = 0;
@@ -387,6 +585,7 @@ static void MapDiagMarker() {
     }
     warned = false;
     map->UpdatePosition();
+    MapDiagPrepareSmoothArrow();
     ++n;
     if (n <= 3 || n % 10 == 0) {
         oCNpc* hero = Gothic_II_Addon::player;
@@ -481,6 +680,8 @@ void Game_Entry() {
     MapDiagHookState("Input::GetToggled", const_cast<THookInfo&>(Ivk_Input_GetToggled.GetHookInfo()));
     MapDiagHookState("Input::GetMousePos", const_cast<THookInfo&>(Ivk_Input_GetMousePos.GetHookInfo()));
     MapDiagHookState("DocumentManager::HandleEvent", const_cast<THookInfo&>(Ivk_DocMan_HandleEvent.GetHookInfo()));
+    MapDiagHookState("ViewArrow::Blit", const_cast<THookInfo&>(Ivk_ViewArrow_Blit.GetHookInfo()));
+    MapDiagHookState("Game::CheckObjectRoutines", const_cast<THookInfo&>(Ivk_Game_CheckObjectRoutines.GetHookInfo()));
     MapDiagRuntimeProbe("Game_Entry");
 }
 
