@@ -35,7 +35,9 @@ instance MENU_DYNA_MAP_SETTINGS(C_MENU_DEF)
   items[2]  = "zDynaMap:MENUITEM_DYNAMAP_CHOICE";
   items[3]  = "zDynaMap:MENUITEM_ALPHA";
   items[4]  = "zDynaMap:MENUITEM_ALPHA_CHOICE";
-  items[5]  = "UNION_MENUITEM_BACK";
+  items[5]  = "zDynaMap:MENUITEM_TRANSPARENCY";
+  items[6]  = "zDynaMap:MENUITEM_TRANSPARENCY_SLIDER";
+  items[7]  = "UNION_MENUITEM_BACK";
   flags     = flags | MENU_SHOW_INFO;
 };
 
@@ -123,6 +125,41 @@ instance MENUITEM_ALPHA_CHOICE(C_MENU_ITEM_DEF)
   posy += MENU_DY * 2;
   onchgsetoption        = "DynaMapAlpha";
   onchgsetoptionsection = SECTION;
-  // Index 0 disables fading; then 30%, 50% and 70% transparency.
-  text[0] = "100%|30%|50%|70%";
+  text[0] = Str_GetLocalizedString(
+    "выкл|вкл",
+    "off|on",
+    "aus|an",
+    "wył.|wł."
+  );
+};
+
+instance MENUITEM_TRANSPARENCY(C_MENU_ITEM)
+{
+  C_MENU_ITEM_TEXT_BASE();
+  posy += MENU_DY * 3;
+  text[0] = Str_GetLocalizedString(
+    "Прозрачность",
+    "Transparency",
+    "Transparenz",
+    "Przezroczystość"
+  );
+};
+
+instance MENUITEM_TRANSPARENCY_SLIDER(C_MENU_ITEM_DEF)
+{
+  backpic = MENU_SLIDER_BACK_PIC;
+  type = MENU_ITEM_SLIDER;
+  text[0] = "";
+  fontname = MENU_FONT_SMALL;
+  posx = MENU_CHOICE_X;
+  posy = MENU_START_Y + MENU_DY * 3 + MENU_SLIDER_YPLUS;
+  dimx = 2000;
+  dimy = MENU_SLIDER_DY;
+  onchgsetoption = "DynaMapTransparency";
+  onchgsetoptionsection = SECTION;
+  // 13 positions map to 20,25,...,80 percent transparency.
+  userFloat[0] = 13;
+  userString[0] = MENU_SLIDER_POS_PIC;
+  flags = flags & ~IT_SELECTABLE;
+  flags = flags | IT_TXT_CENTER;
 };

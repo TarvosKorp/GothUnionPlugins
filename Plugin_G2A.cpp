@@ -42,7 +42,7 @@
 #define MAPDIAG_MAP_FADE_MS 300   // smooth transition to/from the selected map opacity
 #endif
 #ifndef MAPDIAG_MAP_OPEN_GRACE_MS
-#define MAPDIAG_MAP_OPEN_GRACE_MS 500 // let the engine finish showing the map before movement fade
+#define MAPDIAG_MAP_OPEN_GRACE_MS 1200 // let the engine finish showing the map before movement fade
 #endif
 #ifndef MAPDIAG_MOUSE_TURN
 #define MAPDIAG_MOUSE_TURN 1
@@ -106,7 +106,8 @@ static DWORD g_mapOpenedAt = 0;
 static oCViewDocumentMap* g_mapView = NULL;
 static float g_frameDx = 0.0f;
 static bool g_pluginEnabled = true;
-static int g_mapAlphaMode = 1; // 0=off, 1=30%, 2=50%, 3=70% transparency
+static bool g_mapAlphaEnabled = true;
+static int g_mapTransparency = 50; // 20-80%, in 5% increments
 
 // Mouse turn state.
 static float g_degPerUnit = MAPDIAG_MOUSE_DEG_PER_UNIT;
@@ -147,6 +148,17 @@ static bool g_arrowBlitLogged = false;
 static bool g_markerLogged = false;
 static bool g_arrowGeometryLogged = false;
 static zCTexture* g_lastNativeArrowTexture = NULL;
+
+// Keep the first native map-arrow position as the authoritative anchor.
+// Later UpdatePosition calls can shift PixelPosition; measure that delta from
+// the engine itself instead of applying a screen-resolution formula.
+static oCViewDocumentMap* g_nativeAnchorMap = NULL;
+static bool g_nativeAnchorCaptured = false;
+static bool g_nativeAnchorCorrectionReady = false;
+static int g_nativeAnchorX = 0;
+static int g_nativeAnchorY = 0;
+static int g_nativeAnchorCorrectionX = 0;
+static int g_nativeAnchorCorrectionY = 0;
 
 static void MapDiagPrepareSmoothArrow() {
     if (!g_pluginEnabled || !g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView) return;
@@ -209,6 +221,38 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
         beforeMapPixelSize = map->PixelSize;
     }
     Ivk_MapView_UpdatePosition(self, edx);
+
+    if (map && g_pluginEnabled) {
+        if (g_nativeAnchorMap != map) {
+            g_nativeAnchorMap = map;
+            g_nativeAnchorCaptured = false;
+            g_nativeAnchorCorrectionReady = false;
+            g_nativeAnchorCorrectionX = 0;
+            g_nativeAnchorCorrectionY = 0;
+        }
+        const int nativeX = map->ViewArrow.PixelPosition.X;
+        const int nativeY = map->ViewArrow.PixelPosition.Y;
+        const int nativeW = map->ViewArrow.PixelSize.X;
+        const int nativeH = map->ViewArrow.PixelSize.Y;
+        if (!g_nativeAnchorCaptured && nativeW > 0 && nativeH > 0) {
+            g_nativeAnchorX = nativeX;
+            g_nativeAnchorY = nativeY;
+            g_nativeAnchorCaptured = true;
+            MapDiagLog("[arrow-anchor] primary native position=%d,%d size=%dx%d",
+                g_nativeAnchorX, g_nativeAnchorY, nativeW, nativeH);
+        } else if (g_nativeAnchorCaptured && !g_nativeAnchorCorrectionReady) {
+            const int dx = g_nativeAnchorX - nativeX;
+            const int dy = g_nativeAnchorY - nativeY;
+            if ((dx != 0 || dy != 0) && dx >= -128 && dx <= 128 && dy >= -128 && dy <= 128) {
+                g_nativeAnchorCorrectionX = dx;
+                g_nativeAnchorCorrectionY = dy;
+                g_nativeAnchorCorrectionReady = true;
+                MapDiagLog("[arrow-anchor] native refresh correction=%d,%d primary=%d,%d refreshed=%d,%d",
+                    dx, dy, g_nativeAnchorX, g_nativeAnchorY, nativeX, nativeY);
+            }
+        }
+    }
+
     if (map && loggedCalls < 2) {
         ++loggedCalls;
         oCNpc* hero = Gothic_II_Addon::player;
@@ -323,12 +367,17 @@ static void MapDiagDrawSmoothArrow() {
         }
         return;
     }
-    const float scaleX = (float)sw / 1920.0f;
-    const float scaleY = (float)sh / 1080.0f;
-    const float cx = (float)x + (float)currentW * scaleX;
-    const float cy = (float)y + (float)currentH * scaleY;
-    const float halfW = (float)w * 0.46f;
-    const float halfH = (float)h * 0.46f;
+    // Reconstruct the native arrow's first position using the correction
+    // measured from its own UpdatePosition calls. This is independent of the
+    // display mode and automatically follows 800p, 1080p, 2K and 4K layouts.
+    const int anchorOffsetX = g_nativeAnchorCorrectionReady
+        ? g_nativeAnchorCorrectionX : currentW / 2;
+    const int anchorOffsetY = g_nativeAnchorCorrectionReady
+        ? g_nativeAnchorCorrectionY : currentH / 2;
+    const float halfW = (float)currentW * 0.5f;
+    const float halfH = (float)currentH * 0.5f;
+    const float cx = (float)x + (float)anchorOffsetX + halfW;
+    const float cy = (float)y + (float)anchorOffsetY + halfH;
     const float lx[4] = { -halfW, halfW, halfW, -halfW };
     const float ly[4] = { -halfH, -halfH, halfH, halfH };
     const float tu[4] = { 0.f, 1.f, 1.f, 0.f };
@@ -516,7 +565,20 @@ static void MapDiagRefreshMapState() {
     g_docOpen = (current != NULL);
     g_mapOpenedAt = g_docOpen ? now : 0;
     g_frameDx = 0.0f;
-    if (!current) g_arrowPreparedMap = NULL;
+    if (!current) {
+        g_arrowPreparedMap = NULL;
+        g_nativeAnchorMap = NULL;
+        g_nativeAnchorCaptured = false;
+        g_nativeAnchorCorrectionReady = false;
+        g_nativeAnchorCorrectionX = 0;
+        g_nativeAnchorCorrectionY = 0;
+    } else if (g_nativeAnchorMap != current) {
+        g_nativeAnchorMap = current;
+        g_nativeAnchorCaptured = false;
+        g_nativeAnchorCorrectionReady = false;
+        g_nativeAnchorCorrectionX = 0;
+        g_nativeAnchorCorrectionY = 0;
+    }
     g_smoothArrowTexture = NULL;
     g_smoothArrowWidth = 0;
     g_smoothArrowHeight = 0;
@@ -686,16 +748,13 @@ static void MapDiagFadeMap() {
         (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0 ||
         (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
 
-    int movingAlpha = 255;
-    if (g_mapAlphaMode == 1) movingAlpha = 178;      // 30% transparent
-    else if (g_mapAlphaMode == 2) movingAlpha = 128; // 50% transparent
-    else if (g_mapAlphaMode == 3) movingAlpha = 77;  // 70% transparent
+    const int movingAlpha = 255 - (255 * g_mapTransparency + 50) / 100;
 
     // The map itself fades in when opened. Ignore movement during this grace
     // period, then fade only if the master switch and transparency mode allow it.
     const bool graceFinished = g_mapOpenedAt != 0 &&
         (DWORD)(now - g_mapOpenedAt) >= MAPDIAG_MAP_OPEN_GRACE_MS;
-    const int target = (g_pluginEnabled && g_mapAlphaMode != 0 &&
+    const int target = (g_pluginEnabled && g_mapAlphaEnabled &&
         moving && graceFinished) ? movingAlpha : 255;
 
     DWORD elapsed = now - lastTick;
@@ -729,11 +788,11 @@ static void MapDiagFadeMap() {
         page->SetTextureAlpha(alpha);
     }
 
-    if (moving && graceFinished && g_pluginEnabled && g_mapAlphaMode != 0 && !fadeLogged) {
+    if (moving && graceFinished && g_pluginEnabled && g_mapAlphaEnabled && !fadeLogged) {
         fadeLogged = true;
-        MapDiagLog("[map-fade] movement detected; selected transparency mode=%d", g_mapAlphaMode);
+        MapDiagLog("[map-fade] movement detected; transparency=%d%%", g_mapTransparency);
     }
-    if ((!moving || !graceFinished || !g_pluginEnabled || g_mapAlphaMode == 0) && alpha == 255)
+    if ((!moving || !graceFinished || !g_pluginEnabled || !g_mapAlphaEnabled) && alpha == 255)
         fadeLogged = false;
 }
 
@@ -807,10 +866,18 @@ int Change_DynaMap(zCOptionEntry& entry) {
 }
 
 int Change_DynaMapAlpha(zCOptionEntry& entry) {
-    int value = entry.varValueTemp.ToInt32();
-    if (value < 0) value = 0;
-    if (value > 3) value = 3;
-    g_mapAlphaMode = value;
+    g_mapAlphaEnabled = entry.varValueTemp.ToInt32() != 0;
+    return 0;
+}
+
+int Change_DynaMapTransparency(zCOptionEntry& entry) {
+    // The native menu slider reports a 0-100 value. Convert its 13 positions
+    // into the requested 20,25,...,80 percent range.
+    int sliderValue = entry.varValueTemp.ToInt32();
+    if (sliderValue < 0) sliderValue = 0;
+    if (sliderValue > 100) sliderValue = 100;
+    const int step = (sliderValue * 12 + 50) / 100;
+    g_mapTransparency = 20 + step * 5;
     return 0;
 }
 
@@ -818,9 +885,13 @@ void Game_Init() {
     if (!zoptions) return;
     zoptions->InsertChangeHandler("zDynaMap", "DynaMap", Change_DynaMap);
     zoptions->InsertChangeHandler("zDynaMap", "DynaMapAlpha", Change_DynaMapAlpha);
+    zoptions->InsertChangeHandler("zDynaMap", "DynaMapTransparency", Change_DynaMapTransparency);
     g_pluginEnabled = zoptions->ReadInt("zDynaMap", "DynaMap", 1) != 0;
-    g_mapAlphaMode = zoptions->ReadInt("zDynaMap", "DynaMapAlpha", 1);
-    if (g_mapAlphaMode < 0 || g_mapAlphaMode > 3) g_mapAlphaMode = 1;
+    g_mapAlphaEnabled = zoptions->ReadInt("zDynaMap", "DynaMapAlpha", 1) != 0;
+    int sliderValue = zoptions->ReadInt("zDynaMap", "DynaMapTransparency", 50);
+    if (sliderValue < 0) sliderValue = 0;
+    if (sliderValue > 100) sliderValue = 100;
+    g_mapTransparency = 20 + ((sliderValue * 12 + 50) / 100) * 5;
 }
 void Game_Exit() { MapDiagLog("[plugin] Game_Exit"); }
 void Game_PreLoop() { MapDiagRefreshMapState(); MapDiagUnlock(); MapDiagMouseTurn(); MapDiagMarker(); MapDiagFadeMap(); }
