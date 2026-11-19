@@ -180,14 +180,14 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     oCViewDocumentMap* map = (oCViewDocumentMap*)self;
     static unsigned long loggedCalls = 0;
-    zCPosition beforeVirtualPos = { 0, 0 };
-    zCPosition beforeVirtualSize = { 0, 0 };
-    zCPosition beforePixelPos = { 0, 0 };
-    zCPosition beforePixelSize = { 0, 0 };
-    zCPosition beforeMapVirtualPos = { 0, 0 };
-    zCPosition beforeMapVirtualSize = { 0, 0 };
-    zCPosition beforeMapPixelPos = { 0, 0 };
-    zCPosition beforeMapPixelSize = { 0, 0 };
+    zCPosition beforeVirtualPos;
+    zCPosition beforeVirtualSize;
+    zCPosition beforePixelPos;
+    zCPosition beforePixelSize;
+    zCPosition beforeMapVirtualPos;
+    zCPosition beforeMapVirtualSize;
+    zCPosition beforeMapPixelPos;
+    zCPosition beforeMapPixelSize;
     if (map) {
         g_earlyMapView = map;
         map->ViewArrow.SetTextureAlpha(0);
