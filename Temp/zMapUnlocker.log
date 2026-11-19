@@ -1,82 +1,89 @@
-191321812 | [plugin] Game_Entry UNLOCK=1 MARKER=1 MOUSE=1
-191321812 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590870 detour=712023D0
-191321812 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365908B8 detour=712023F0
-191321812 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590900 detour=71202400
-191321812 | [hook] DocumentManager::HandleEvent hooked=1 exists=1 original=0065F450 trampoline=36590948 detour=71202460
-191321812 | [hook] ViewArrow::Blit hooked=1 exists=1 original=006934A0 trampoline=365907E0 detour=71202300
-191321812 | [hook] Game::CheckObjectRoutines hooked=1 exists=1 original=006CABB0 trampoline=36590828 detour=712023A0
-191321812 | [hook] MapView::UpdatePosition hooked=1 exists=1 original=0068D7B0 trampoline=36590798 detour=71201900
-191321812 | [runtime] Game_Entry zinput=NULL
-191335828 | [update-hook] call=1 map=34871DB0 hero=28000AA0 heroPos=(-42.1,-944.6,-5077.7) levelCoords=(-47783.0,36300.0,43949.0,-32300.0)
-191335828 | [update-hook] arrow virtualPos=0,0->0,0 virtualSize=0,0->8192,8192 pixelPos=0,0->989,651 pixelSize=0,0->16,16
-191335828 | [update-hook] map virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=0,0->0,0 pixelSize=1920,1080->1920,1080 parent=27CE03E0
-191335859 | [doc] OPEN mapView=34871DB0
-191335859 | [docs] mapView=34871DB0 vptr=0083BACC
-191335859 | [hero] map-open player=28000AA0 interactItem=34378368 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-191335859 | [unlock] movement lock cleared
-191335875 | [arrow-blit] call=1 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
-191335875 | [arrow-geometry] map=34871DB0 arrow=34871EAC virtualPos=0,0 virtualSize=8192,8192 pixelPos=989,651 pixelSize=16,16 mapVirtualPos=0,0 mapVirtualSize=8192,8192 mapPixelPos=0,0 mapPixelSize=1920,1080
-191335875 | [arrow-page] texture=323494A8 textureSize=16x16 pixelPos=989,651 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.019,-1.000) angle=1.552
-191335890 | [arrow-blit] call=2 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
-191335921 | [arrow-blit] call=3 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
-191335937 | [arrow-blit] call=4 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
-191335953 | [arrow-blit] call=5 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
-191335968 | [arrow-blit] call=6 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
-191335984 | [arrow-blit] call=7 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
-191336015 | [arrow-blit] call=8 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
-191336031 | [arrow-blit] call=9 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
-191336046 | [arrow-blit] call=10 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
-191336062 | [arrow-blit] call=11 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
-191336078 | [arrow-blit] call=12 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
-191336109 | [update-hook] call=2 map=34871DB0 hero=28000AA0 heroPos=(-42.1,-944.6,-5077.7) levelCoords=(-47783.0,36300.0,43949.0,-32300.0)
-191336109 | [update-hook] arrow virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=989,651->981,643 pixelSize=16,16->16,16
-191336109 | [update-hook] map virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=0,0->0,0 pixelSize=1920,1080->1920,1080 parent=27CE03E0
-191336109 | [update-refresh] call=1 map=34871DB0 arrowPos=989,651->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5078)
-191336109 | [arrow] native arrow hidden map=34871DB0 view=34871EAC virtual=8192x8192 canonical=U.TGA texture=323494A8 textureSize=16x16 ready=1
-191336109 | [marker] first update map=34871DB0 hero=(-42,-945,-5078) heading=(0.02,-1.00)
-191336125 | [arrow-geometry] map=34871DB0 arrow=34871EAC virtualPos=0,0 virtualSize=8192,8192 pixelPos=981,643 pixelSize=16,16 mapVirtualPos=0,0 mapVirtualSize=8192,8192 mapPixelPos=0,0 mapPixelSize=1920,1080
-191336125 | [arrow] renderer draw #1 rect=981,643 16x16 tex=323494A8 screen=1920x1080 rotation=-0.019 cachedNorth=1
-191336156 | [update-hook] call=3 map=34871DB0 hero=28000AA0 heroPos=(-42.1,-944.6,-5077.7) levelCoords=(-47783.0,36300.0,43949.0,-32300.0)
-191336156 | [update-hook] arrow virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=981,643->981,643 pixelSize=16,16->16,16
-191336156 | [update-hook] map virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=0,0->0,0 pixelSize=1920,1080->1920,1080 parent=27CE03E0
-191336156 | [update-refresh] call=2 map=34871DB0 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5078)
-191336203 | [update-hook] call=4 map=34871DB0 hero=28000AA0 heroPos=(-42.1,-944.6,-5077.7) levelCoords=(-47783.0,36300.0,43949.0,-32300.0)
-191336203 | [update-hook] arrow virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=981,643->981,643 pixelSize=16,16->16,16
-191336203 | [update-hook] map virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=0,0->0,0 pixelSize=1920,1080->1920,1080 parent=27CE03E0
-191336203 | [update-refresh] call=3 map=34871DB0 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5078)
-191336250 | [update-hook] call=5 map=34871DB0 hero=28000AA0 heroPos=(-42.1,-944.6,-5077.7) levelCoords=(-47783.0,36300.0,43949.0,-32300.0)
-191336250 | [update-hook] arrow virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=981,643->981,643 pixelSize=16,16->16,16
-191336250 | [update-hook] map virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=0,0->0,0 pixelSize=1920,1080->1920,1080 parent=27CE03E0
-191336250 | [update-refresh] call=4 map=34871DB0 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5078)
-191336296 | [update-hook] call=6 map=34871DB0 hero=28000AA0 heroPos=(-42.1,-944.6,-5077.7) levelCoords=(-47783.0,36300.0,43949.0,-32300.0)
-191336296 | [update-hook] arrow virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=981,643->981,643 pixelSize=16,16->16,16
-191336296 | [update-hook] map virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=0,0->0,0 pixelSize=1920,1080->1920,1080 parent=27CE03E0
-191336296 | [update-refresh] call=5 map=34871DB0 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5078)
-191336343 | [update-refresh] call=6 map=34871DB0 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5078)
-191337140 | [arrow] renderer draw #54 rect=981,643 16x16 tex=323494A8 screen=1920x1080 rotation=-0.277 cachedNorth=1
-191337312 | [arrow-page] texture=32349C58 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.443,-0.896) angle=1.112
-191338140 | [arrow] renderer draw #99 rect=981,643 16x16 tex=323494A8 screen=1920x1080 rotation=-1.204 cachedNorth=1
-191338171 | [arrow-page] texture=323495F0 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.948,-0.317) angle=0.323
-191338562 | [arrow-page] texture=32349218 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.900,0.436) angle=-0.452
-191339140 | [arrow] renderer draw #140 rect=981,643 16x16 tex=323494A8 screen=1920x1080 rotation=-2.723 cachedNorth=1
-191339171 | [arrow-page] texture=3234AD00 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.294,0.956) angle=-1.273
-191339531 | [arrow-page] texture=32349738 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.420,0.907) angle=-2.004
-191339796 | [arrow-page] texture=3234B4B0 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.945,0.327) angle=-2.809
-191340078 | [arrow-page] texture=32349360 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.774,-0.633) angle=2.456
-191340140 | [arrow] renderer draw #195 rect=981,643 16x16 tex=323494A8 screen=1920x1080 rotation=0.819 cachedNorth=1
-191340750 | [arrow-page] texture=323494A8 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.247,-0.969) angle=1.820
-191341140 | [arrow] renderer draw #248 rect=981,643 16x16 tex=323494A8 screen=1920x1080 rotation=-0.150 cachedNorth=1
-191341937 | [arrow-page] texture=32349360 textureSize=16x16 pixelPos=981,645 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.499,-0.867) angle=2.093
-191342140 | [arrow] renderer draw #306 rect=980,646 16x16 tex=323494A8 screen=1920x1080 rotation=1.015 cachedNorth=1
-191342296 | [arrow-page] texture=3234B4B0 textureSize=16x16 pixelPos=979,646 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.938,-0.347) angle=2.788
-191342578 | [arrow-page] texture=32349360 textureSize=16x16 pixelPos=978,647 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.898,-0.439) angle=2.687
-191342828 | [arrow-page] texture=323494A8 textureSize=16x16 pixelPos=977,648 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.289,-0.957) angle=1.864
-191343140 | [arrow] renderer draw #358 rect=977,649 16x16 tex=323494A8 screen=1920x1080 rotation=-0.384 cachedNorth=1
-191343156 | [arrow-page] texture=32349C58 textureSize=16x16 pixelPos=977,650 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.422,-0.907) angle=1.135
-191344140 | [arrow] renderer draw #416 rect=980,654 16x16 tex=323494A8 screen=1920x1080 rotation=-0.566 cachedNorth=1
-191344562 | [arrow-page] texture=323494A8 textureSize=16x16 pixelPos=981,656 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.322,-0.947) angle=1.243
-191345140 | [arrow] renderer draw #475 rect=981,659 16x16 tex=323494A8 screen=1920x1080 rotation=0.066 cachedNorth=1
-191346031 | [doc] ESC close event original=1
-191346062 | [doc] CLOSE
-191346062 | [hero] map-close player=28000AA0 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-191348765 | [plugin] Game_Exit
+193026218 | [plugin] Game_Entry UNLOCK=1 MARKER=1 MOUSE=1
+193026218 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590870 detour=712023D0
+193026218 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365908B8 detour=712023F0
+193026218 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590900 detour=71202400
+193026218 | [hook] DocumentManager::HandleEvent hooked=1 exists=1 original=0065F450 trampoline=36590948 detour=71202460
+193026218 | [hook] ViewArrow::Blit hooked=1 exists=1 original=006934A0 trampoline=365907E0 detour=71202300
+193026218 | [hook] Game::CheckObjectRoutines hooked=1 exists=1 original=006CABB0 trampoline=36590828 detour=712023A0
+193026218 | [hook] MapView::UpdatePosition hooked=1 exists=1 original=0068D7B0 trampoline=36590798 detour=71201900
+193026218 | [runtime] Game_Entry zinput=NULL
+193041781 | [update-hook] call=1 map=34046B70 hero=28012120 heroPos=(-42.0,-944.6,-5078.9) levelCoords=(-47783.0,36300.0,43949.0,-32300.0)
+193041781 | [update-hook] arrow virtualPos=0,0->0,0 virtualSize=0,0->8192,8192 pixelPos=0,0->989,651 pixelSize=0,0->16,16
+193041781 | [update-hook] map virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=0,0->0,0 pixelSize=1920,1080->1920,1080 parent=27D5F080
+193041828 | [doc] OPEN mapView=34046B70
+193041828 | [docs] mapView=34046B70 vptr=0083BACC
+193041828 | [hero] map-open player=28012120 interactItem=3424A4F0 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+193041828 | [unlock] movement lock cleared
+193041843 | [arrow-blit] call=1 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
+193041843 | [arrow-geometry] map=34046B70 arrow=34046C6C virtualPos=0,0 virtualSize=8192,8192 pixelPos=989,651 pixelSize=16,16 mapVirtualPos=0,0 mapVirtualSize=8192,8192 mapPixelPos=0,0 mapPixelSize=1920,1080
+193041843 | [arrow-page] texture=3298E9F0 textureSize=16x16 pixelPos=989,651 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.019,-1.000) angle=1.552
+193041859 | [arrow-blit] call=2 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
+193041875 | [arrow-blit] call=3 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
+193041906 | [arrow-blit] call=4 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
+193041921 | [arrow-blit] call=5 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
+193041937 | [arrow-blit] call=6 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
+193041953 | [arrow-blit] call=7 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
+193041968 | [arrow-blit] call=8 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
+193042000 | [arrow-blit] call=9 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
+193042015 | [arrow-blit] call=10 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
+193042031 | [arrow-blit] call=11 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
+193042046 | [arrow-blit] call=12 pos=989,651->989,651 size=16,16 virtualPos=0,0 virtualSize=8192,8192
+193042078 | [update-hook] call=2 map=34046B70 hero=28012120 heroPos=(-42.0,-944.6,-5078.9) levelCoords=(-47783.0,36300.0,43949.0,-32300.0)
+193042078 | [update-hook] arrow virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=989,651->981,643 pixelSize=16,16->16,16
+193042078 | [update-hook] map virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=0,0->0,0 pixelSize=1920,1080->1920,1080 parent=27D5F080
+193042078 | [update-refresh] call=1 map=34046B70 arrowPos=989,651->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5079)
+193042078 | [arrow] native arrow hidden map=34046B70 view=34046C6C virtual=8192x8192 canonical=U.TGA texture=3298E9F0 textureSize=16x16 ready=1
+193042078 | [marker] first update map=34046B70 hero=(-42,-945,-5079) heading=(0.02,-1.00)
+193042093 | [arrow-geometry] map=34046B70 arrow=34046C6C virtualPos=0,0 virtualSize=8192,8192 pixelPos=981,643 pixelSize=16,16 mapVirtualPos=0,0 mapVirtualSize=8192,8192 mapPixelPos=0,0 mapPixelSize=1920,1080
+193042093 | [arrow] renderer draw #1 rect=981,643 16x16 tex=3298E9F0 screen=1920x1080 rotation=-0.019 cachedNorth=1
+193042125 | [update-hook] call=3 map=34046B70 hero=28012120 heroPos=(-42.0,-944.6,-5078.9) levelCoords=(-47783.0,36300.0,43949.0,-32300.0)
+193042125 | [update-hook] arrow virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=981,643->981,643 pixelSize=16,16->16,16
+193042125 | [update-hook] map virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=0,0->0,0 pixelSize=1920,1080->1920,1080 parent=27D5F080
+193042125 | [update-refresh] call=2 map=34046B70 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5079)
+193042171 | [update-hook] call=4 map=34046B70 hero=28012120 heroPos=(-42.0,-944.6,-5078.9) levelCoords=(-47783.0,36300.0,43949.0,-32300.0)
+193042171 | [update-hook] arrow virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=981,643->981,643 pixelSize=16,16->16,16
+193042171 | [update-hook] map virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=0,0->0,0 pixelSize=1920,1080->1920,1080 parent=27D5F080
+193042171 | [update-refresh] call=3 map=34046B70 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5079)
+193042218 | [update-hook] call=5 map=34046B70 hero=28012120 heroPos=(-42.0,-944.6,-5078.9) levelCoords=(-47783.0,36300.0,43949.0,-32300.0)
+193042218 | [update-hook] arrow virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=981,643->981,643 pixelSize=16,16->16,16
+193042218 | [update-hook] map virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=0,0->0,0 pixelSize=1920,1080->1920,1080 parent=27D5F080
+193042218 | [update-refresh] call=4 map=34046B70 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5079)
+193042265 | [update-hook] call=6 map=34046B70 hero=28012120 heroPos=(-42.0,-944.6,-5078.9) levelCoords=(-47783.0,36300.0,43949.0,-32300.0)
+193042265 | [update-hook] arrow virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=981,643->981,643 pixelSize=16,16->16,16
+193042265 | [update-hook] map virtualPos=0,0->0,0 virtualSize=8192,8192->8192,8192 pixelPos=0,0->0,0 pixelSize=1920,1080->1920,1080 parent=27D5F080
+193042265 | [update-refresh] call=5 map=34046B70 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5079)
+193042312 | [update-refresh] call=6 map=34046B70 arrowPos=981,643->981,643 arrowSize=16,16 mapPos=0,0 mapSize=1920,1080 hero=(-42,-945,-5079)
+193043093 | [arrow] renderer draw #54 rect=981,643 16x16 tex=3298E9F0 screen=1920x1080 rotation=-0.216 cachedNorth=1
+193043218 | [arrow-page] texture=3298E618 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.449,-0.894) angle=1.106
+193043437 | [arrow-page] texture=3298E760 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.970,-0.244) angle=0.246
+193043640 | [arrow-page] texture=3298EF10 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.892,0.452) angle=-0.469
+193044093 | [arrow-page] texture=3298E8A8 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.237,0.972) angle=-1.332
+193044093 | [arrow] renderer draw #97 rect=981,643 16x16 tex=3298E9F0 screen=1920x1080 rotation=-2.855 cachedNorth=1
+193045093 | [arrow] renderer draw #156 rect=980,641 16x16 tex=3298E9F0 screen=1920x1080 rotation=-3.488 cachedNorth=1
+193045421 | [arrow-page] texture=3298EF10 textureSize=16x16 pixelPos=980,640 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.440,0.898) angle=-1.115
+193045750 | [arrow-page] texture=3298E760 textureSize=16x16 pixelPos=982,639 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.939,0.343) angle=-0.350
+193046093 | [arrow] renderer draw #211 rect=983,639 16x16 tex=3298E9F0 screen=1920x1080 rotation=-1.135 cachedNorth=1
+193046109 | [arrow-page] texture=3298E618 textureSize=16x16 pixelPos=984,639 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.895,-0.447) angle=0.463
+193046656 | [arrow-page] texture=3298E9F0 textureSize=16x16 pixelPos=986,641 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.358,-0.934) angle=1.205
+193047093 | [arrow] renderer draw #264 rect=986,642 16x16 tex=3298E9F0 screen=1920x1080 rotation=-0.001 cachedNorth=1
+193048093 | [arrow] renderer draw #324 rect=983,642 16x16 tex=3298E9F0 screen=1920x1080 rotation=-0.001 cachedNorth=1
+193049093 | [arrow] renderer draw #384 rect=982,643 16x16 tex=3298E9F0 screen=1920x1080 rotation=-0.068 cachedNorth=1
+193049515 | [arrow-page] texture=3298E618 textureSize=16x16 pixelPos=982,642 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.544,-0.839) angle=0.996
+193050015 | [arrow-page] texture=3298E9F0 textureSize=16x16 pixelPos=981,641 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.135,-0.991) angle=1.435
+193050093 | [arrow] renderer draw #441 rect=981,641 16x16 tex=3298E9F0 screen=1920x1080 rotation=0.267 cachedNorth=1
+193050203 | [arrow-page] texture=3298EB38 textureSize=16x16 pixelPos=981,641 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.599,-0.801) angle=2.212
+193050578 | [arrow-page] texture=3298E9F0 textureSize=16x16 pixelPos=981,641 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.235,-0.972) angle=1.809
+193050718 | [arrow-page] texture=3298E618 textureSize=16x16 pixelPos=981,641 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.578,-0.816) angle=0.955
+193050921 | [arrow-page] texture=3298E760 textureSize=16x16 pixelPos=981,641 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.945,-0.328) angle=0.334
+193051093 | [arrow] renderer draw #492 rect=981,641 16x16 tex=3298E9F0 screen=1920x1080 rotation=-1.237 cachedNorth=1
+193051156 | [arrow-page] texture=3298E618 textureSize=16x16 pixelPos=981,641 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.877,-0.481) angle=0.502
+193051343 | [arrow-page] texture=3298E9F0 textureSize=16x16 pixelPos=981,641 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.321,-0.947) angle=1.244
+193052093 | [arrow] renderer draw #548 rect=981,643 16x16 tex=3298E9F0 screen=1920x1080 rotation=-0.064 cachedNorth=1
+193052406 | [arrow-page] texture=3298E618 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.432,-0.902) angle=1.124
+193053015 | [arrow-page] texture=3298E9F0 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.335,-0.942) angle=1.229
+193053093 | [arrow] renderer draw #603 rect=981,643 16x16 tex=3298E9F0 screen=1920x1080 rotation=-0.245 cachedNorth=1
+193054093 | [arrow] renderer draw #663 rect=981,643 16x16 tex=3298E9F0 screen=1920x1080 rotation=-0.300 cachedNorth=1
+193054750 | [doc] ESC close event original=1
+193054796 | [doc] CLOSE
+193054796 | [hero] map-close player=28012120 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+193057125 | [plugin] Game_Exit
