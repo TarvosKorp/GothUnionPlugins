@@ -391,7 +391,6 @@ void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
         ((oCViewDocument*)self)->SetTextureAlpha(0);
         if (isMapArrow) {
             g_mapView = candidateMap;
-            g_arrowPreparedMap = candidateMap;
             g_docOpen = true;
         }
         g_captureNativeArrowBlit = true;
