@@ -1,33 +1,37 @@
-178223531 | [plugin] Game_Entry UNLOCK=1 MARKER=1 MOUSE=1
-178223531 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590870 detour=712023A0
-178223531 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365908B8 detour=712023C0
-178223531 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590900 detour=712023D0
-178223531 | [hook] DocumentManager::HandleEvent hooked=1 exists=1 original=0065F450 trampoline=36590948 detour=71202430
-178223531 | [hook] ViewArrow::Blit hooked=1 exists=1 original=006934A0 trampoline=36590828 detour=712022B0
-178223531 | [hook] Renderer::DrawPolySimple hooked=1 exists=1 original=0064AC30 trampoline=365907E0 detour=71201F70
-178223531 | [hook] MapView::UpdatePosition hooked=1 exists=1 original=0068D7B0 trampoline=36590798 detour=71201940
-178223531 | [runtime] Game_Entry zinput=NULL
-178238515 | [arrow-anchor] native quad tex='U.TGA' bounds=989.00,651.00..1005.00,667.00 center=997.00,659.00 size=16.00x16.00 count=4
-178238515 | [arrow] first Blit self=3298176C map=32981670 anchor=1 center=997.00,659.00
-178238515 | [doc] OPEN mapView=32981670
-178238515 | [docs] mapView=32981670 vptr=0083BACC
-178238515 | [hero] map-open player=28753038 interactItem=3436D4A8 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-178238515 | [unlock] movement lock cleared
-178238515 | [arrow] native arrow hidden map=32981670 view=3298176C virtual=8192x8192 canonical=U.TGA texture=323AA590 textureSize=16x16 ready=1
-178238515 | [marker] first update map=32981670 hero=(-42,-945,-5079) heading=(0.02,-1.00)
-178238531 | [arrow-anchor] native quad tex='U.TGA' bounds=981.00,643.00..997.00,659.00 center=989.00,651.00 size=16.00x16.00 count=4
-178238531 | [arrow] first Blit self=3298176C map=32981670 anchor=1 center=989.00,651.00
-178238531 | [arrow] first draw rect=981,643 16x16 center=989.00,651.00 anchor=native screen=1920x1080 rotation=-0.019
-178242296 | [doc] CLOSE
-178242296 | [hero] map-close player=28753038 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-178252843 | [doc] OPEN mapView=285A9DE8
-178252843 | [docs] mapView=285A9DE8 vptr=0083BACC
-178252843 | [hero] map-open player=28753038 interactItem=3436D4A8 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-178252843 | [arrow] native arrow hidden map=285A9DE8 view=285A9EE4 virtual=8192x8192 canonical=U.TGA texture=323AA590 textureSize=16x16 ready=1
-178252843 | [marker] first update map=285A9DE8 hero=(-42,-945,-5079) heading=(-0.22,-0.98)
-178252859 | [arrow-anchor] native quad tex='U.TGA' bounds=923.00,643.00..939.00,659.00 center=931.00,651.00 size=16.00x16.00 count=4
-178252859 | [arrow] first Blit self=285A9EE4 map=285A9DE8 anchor=1 center=931.00,651.00
-178252859 | [arrow] first draw rect=981,643 16x16 center=931.00,651.00 anchor=native screen=1920x1080 rotation=0.223
-178255718 | [doc] CLOSE
-178255718 | [hero] map-close player=28753038 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-178258640 | [plugin] Game_Exit
+179418156 | [plugin] Game_Entry UNLOCK=1 MARKER=1 MOUSE=1
+179418156 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590870 detour=712027A0
+179418156 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365908B8 detour=712027C0
+179418156 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590900 detour=712027D0
+179418156 | [hook] DocumentManager::HandleEvent hooked=1 exists=1 original=0065F450 trampoline=36590948 detour=71202830
+179418156 | [hook] ViewArrow::Blit hooked=1 exists=1 original=006934A0 trampoline=36590828 detour=712026B0
+179418156 | [hook] Renderer::DrawPolySimple hooked=1 exists=1 original=0064AC30 trampoline=365907E0 detour=71201F90
+179418156 | [hook] MapView::UpdatePosition hooked=1 exists=1 original=0068D7B0 trampoline=36590798 detour=71201940
+179418156 | [runtime] Game_Entry zinput=NULL
+179438359 | [arrow-anchor] native quad tex='U.TGA' bounds=989.00,651.00..1005.00,667.00 center=997.00,659.00 size=16.00x16.00 count=4
+179438359 | [arrow] first Blit self=35386DA4 map=35386CA8 anchor=1 center=997.00,659.00
+179438390 | [doc] OPEN mapView=35386CA8
+179438390 | [docs] mapView=35386CA8 vptr=0083BACC
+179438390 | [hero] map-open player=28654C48 interactItem=34387A38 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+179438390 | [unlock] movement lock cleared
+179438390 | [arrow] native arrow hidden map=35386CA8 view=35386DA4 virtual=8192x8192 canonical=U.TGA texture=3236BD28 textureSize=16x16 ready=1
+179438390 | [marker] first update map=35386CA8 hero=(-42,-945,-5078) heading=(0.03,-1.00)
+179438406 | [draw-chain] map-page seq=66602 depth=1 tex='MAP_ADDONWORLD.TGA' bounds=240.00,0.00..1680.00,1080.00 count=4 detect=name
+179438406 | [arrow-anchor] native quad tex='U.TGA' bounds=981.00,643.00..997.00,659.00 center=989.00,651.00 size=16.00x16.00 count=4
+179438406 | [arrow] first Blit self=35386DA4 map=35386CA8 anchor=1 center=989.00,651.00
+179438406 | [draw-chain] smooth-arrow seq=66604 depth=1 tex='U.TGA' bounds=981.41,643.41..996.59,658.59 mapPageSeen=1 mapX=240.00..1680.00 inside=1 count=4
+179438406 | [arrow] first draw rect=981,643 16x16 center=989.00,651.00 anchor=native screen=1920x1080 rotation=-0.031
+179441171 | [doc] CLOSE
+179441171 | [hero] map-close player=28654C48 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+179452546 | [doc] OPEN mapView=35383D38
+179452546 | [docs] mapView=35383D38 vptr=0083BACC
+179452546 | [hero] map-open player=28654C48 interactItem=34387A38 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+179452546 | [arrow] native arrow hidden map=35383D38 view=35383E34 virtual=8192x8192 canonical=U.TGA texture=3236BD28 textureSize=16x16 ready=1
+179452546 | [marker] first update map=35383D38 hero=(-42,-945,-5078) heading=(-0.18,-0.98)
+179452562 | [draw-chain] map-page seq=135313 depth=1 tex='MAP_ADDONWORLD.TGA' bounds=240.00,0.00..1680.00,1080.00 count=4 detect=name
+179452562 | [arrow-anchor] native quad tex='U.TGA' bounds=923.00,643.00..939.00,659.00 center=931.00,651.00 size=16.00x16.00 count=4
+179452562 | [arrow] first Blit self=35383E34 map=35383D38 anchor=1 center=931.00,651.00
+179452562 | [draw-chain] smooth-arrow seq=135315 depth=1 tex='U.TGA' bounds=980.43,642.43..997.57,659.57 mapPageSeen=1 mapX=240.00..1680.00 inside=1 count=4
+179452562 | [arrow] first draw rect=981,643 16x16 center=931.00,651.00 anchor=native screen=1920x1080 rotation=0.182
+179455828 | [doc] CLOSE
+179455828 | [hero] map-close player=28654C48 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+179458953 | [plugin] Game_Exit
