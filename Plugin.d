@@ -151,7 +151,7 @@ instance MENUITEM_TRANSPARENCY_SLIDER(C_MENU_ITEM_DEF)
   type = MENU_ITEM_SLIDER;
   text[0] = "";
   fontname = MENU_FONT_SMALL;
-  posx = MENU_CHOICE_X;
+  posx = 5500;
   posy = MENU_START_Y + MENU_DY * 3 + MENU_SLIDER_YPLUS;
   dimx = 2000;
   dimy = MENU_SLIDER_DY;

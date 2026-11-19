@@ -871,12 +871,12 @@ int Change_DynaMapAlpha(zCOptionEntry& entry) {
 }
 
 int Change_DynaMapTransparency(zCOptionEntry& entry) {
-    // The native menu slider reports a 0-100 value. Convert its 13 positions
-    // into the requested 20,25,...,80 percent range.
-    int sliderValue = entry.varValueTemp.ToInt32();
-    if (sliderValue < 0) sliderValue = 0;
-    if (sliderValue > 100) sliderValue = 100;
-    const int step = (sliderValue * 12 + 50) / 100;
+    // Gothic sliders store normalized real values from 0.0 to 1.0.
+    // Thirteen positions map to 20,25,...,80 percent transparency.
+    float sliderValue = entry.varValueTemp.ToFloat();
+    if (sliderValue < 0.0f) sliderValue = 0.0f;
+    if (sliderValue > 1.0f) sliderValue = 1.0f;
+    const int step = (int)(sliderValue * 12.0f + 0.5f);
     g_mapTransparency = 20 + step * 5;
     return 0;
 }
@@ -888,10 +888,15 @@ void Game_Init() {
     zoptions->InsertChangeHandler("zDynaMap", "DynaMapTransparency", Change_DynaMapTransparency);
     g_pluginEnabled = zoptions->ReadInt("zDynaMap", "DynaMap", 1) != 0;
     g_mapAlphaEnabled = zoptions->ReadInt("zDynaMap", "DynaMapAlpha", 1) != 0;
-    int sliderValue = zoptions->ReadInt("zDynaMap", "DynaMapTransparency", 50);
-    if (sliderValue < 0) sliderValue = 0;
-    if (sliderValue > 100) sliderValue = 100;
-    g_mapTransparency = 20 + ((sliderValue * 12 + 50) / 100) * 5;
+    float sliderValue = zoptions->ReadReal("zDynaMap", "DynaMapTransparency", 0.5f);
+    // Migrate the previous 0-100 representation to Gothic's native 0.0-1.0 slider range.
+    if (sliderValue > 1.0f) sliderValue /= 100.0f;
+    if (sliderValue < 0.0f) sliderValue = 0.0f;
+    if (sliderValue > 1.0f) sliderValue = 1.0f;
+    // Keep the INI value in the same normalized format used by native Gothic sliders.
+    zoptions->WriteReal("zDynaMap", "DynaMapTransparency", sliderValue, False);
+    const int step = (int)(sliderValue * 12.0f + 0.5f);
+    g_mapTransparency = 20 + step * 5;
 }
 void Game_Exit() { MapDiagLog("[plugin] Game_Exit"); }
 void Game_PreLoop() { MapDiagRefreshMapState(); MapDiagUnlock(); MapDiagMouseTurn(); MapDiagMarker(); MapDiagFadeMap(); }
