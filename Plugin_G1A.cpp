@@ -397,7 +397,7 @@ static void RefreshMapState() {
     // Match 71f698b: every open/close transition invalidates the cached
     // replacement texture. Otherwise a reopen can draw immediately with the
     // previous session's ready flag and stale marker geometry, before the
-    // 250 ms opening grace period and the first fresh UpdatePosition().
+    // 50 ms opening grace period and the first fresh UpdatePosition().
     g_smoothArrowTexture = NULL;
     g_smoothArrowWidth = 0;
     g_smoothArrowHeight = 0;
@@ -422,7 +422,7 @@ static void UpdateMapMarker() {
 
     static DWORD last = 0;
     const DWORD now = GetTickCount();
-    if (g_mapOpenedAt != 0 && now - g_mapOpenedAt < 250)
+    if (g_mapOpenedAt != 0 && now - g_mapOpenedAt < 50)
         return;
     if (now - last < MAP_MARKER_UPDATE_MS)
         return;
