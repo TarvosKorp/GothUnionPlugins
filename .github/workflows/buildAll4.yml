@@ -25,10 +25,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path Bin, PDB | Out-Null
           $variants = @(
-            @{ cfg = 'G1 MT Release';  dll = 'zSamplePluginG1' },
-            @{ cfg = 'G1A MT Release'; dll = 'zSamplePluginG1A' },
-            @{ cfg = 'G2 MT Release';  dll = 'zSamplePluginG2' },
-            @{ cfg = 'G2A MT Release'; dll = 'zSamplePluginG2A' }
+            @{ cfg = 'G1 MT Release';  dll = 'zDynaMapG1' },
+            @{ cfg = 'G1A MT Release'; dll = 'zDynaMapG1A' },
+            @{ cfg = 'G2 MT Release';  dll = 'zDynaMapG2' },
+            @{ cfg = 'G2A MT Release'; dll = 'zDynaMapG2A' }
           )
           foreach ($v in $variants) {
             msbuild GothPlugin.vcxproj /m `
@@ -47,7 +47,7 @@ jobs:
       - name: Upload DLLs (one archive)
         uses: actions/upload-artifact@v4
         with:
-          name: zSamplePlugin-all-dlls
+          name: zDynaMap-all-dlls
           path: |
             Bin/*.dll
             Bin/zDynaMap.d

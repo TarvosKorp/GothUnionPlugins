@@ -45,29 +45,26 @@ static int g_nativeAnchorY = 0;
 static int g_nativeAnchorCorrectionX = 0;
 static int g_nativeAnchorCorrectionY = 0;
 
+// Match the engine's native multiple-inheritance vtables exactly.
+// The document manager stores the zCObject-side pointer in ListDocuments.
 static bool IsMapDocument(oCViewDocument* view) {
     if (!view) return false;
-
-    zCClassDef* def = ((zCObject*)view)->_GetClassDef();
-    while (def) {
-        const char* name = def->className.ToChar();
-        if (name && strcmp(name, "oCViewDocumentMap") == 0)
-            return true;
-        def = def->baseClassDef;
-    }
-    return false;
+    const unsigned int vptr = *(const unsigned int*)view;
+    return vptr == 0x82FD6C ||
+        vptr == 0x82FD3C ||
+        vptr == 0x82FD44;
 }
 
 static oCViewDocumentMap* FindMapView() {
     oCDocumentManager& manager = oCDocumentManager::GetDocumentManager();
     zCListSort<oCViewDocument>* node = manager.ListDocuments;
-
+    oCViewDocumentMap* found = NULL;
     for (int guard = 0; node && guard < 32; node = node->next, ++guard) {
         oCViewDocument* view = node->data;
         if (IsMapDocument(view))
-            return (oCViewDocumentMap*)view;
+            found = (oCViewDocumentMap*)view;
     }
-    return NULL;
+    return found;
 }
 
 static void PrepareSmoothArrow() {

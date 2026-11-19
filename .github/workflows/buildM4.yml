@@ -28,7 +28,7 @@ jobs:
             "/p:Configuration=MP x4 MT Release" `
             /p:Platform=Win32 `
             /p:PlatformToolset=v143 `
-            "/p:TargetName=zSamplePlugin" `
+            "/p:TargetName=zDynaMap" `
             "/p:SolutionDir=$($PWD.Path)\"
 
       - name: Include zDynaMap Union menu configuration
@@ -39,7 +39,7 @@ jobs:
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
-          name: zSamplePlugin-M4-dll
+          name: zDynaMap-M4-dll
           path: |
             Bin/*.dll
             Bin/zDynaMap.d

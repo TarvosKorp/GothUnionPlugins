@@ -28,7 +28,7 @@ jobs:
             "/p:Configuration=G1A MT Release" `
             /p:Platform=Win32 `
             /p:PlatformToolset=v143 `
-            "/p:TargetName=zSamplePluginG1A" `
+            "/p:TargetName=zDynaMapG1A" `
             "/p:SolutionDir=$($PWD.Path)\"
 
       - name: Include zDynaMap Union menu configuration
@@ -39,7 +39,7 @@ jobs:
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
-          name: zSamplePlugin-G1A-dll
+          name: zDynaMap-G1A-dll
           path: |
             Bin/*.dll
             Bin/zDynaMap.d
