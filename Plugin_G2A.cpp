@@ -174,6 +174,7 @@ static void MapDiagTick() {
 // and draw a continuously oriented pointer into the same view after the screen
 // has rendered its normal contents.
 static oCViewDocumentMap* g_arrowPreparedMap = NULL;
+static oCViewDocumentMap* g_earlyMapView = NULL;
 static unsigned long g_smoothArrowDraws = 0;
 static DWORD g_lastArrowDrawLog = 0;
 static zCTexture* g_smoothArrowTexture = NULL;
@@ -227,7 +228,7 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     oCViewDocumentMap* map = (oCViewDocumentMap*)self;
     if (map) {
-        g_mapView = map;
+        g_earlyMapView = map;
         map->ViewArrow.SetTextureAlpha(0);
     }
     Ivk_MapView_UpdatePosition(self, edx);
@@ -396,8 +397,8 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
     0x006934A0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
-    const bool isArrow = g_mapView &&
-        self == (void*)&g_mapView->ViewArrow;
+    const bool isArrow = (g_mapView && self == (void*)&g_mapView->ViewArrow) ||
+        (g_earlyMapView && self == (void*)&g_earlyMapView->ViewArrow);
 
     if (isArrow) {
         ((oCViewDocument*)self)->SetTextureAlpha(0);
@@ -564,6 +565,7 @@ static void MapDiagRefreshMapState() {
 
     bool wasOpen = g_docOpen;
     g_mapView = current;
+    g_earlyMapView = current;
     g_docOpen = (current != NULL);
     g_frameDx = 0.0f;
     if (!current) g_arrowPreparedMap = NULL;
