@@ -38,6 +38,9 @@
 #ifndef MAPDIAG_MARKER_MS
 #define MAPDIAG_MARKER_MS 40      // 25 updates per second; synchronized with arrow heading sampling
 #endif
+#ifndef MAPDIAG_MAP_FADE_MS
+#define MAPDIAG_MAP_FADE_MS 300   // smooth transition to/from 50% map opacity
+#endif
 #ifndef MAPDIAG_MOUSE_TURN
 #define MAPDIAG_MOUSE_TURN 1
 #endif
@@ -301,8 +304,13 @@ static void MapDiagDrawSmoothArrow() {
     const float c = cosf(rotation);
     const float sn = sinf(rotation);
 
-    const float cx = (float)x + (float)currentW * 0.5f;
-    const float cy = (float)y + (float)currentH * 0.5f;
+    // PixelPosition is the native marker's anchor coordinate, not the
+    // top-left of the replacement quad. The engine's first map update reports
+    // 989,651; its subsequent refresh stores 981,643 (anchor minus 8,8).
+    // DrawPolySimple needs the original anchor restored as the quad's top-left
+    // reference, so shift the replacement by one full marker dimension.
+    const float cx = (float)x + (float)currentW;
+    const float cy = (float)y + (float)currentH;
     const float halfW = (float)w * 0.46f;
     const float halfH = (float)h * 0.46f;
     const float lx[4] = { -halfW, halfW, halfW, -halfW };
@@ -630,6 +638,63 @@ static void MapDiagMouseTurn() {
 #endif
 }
 
+
+// Fade the map document while a movement key is physically held. Mouse motion
+// is deliberately excluded: it continues to turn the hero without changing
+// map opacity. The map page and document texture are faded, while the GPS
+// overlay remains at full opacity.
+static void MapDiagFadeMap() {
+    static oCViewDocumentMap* lastMap = NULL;
+    static int alpha = 255;
+    static DWORD lastTick = 0;
+    static bool fadeLogged = false;
+
+    const DWORD now = GetTickCount();
+    if (g_mapView != lastMap) {
+        lastMap = g_mapView;
+        alpha = 255;
+        lastTick = now;
+        fadeLogged = false;
+    }
+    if (!g_mapView) return;
+
+    const bool moving =
+        (GetAsyncKeyState('W') & 0x8000) != 0 ||
+        (GetAsyncKeyState('S') & 0x8000) != 0 ||
+        (GetAsyncKeyState('A') & 0x8000) != 0 ||
+        (GetAsyncKeyState('D') & 0x8000) != 0 ||
+        (GetAsyncKeyState('Q') & 0x8000) != 0 ||
+        (GetAsyncKeyState('E') & 0x8000) != 0 ||
+        (GetAsyncKeyState(VK_UP) & 0x8000) != 0 ||
+        (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0 ||
+        (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0 ||
+        (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
+
+    const int target = moving ? 128 : 255;
+    DWORD elapsed = now - lastTick;
+    lastTick = now;
+    if (elapsed > 50) elapsed = 50;
+
+    if (alpha < target) {
+        alpha += (int)((127 * elapsed + MAPDIAG_MAP_FADE_MS - 1) / MAPDIAG_MAP_FADE_MS);
+        if (alpha > target) alpha = target;
+    } else if (alpha > target) {
+        alpha -= (int)((127 * elapsed + MAPDIAG_MAP_FADE_MS - 1) / MAPDIAG_MAP_FADE_MS);
+        if (alpha < target) alpha = target;
+    }
+
+    g_mapView->SetTextureAlpha(alpha);
+    if (g_mapView->ViewPageMap)
+        g_mapView->ViewPageMap->SetTextureAlpha(alpha);
+
+    if (moving && !fadeLogged) {
+        fadeLogged = true;
+        MapDiagLog("[map-fade] movement key held; fading document to 50%% opacity");
+    }
+    if (!moving && alpha == 255)
+        fadeLogged = false;
+}
+
 // ---------------------------------------------------------------- hook state / runtime probes
 void MapDiagHookState(const char* name, THookInfo& info) {
     MapDiagLog("[hook] %s hooked=%d exists=%d original=%p trampoline=%p detour=%p",
@@ -688,7 +753,7 @@ void Game_Entry() {
 
 void Game_Init() { }
 void Game_Exit() { MapDiagLog("[plugin] Game_Exit"); }
-void Game_PreLoop() { MapDiagRefreshMapState(); MapDiagUnlock(); MapDiagMouseTurn(); MapDiagMarker(); }
+void Game_PreLoop() { MapDiagRefreshMapState(); MapDiagUnlock(); MapDiagMouseTurn(); MapDiagMarker(); MapDiagFadeMap(); }
 void Game_Loop() { MapDiagUnlock(); }
 void Game_PostLoop() { }
 void Game_MenuLoop() { }
