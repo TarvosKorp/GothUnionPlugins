@@ -748,7 +748,7 @@ static void MapDiagFadeMap() {
         (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0 ||
         (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
 
-    const int movingAlpha = 255 - (255 * g_mapTransparency + 50) / 100;
+    const int movingAlpha = (255 * (100 - g_mapTransparency) + 50) / 100;
 
     // The map itself fades in when opened. Ignore movement during this grace
     // period, then fade only if the master switch and transparency mode allow it.
