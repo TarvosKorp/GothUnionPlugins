@@ -1,54 +1,33 @@
-182299859 | [plugin] Game_Entry UNLOCK=1 MARKER=1 MOUSE=1
-182299859 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590870 detour=71202070
-182299859 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365908B8 detour=71202090
-182299859 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590900 detour=712020A0
-182299859 | [hook] DocumentManager::HandleEvent hooked=1 exists=1 original=0065F450 trampoline=36590948 detour=71202100
-182299859 | [hook] ViewArrow::Blit hooked=1 exists=1 original=006934A0 trampoline=365907E0 detour=71202000
-182299859 | [hook] Game::CheckObjectRoutines hooked=1 exists=1 original=006CABB0 trampoline=36590828 detour=71202040
-182299859 | [hook] MapView::UpdatePosition hooked=1 exists=1 original=0068D7B0 trampoline=36590798 detour=712018E0
-182299859 | [runtime] Game_Entry zinput=NULL
-182314468 | [doc] OPEN mapView=328E1AE8
-182314468 | [docs] mapView=328E1AE8 vptr=0083BACC
-182314468 | [hero] map-open player=287B24A8 interactItem=34353EF0 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-182314468 | [unlock] movement lock cleared
-182314468 | [arrow] native arrow hidden map=328E1AE8 view=328E1BE4 virtual=8192x8192 canonical=U.TGA texture=3233E948 textureSize=16x16 ready=1
-182314468 | [marker] first update map=328E1AE8 hero=(-42,-945,-5077) heading=(0.08,-1.00)
-182314484 | [arrow-geometry] map=328E1AE8 arrow=328E1BE4 virtualPos=0,0 virtualSize=8192,8192 pixelPos=981,643 pixelSize=16,16 mapVirtualPos=0,0 mapVirtualSize=8192,8192 mapPixelPos=0,0 mapPixelSize=1920,1080
-182314484 | [arrow-page] texture=3233E948 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182314484 | [arrow] renderer draw #1 rect=981,643 16x16 tex=3233E948 screen=1920x1080 rotation=-0.085 cachedNorth=1
-182315000 | [arrow-page] texture=32340058 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182315484 | [arrow] renderer draw #50 rect=981,643 16x16 tex=3233E948 screen=1920x1080 rotation=-1.290 cachedNorth=1
-182315515 | [arrow-page] texture=32340D28 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182315671 | [arrow-page] texture=323401A0 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182315859 | [arrow-page] texture=32340BE0 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182316031 | [arrow-page] texture=3233F388 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182316296 | [arrow-page] texture=3233F760 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182316500 | [arrow] renderer draw #96 rect=981,643 16x16 tex=3233E948 screen=1920x1080 rotation=1.383 cachedNorth=1
-182316656 | [arrow-page] texture=3233F9F0 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182316812 | [arrow-page] texture=3233E948 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182317296 | [arrow-page] texture=3233F9F0 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182317406 | [arrow-page] texture=3233E948 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182317500 | [arrow] renderer draw #142 rect=981,643 16x16 tex=3233E948 screen=1920x1080 rotation=0.349 cachedNorth=1
-182318109 | [doc] CLOSE
-182318109 | [hero] map-close player=287B24A8 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-182322640 | [doc] OPEN mapView=329BA3E0
-182322640 | [docs] mapView=329BA3E0 vptr=0083BACC
-182322640 | [hero] map-open player=287B24A8 interactItem=34353EF0 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-182322640 | [arrow] native arrow hidden map=329BA3E0 view=329BA4DC virtual=8192x8192 canonical=U.TGA texture=3233E948 textureSize=16x16 ready=1
-182322640 | [marker] first update map=329BA3E0 hero=(-588,-1012,-4910) heading=(-0.70,-0.72)
-182322656 | [arrow-geometry] map=329BA3E0 arrow=329BA4DC virtualPos=0,0 virtualSize=8192,8192 pixelPos=972,640 pixelSize=16,16 mapVirtualPos=0,0 mapVirtualSize=8192,8192 mapPixelPos=0,0 mapPixelSize=1920,1080
-182322656 | [arrow-page] texture=3233F9F0 textureSize=16x16 pixelPos=972,640 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182322656 | [arrow] renderer draw #178 rect=972,640 16x16 tex=3233E948 screen=1920x1080 rotation=0.771 cachedNorth=1
-182323109 | [arrow-page] texture=3233E948 textureSize=16x16 pixelPos=972,640 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182323406 | [arrow-page] texture=32340058 textureSize=16x16 pixelPos=972,640 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182323640 | [arrow-page] texture=32340D28 textureSize=16x16 pixelPos=972,640 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182323656 | [arrow] renderer draw #232 rect=972,640 16x16 tex=3233E948 screen=1920x1080 rotation=-1.297 cachedNorth=1
-182323765 | [arrow-page] texture=323401A0 textureSize=16x16 pixelPos=972,640 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182323937 | [arrow-page] texture=32340BE0 textureSize=16x16 pixelPos=972,640 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182324031 | [arrow-page] texture=3233F388 textureSize=16x16 pixelPos=972,640 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182324078 | [arrow-page] texture=3233F760 textureSize=16x16 pixelPos=972,640 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182324375 | [arrow-page] texture=3233F9F0 textureSize=16x16 pixelPos=972,640 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192
-182324656 | [arrow] renderer draw #285 rect=972,640 16x16 tex=3233E948 screen=1920x1080 rotation=0.752 cachedNorth=1
-182324968 | [doc] CLOSE
-182324968 | [hero] map-close player=287B24A8 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
-182328671 | [plugin] Game_Exit
+184161578 | [plugin] Game_Entry UNLOCK=1 MARKER=1 MOUSE=1
+184161578 | [hook] Input::GetState hooked=1 exists=1 original=004D4D30 trampoline=36590870 detour=71202110
+184161578 | [hook] Input::GetToggled hooked=1 exists=1 original=004D5020 trampoline=365908B8 detour=71202130
+184161578 | [hook] Input::GetMousePos hooked=1 exists=1 original=004D5730 trampoline=36590900 detour=71202140
+184161578 | [hook] DocumentManager::HandleEvent hooked=1 exists=1 original=0065F450 trampoline=36590948 detour=712021A0
+184161578 | [hook] ViewArrow::Blit hooked=1 exists=1 original=006934A0 trampoline=365907E0 detour=712020A0
+184161578 | [hook] Game::CheckObjectRoutines hooked=1 exists=1 original=006CABB0 trampoline=36590828 detour=712020E0
+184161578 | [hook] MapView::UpdatePosition hooked=1 exists=1 original=0068D7B0 trampoline=36590798 detour=712018E0
+184161578 | [runtime] Game_Entry zinput=NULL
+184181187 | [doc] OPEN mapView=34A83298
+184181187 | [docs] mapView=34A83298 vptr=0083BACC
+184181187 | [hero] map-open player=27EEFD48 interactItem=34316438 curState=-1 tgtState=-1 movlock=-1 bodyState=14 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+184181187 | [unlock] movement lock cleared
+184181187 | [arrow] native arrow hidden map=34A83298 view=34A83394 virtual=8192x8192 canonical=U.TGA texture=32348290 textureSize=16x16 ready=1
+184181187 | [marker] first update map=34A83298 hero=(-42,-945,-5078) heading=(0.02,-1.00)
+184181203 | [arrow-geometry] map=34A83298 arrow=34A83394 virtualPos=0,0 virtualSize=8192,8192 pixelPos=981,643 pixelSize=16,16 mapVirtualPos=0,0 mapVirtualSize=8192,8192 mapPixelPos=0,0 mapPixelSize=1920,1080
+184181203 | [arrow-page] texture=32348290 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.019,-1.000) angle=1.552
+184181203 | [arrow] renderer draw #1 rect=981,643 16x16 tex=32348290 screen=1920x1080 rotation=-0.019 cachedNorth=1
+184182187 | [arrow-page] texture=32348668 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.475,-0.880) angle=1.075
+184182218 | [arrow] renderer draw #54 rect=981,643 16x16 tex=32348290 screen=1920x1080 rotation=-0.578 cachedNorth=1
+184182375 | [arrow-page] texture=32349AE8 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.973,-0.230) angle=0.232
+184182531 | [arrow-page] texture=323488F8 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.797,0.604) angle=-0.649
+184182687 | [arrow-page] texture=32349EC0 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(0.309,0.951) angle=-1.257
+184182921 | [arrow-page] texture=323487B0 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.515,0.857) angle=-2.112
+184183109 | [arrow-page] texture=32349338 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.942,0.336) angle=-2.799
+184183234 | [arrow] renderer draw #103 rect=981,643 16x16 tex=32348290 screen=1920x1080 rotation=-4.667 cachedNorth=1
+184183453 | [arrow-page] texture=32347EB8 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.902,-0.432) angle=2.695
+184183953 | [arrow-page] texture=32348290 textureSize=16x16 pixelPos=981,643 pixelSize=16,16 virtualPos=0,0 virtualSize=8192,8192 heroHeading=(-0.325,-0.946) angle=1.901
+184184234 | [arrow] renderer draw #152 rect=981,643 16x16 tex=32348290 screen=1920x1080 rotation=0.081 cachedNorth=1
+184185125 | [doc] ESC close event original=1
+184185171 | [doc] CLOSE
+184185171 | [hero] map-close player=27EEFD48 interactItem=00000000 curState=-1 tgtState=-1 movlock=0 bodyState=0 weaponMode=0 kbdEnabled=1 mouseEnabled=1
+184187390 | [plugin] Game_Exit
