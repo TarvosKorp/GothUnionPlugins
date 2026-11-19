@@ -1,159 +1,42 @@
-#include <stdio.h>
-#include <stdarg.h>
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
-#include <intrin.h>
 
-// zDynaMap — live GPS marker, movement unlock, mouse turn and configurable map fade.
-//
-// Results so far (logs 1-3):
-//  * Log path bug fixed (absolute path). movlock=1 while a document is open; clearing it every
-//    frame (iteration 4) restores walking and key turning (GAME_LEFT/RIGHT/STRAFE).
-//  * Mouse deltas ARE delivered to GetMousePos while the map is open, but the hero ignores them
-//    (some guard inside the hero/camera mouse code; not found yet).
-//  * The GPS marker does not follow the hero: oCViewDocumentMap::UpdatePosition (0x0068D7B0) is
-//    apparently called only once, when the map is shown.
-//
-// This build:
-//  1) MARKER: ~10x per second, finds the open oCViewDocumentMap (oCDocumentManager::ListDocuments,
-//     type checked by vtable pointer) and calls its UpdatePosition(). No hook on UpdatePosition/Show.
-//  2) MOUSE: takes the horizontal mouse delta seen in the GetMousePos hook and rotates the hero with
-//     RotateWorldY while the map is open. Tune live: NUMPAD+ / NUMPAD- = speed x1.25 / x0.8,
-//     NUMPAD* = flip direction. Values are logged ([mouse]); tell me the final ones.
-//  3) DIAG: [callers] lists return addresses of GetMousePos callers in the world vs. with the map
-//     open, to find the real consumer later.
-// NOTE: the "document open" flag is set by the first key event after opening (press any key once).
-#ifndef MAPDIAG_UNLOCK
-#define MAPDIAG_UNLOCK 1
-#endif
-#ifndef MAPDIAG_FORCE_MOVE
-#define MAPDIAG_FORCE_MOVE 0
-#endif
-#ifndef MAPDIAG_PASS_KEYS
-#define MAPDIAG_PASS_KEYS 0
-#endif
-#ifndef MAPDIAG_MARKER
-#define MAPDIAG_MARKER 1
-#endif
-#ifndef MAPDIAG_MARKER_MS
-#define MAPDIAG_MARKER_MS 40      // 25 updates per second; synchronized with arrow heading sampling
-#endif
-#ifndef MAPDIAG_MAP_FADE_MS
-#define MAPDIAG_MAP_FADE_MS 300   // smooth transition to/from the selected map opacity
-#endif
-#ifndef MAPDIAG_MAP_OPEN_GRACE_MS
-#define MAPDIAG_MAP_OPEN_GRACE_MS 1200 // let the engine finish showing the map before movement fade
-#endif
-#ifndef MAPDIAG_MOUSE_TURN
-#define MAPDIAG_MOUSE_TURN 1
-#endif
-#ifndef MAPDIAG_MOUSE_DEG_PER_UNIT
-#define MAPDIAG_MOUSE_DEG_PER_UNIT 0.30f
-#endif
+// zDynaMap — live map marker, movement unlock, mouse turning and configurable map fade.
+// Engine-specific addresses and renderer offsets are taken from the matching Union SDK API.
 
 namespace GOTHIC_ENGINE {
 
-// ---------------------------------------------------------------- logging
-static const char* MapDiagPath() {
-    static char path[MAX_PATH] = { 0 };
-    static bool ready = false;
-    if (!ready) {
-        ready = true;
-        DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
-        if (n == 0 || n >= MAX_PATH) {
-            lstrcpyA(path, "zDynaMap.log");
-        } else {
-            char* slash = strrchr(path, '\\');
-            if (slash) *(slash + 1) = 0;
-            lstrcatA(path, "zDynaMap.log");
-        }
-    }
-    return path;
-}
+static const DWORD MAP_MARKER_UPDATE_MS = 40;
+static const DWORD MAP_FADE_DURATION_MS = 300;
+static const DWORD MAP_OPEN_GRACE_MS = 1200;
+static const float MAP_MOUSE_DEGREES_PER_UNIT = 0.30f;
 
-void MapDiagReset() {
-    FILE* file = fopen(MapDiagPath(), "w");
-    if (file) fclose(file);
-}
+static const unsigned int MAP_RENDERER_WIDTH_OFFSET = 0x98C;
+static const unsigned int MAP_RENDERER_HEIGHT_OFFSET = 0x990;
 
-void MapDiagLog(const char* format, ...) {
-    char line[1024];
-    va_list args;
-    va_start(args, format);
-    _vsnprintf(line, sizeof(line) - 1, format, args);
-    va_end(args);
-    line[sizeof(line) - 1] = 0;
-
-    OutputDebugStringA("[zDynaMap] ");
-    OutputDebugStringA(line);
-    OutputDebugStringA("\n");
-
-    FILE* file = fopen(MapDiagPath(), "a");
-    if (!file) return;
-    fprintf(file, "%8lu | %s\n", (unsigned long)GetTickCount(), line);
-    fclose(file);
-}
-
-void MapDiagCwd(const char* stage) {
-    char cwd[MAX_PATH] = { 0 };
-    GetCurrentDirectoryA(MAX_PATH, cwd);
-    MapDiagLog("[cwd] %s cwd='%s'", stage, cwd);
-}
-
-// ---------------------------------------------------------------- shared state
-static volatile bool g_docOpen = false;          // synchronized from the live document list
+static volatile bool g_docOpen = false;
 static DWORD g_mapOpenedAt = 0;
 static oCViewDocumentMap* g_mapView = NULL;
 static float g_frameDx = 0.0f;
+
 static bool g_pluginEnabled = true;
 static bool g_mapAlphaEnabled = true;
-static int g_mapTransparency = 50; // 20-80%, in 5% increments
-static int g_mapCurrentAlpha = 255; // Actual map opacity, used to keep the marker half as transparent.
+static int g_mapTransparency = 50;
+static int g_mapCurrentAlpha = 255;
 
-// Mouse turn state.
-static float g_degPerUnit = MAPDIAG_MOUSE_DEG_PER_UNIT;
-static float g_mouseSign = 1.0f;
-
-static void MapDiagHeroProbe(const char* why) {
-    oCNpc* hero = Gothic_II_Addon::player;
-    zCInput* in = Gothic_II_Addon::zinput;
-    int kbd = in ? in->GetDeviceEnabled(zINPUT_KEYBOARD) : -1;
-    int mouse = in ? in->GetDeviceEnabled(zINPUT_MOUSE) : -1;
-    if (!hero) {
-        MapDiagLog("[hero] %s player=NULL kbdEnabled=%d mouseEnabled=%d", why, kbd, mouse);
-        return;
-    }
-    MapDiagLog("[hero] %s player=%p interactItem=%p curState=%d tgtState=%d movlock=%d bodyState=%d weaponMode=%d kbdEnabled=%d mouseEnabled=%d",
-        why, hero, hero->interactItem, hero->interactItemCurrentState, hero->interactItemTargetState,
-        (int)hero->movlock, hero->GetBodyState(), hero->GetWeaponMode(), kbd, mouse);
-}
-
-
-// ---------------------------------------------------------------- smooth map arrow
-// The stock map arrow is an eight-page document. Hide only that small arrow view
-// and draw a continuously oriented pointer into the same view after the screen
-// has rendered its normal contents.
+// Smooth replacement for the engine's eight-direction map arrow.
 static oCViewDocumentMap* g_arrowPreparedMap = NULL;
-static oCViewDocumentMap* g_earlyMapView = NULL;
 static zCTexture* g_smoothArrowTexture = NULL;
 static int g_smoothArrowWidth = 0;
 static int g_smoothArrowHeight = 0;
-static float g_smoothArrowBaseAngle = 0.0f;
 static float g_smoothArrowAngle = 1.57079632679f;
 static DWORD g_lastSmoothArrowAngleUpdate = 0;
 static bool g_smoothArrowTextureReady = false;
-static unsigned long g_smoothArrowDraws = 0;
-static DWORD g_lastArrowDrawLog = 0;
-static bool g_arrowDrawLogged = false;
-static bool g_arrowBlitLogged = false;
-static bool g_markerLogged = false;
-static bool g_arrowGeometryLogged = false;
-static zCTexture* g_lastNativeArrowTexture = NULL;
 
-// Keep the first native map-arrow position as the authoritative anchor.
-// Later UpdatePosition calls can shift PixelPosition; measure that delta from
-// the engine itself instead of applying a screen-resolution formula.
+// Keep the first native arrow position as the anchor. Later engine refreshes
+// can shift PixelPosition slightly, so retain the correction measured from
+// the engine's own UpdatePosition calls.
 static oCViewDocumentMap* g_nativeAnchorMap = NULL;
 static bool g_nativeAnchorCaptured = false;
 static bool g_nativeAnchorCorrectionReady = false;
@@ -162,125 +45,101 @@ static int g_nativeAnchorY = 0;
 static int g_nativeAnchorCorrectionX = 0;
 static int g_nativeAnchorCorrectionY = 0;
 
-static void MapDiagPrepareSmoothArrow() {
-    if (!g_pluginEnabled || !g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView) return;
-    // Hide the engine's eight-page arrow and load its canonical north-facing
-    // artwork directly. Never depend on whichever page the hero happened to
-    // be facing when the map was opened.
-    g_mapView->ViewArrow.SetTextureAlpha(0);
-    g_arrowPreparedMap = g_mapView;
-    g_arrowDrawLogged = false;
-    g_arrowBlitLogged = false;
-    g_markerLogged = false;
-    g_arrowGeometryLogged = false;
+static bool IsMapDocument(oCViewDocument* view) {
+    if (!view) return false;
 
-    zSTRING northName("U.TGA");
-    g_smoothArrowTexture = zCTexture::Load(northName, 0);
-    g_smoothArrowTextureReady = (g_smoothArrowTexture != NULL);
-    g_smoothArrowBaseAngle = 1.57079632679f;
-    if (g_smoothArrowTextureReady) {
-        g_smoothArrowTexture->GetPixelSize(g_smoothArrowWidth, g_smoothArrowHeight);
-    } else {
-        g_smoothArrowWidth = 0;
-        g_smoothArrowHeight = 0;
+    zCClassDef* def = ((zCObject*)view)->_GetClassDef();
+    while (def) {
+        const char* name = def->className.ToChar();
+        if (name && strcmp(name, "oCViewDocumentMap") == 0)
+            return true;
+        def = def->baseClassDef;
     }
-
-    int w = g_mapView->ViewArrow.VirtualSize.X;
-    int h = g_mapView->ViewArrow.VirtualSize.Y;
-    MapDiagLog("[arrow] native arrow hidden map=%p view=%p virtual=%dx%d canonical=U.TGA texture=%p textureSize=%dx%d ready=%d",
-        g_mapView, &g_mapView->ViewArrow, w, h, g_smoothArrowTexture,
-        g_smoothArrowWidth, g_smoothArrowHeight, (int)g_smoothArrowTextureReady);
+    return false;
 }
 
+static oCViewDocumentMap* FindMapView() {
+    oCDocumentManager& manager = oCDocumentManager::GetDocumentManager();
+    zCListSort<oCViewDocument>* node = manager.ListDocuments;
 
-// Catch the engine's first map-position update. It runs before the map's
-// ViewArrow is blitted, so the stock arrow can be hidden before its first frame.
+    for (int guard = 0; node && guard < 32; node = node->next, ++guard) {
+        oCViewDocument* view = node->data;
+        if (IsMapDocument(view))
+            return (oCViewDocumentMap*)view;
+    }
+    return NULL;
+}
+
+static void PrepareSmoothArrow() {
+    if (!g_pluginEnabled || !g_docOpen || !g_mapView || g_arrowPreparedMap == g_mapView)
+        return;
+
+    g_mapView->ViewArrow.SetTextureAlpha(0);
+    g_arrowPreparedMap = g_mapView;
+
+    // Keep one reference to U.TGA for the plugin lifetime and reuse it
+    // whenever the map is reopened.
+    if (!g_smoothArrowTexture) {
+        zSTRING northName("U.TGA");
+        g_smoothArrowTexture = zCTexture::Load(northName, 0);
+        g_smoothArrowTextureReady = (g_smoothArrowTexture != NULL);
+        if (g_smoothArrowTextureReady) {
+            g_smoothArrowTexture->GetPixelSize(g_smoothArrowWidth, g_smoothArrowHeight);
+        }
+    }
+}
+
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
     0x0068D7B0, &Hook_MapView_UpdatePosition, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     oCViewDocumentMap* map = (oCViewDocumentMap*)self;
-    static unsigned long loggedCalls = 0;
-    zCPosition beforeVirtualPos;
-    zCPosition beforeVirtualSize;
-    zCPosition beforePixelPos;
-    zCPosition beforePixelSize;
-    zCPosition beforeMapVirtualPos;
-    zCPosition beforeMapVirtualSize;
-    zCPosition beforeMapPixelPos;
-    zCPosition beforeMapPixelSize;
-    if (map) {
-        g_earlyMapView = map;
-        if (g_pluginEnabled) map->ViewArrow.SetTextureAlpha(0);
-        beforeVirtualPos = map->ViewArrow.VirtualPosition;
-        beforeVirtualSize = map->ViewArrow.VirtualSize;
-        beforePixelPos = map->ViewArrow.PixelPosition;
-        beforePixelSize = map->ViewArrow.PixelSize;
-        beforeMapVirtualPos = map->VirtualPosition;
-        beforeMapVirtualSize = map->VirtualSize;
-        beforeMapPixelPos = map->PixelPosition;
-        beforeMapPixelSize = map->PixelSize;
-    }
+    if (map && g_pluginEnabled)
+        map->ViewArrow.SetTextureAlpha(0);
+
     Ivk_MapView_UpdatePosition(self, edx);
 
-    if (map && g_pluginEnabled) {
-        if (g_nativeAnchorMap != map) {
-            g_nativeAnchorMap = map;
-            g_nativeAnchorCaptured = false;
-            g_nativeAnchorCorrectionReady = false;
-            g_nativeAnchorCorrectionX = 0;
-            g_nativeAnchorCorrectionY = 0;
-        }
-        const int nativeX = map->ViewArrow.PixelPosition.X;
-        const int nativeY = map->ViewArrow.PixelPosition.Y;
-        const int nativeW = map->ViewArrow.PixelSize.X;
-        const int nativeH = map->ViewArrow.PixelSize.Y;
-        if (!g_nativeAnchorCaptured && nativeW > 0 && nativeH > 0) {
-            g_nativeAnchorX = nativeX;
-            g_nativeAnchorY = nativeY;
-            g_nativeAnchorCaptured = true;
-            MapDiagLog("[arrow-anchor] primary native position=%d,%d size=%dx%d",
-                g_nativeAnchorX, g_nativeAnchorY, nativeW, nativeH);
-        } else if (g_nativeAnchorCaptured && !g_nativeAnchorCorrectionReady) {
-            const int dx = g_nativeAnchorX - nativeX;
-            const int dy = g_nativeAnchorY - nativeY;
-            if ((dx != 0 || dy != 0) && dx >= -128 && dx <= 128 && dy >= -128 && dy <= 128) {
-                g_nativeAnchorCorrectionX = dx;
-                g_nativeAnchorCorrectionY = dy;
-                g_nativeAnchorCorrectionReady = true;
-                MapDiagLog("[arrow-anchor] native refresh correction=%d,%d primary=%d,%d refreshed=%d,%d",
-                    dx, dy, g_nativeAnchorX, g_nativeAnchorY, nativeX, nativeY);
-            }
-        }
+    if (!map || !g_pluginEnabled)
+        return;
+
+    if (g_nativeAnchorMap != map) {
+        g_nativeAnchorMap = map;
+        g_nativeAnchorCaptured = false;
+        g_nativeAnchorCorrectionReady = false;
+        g_nativeAnchorCorrectionX = 0;
+        g_nativeAnchorCorrectionY = 0;
     }
 
-    if (map && loggedCalls < 2) {
-        ++loggedCalls;
-        oCNpc* hero = Gothic_II_Addon::player;
-        zVEC3 heroPos = hero ? hero->GetPositionWorld() : zVEC3(0, 0, 0);
-        MapDiagLog("[update-hook] call=%lu map=%p hero=%p heroPos=(%.1f,%.1f,%.1f) levelCoords=(%.1f,%.1f,%.1f,%.1f)",
-            loggedCalls, map, hero, heroPos.n[0], heroPos.n[1], heroPos.n[2],
-            map->LevelCoords.n[0], map->LevelCoords.n[1], map->LevelCoords.n[2], map->LevelCoords.n[3]);
-        MapDiagLog("[update-hook] arrow virtualPos=%d,%d->%d,%d virtualSize=%d,%d->%d,%d pixelPos=%d,%d->%d,%d pixelSize=%d,%d->%d,%d",
-            beforeVirtualPos.X, beforeVirtualPos.Y, map->ViewArrow.VirtualPosition.X, map->ViewArrow.VirtualPosition.Y,
-            beforeVirtualSize.X, beforeVirtualSize.Y, map->ViewArrow.VirtualSize.X, map->ViewArrow.VirtualSize.Y,
-            beforePixelPos.X, beforePixelPos.Y, map->ViewArrow.PixelPosition.X, map->ViewArrow.PixelPosition.Y,
-            beforePixelSize.X, beforePixelSize.Y, map->ViewArrow.PixelSize.X, map->ViewArrow.PixelSize.Y);
-        MapDiagLog("[update-hook] map virtualPos=%d,%d->%d,%d virtualSize=%d,%d->%d,%d pixelPos=%d,%d->%d,%d pixelSize=%d,%d->%d,%d parent=%p",
-            beforeMapVirtualPos.X, beforeMapVirtualPos.Y, map->VirtualPosition.X, map->VirtualPosition.Y,
-            beforeMapVirtualSize.X, beforeMapVirtualSize.Y, map->VirtualSize.X, map->VirtualSize.Y,
-            beforeMapPixelPos.X, beforeMapPixelPos.Y, map->PixelPosition.X, map->PixelPosition.Y,
-            beforeMapPixelSize.X, beforeMapPixelSize.Y, map->PixelSize.X, map->PixelSize.Y,
-            map->ViewArrow.ViewParent);
+    const int nativeX = map->ViewArrow.PixelPosition.X;
+    const int nativeY = map->ViewArrow.PixelPosition.Y;
+    const int nativeW = map->ViewArrow.PixelSize.X;
+    const int nativeH = map->ViewArrow.PixelSize.Y;
+
+    if (!g_nativeAnchorCaptured && nativeW > 0 && nativeH > 0) {
+        g_nativeAnchorX = nativeX;
+        g_nativeAnchorY = nativeY;
+        g_nativeAnchorCaptured = true;
+    } else if (g_nativeAnchorCaptured && !g_nativeAnchorCorrectionReady) {
+        const int dx = g_nativeAnchorX - nativeX;
+        const int dy = g_nativeAnchorY - nativeY;
+        if ((dx != 0 || dy != 0) &&
+            dx >= -128 && dx <= 128 && dy >= -128 && dy <= 128) {
+            g_nativeAnchorCorrectionX = dx;
+            g_nativeAnchorCorrectionY = dy;
+            g_nativeAnchorCorrectionReady = true;
+        }
     }
 }
 
-static void MapDiagDrawSmoothArrow() {
-    if (!g_pluginEnabled || !g_docOpen || !g_mapView) return;
-    oCNpc* hero = Gothic_II_Addon::player;
-    zCRenderer* renderer = Gothic_II_Addon::zrenderer;
-    if (!hero || !renderer) return;
+static void DrawSmoothArrow() {
+    if (!g_pluginEnabled || !g_docOpen || !g_mapView)
+        return;
+
+    oCNpc* hero = GOTHIC_ENGINE::player;
+    zCRenderer* renderer = GOTHIC_ENGINE::zrenderer;
+    if (!hero || !renderer)
+        return;
 
     oCViewDocument& arrow = g_mapView->ViewArrow;
     zCTexture* currentTexture = arrow.Texture;
@@ -288,105 +147,57 @@ static void MapDiagDrawSmoothArrow() {
     const int y = arrow.PixelPosition.Y;
     const int currentW = arrow.PixelSize.X;
     const int currentH = arrow.PixelSize.Y;
-    if (!g_arrowGeometryLogged) {
-        g_arrowGeometryLogged = true;
-        MapDiagLog("[arrow-geometry] map=%p arrow=%p virtualPos=%d,%d virtualSize=%d,%d pixelPos=%d,%d pixelSize=%d,%d mapVirtualPos=%d,%d mapVirtualSize=%d,%d mapPixelPos=%d,%d mapPixelSize=%d,%d",
-            g_mapView, &arrow,
-            arrow.VirtualPosition.X, arrow.VirtualPosition.Y,
-            arrow.VirtualSize.X, arrow.VirtualSize.Y,
-            x, y, currentW, currentH,
-            g_mapView->VirtualPosition.X, g_mapView->VirtualPosition.Y,
-            g_mapView->VirtualSize.X, g_mapView->VirtualSize.Y,
-            g_mapView->PixelPosition.X, g_mapView->PixelPosition.Y,
-            g_mapView->PixelSize.X, g_mapView->PixelSize.Y);
-    }
-    // The engine selects one of its eight native arrow pages as the hero turns.
-    // Record each page transition together with the final pixel anchor. This lets
-    // us distinguish a coordinate shift from per-page artwork/pivot differences.
-    if (currentTexture != g_lastNativeArrowTexture) {
-        g_lastNativeArrowTexture = currentTexture;
-        int nativeW = 0, nativeH = 0;
-        if (currentTexture) currentTexture->GetPixelSize(nativeW, nativeH);
-        zVEC3 pageHeading = hero->GetAtVectorWorld();
-        const float pageAngle = atan2f(-pageHeading.n[2], pageHeading.n[0]);
-        MapDiagLog("[arrow-page] texture=%p textureSize=%dx%d pixelPos=%d,%d pixelSize=%d,%d virtualPos=%d,%d virtualSize=%d,%d heroHeading=(%.3f,%.3f) angle=%.3f",
-            currentTexture, nativeW, nativeH, x, y, currentW, currentH,
-            arrow.VirtualPosition.X, arrow.VirtualPosition.Y,
-            arrow.VirtualSize.X, arrow.VirtualSize.Y,
-            pageHeading.n[0], pageHeading.n[2], pageAngle);
-    }
 
-    if (!currentTexture || currentW < 4 || currentH < 4) {
-        static bool missingLogged = false;
-        if (!missingLogged) {
-            missingLogged = true;
-            MapDiagLog("[arrow] direct draw unavailable texture=%p pixel=%d,%d %dx%d virtual=%dx%d",
-                currentTexture, x, y, currentW, currentH, arrow.VirtualSize.X, arrow.VirtualSize.Y);
-        }
+    if (!currentTexture || currentW < 4 || currentH < 4)
         return;
-    }
 
-    // Sample heading at the same 25 Hz cadence as UpdatePosition().
-    // The artwork is always the explicitly loaded U.TGA (north/up).
     const DWORD now = GetTickCount();
     if (g_lastSmoothArrowAngleUpdate == 0 ||
-        now - g_lastSmoothArrowAngleUpdate >= MAPDIAG_MARKER_MS) {
-        zVEC3 at = hero->GetAtVectorWorld();
-        float dx = at.n[0];
-        float dy = -at.n[2];
-        const float len = sqrtf(dx * dx + dy * dy);
-        if (len >= 0.001f) {
-            dx /= len;
-            dy /= len;
+        now - g_lastSmoothArrowAngleUpdate >= MAP_MARKER_UPDATE_MS) {
+        zVEC3 heading = hero->GetAtVectorWorld();
+        float dx = heading.n[0];
+        float dy = -heading.n[2];
+        const float length = sqrtf(dx * dx + dy * dy);
+        if (length >= 0.001f) {
+            dx /= length;
+            dy /= length;
             g_smoothArrowAngle = atan2f(dy, dx);
             g_lastSmoothArrowAngleUpdate = now;
         }
     }
 
-    // U.TGA is the north/up cardinal artwork: +90 degrees in this
-    // heading convention. Never fall back to the engine's changing 8-way page.
     if (!g_smoothArrowTextureReady || !g_smoothArrowTexture ||
         g_smoothArrowWidth < 4 || g_smoothArrowHeight < 4)
         return;
-    zCTexture* texture = g_smoothArrowTexture;
-    const int w = g_smoothArrowWidth;
-    const int h = g_smoothArrowHeight;
+
     const float rotation = g_smoothArrowAngle - 1.57079632679f;
     const float c = cosf(rotation);
     const float sn = sinf(rotation);
 
-    // PixelPosition is the engine's marker anchor. The replacement needs the
-    // same compensation as the native marker, but that correction must follow
-    // the actual screen scale instead of remaining a fixed pixel displacement.
-    // 1920x1080 is the reference layout where the original correction is exact.
-    const int sw = *(int*)((char*)renderer + 0x98C);
-    const int sh = *(int*)((char*)renderer + 0x990);
-    if (sw < 320 || sw > 16384 || sh < 200 || sh > 16384) {
-        static bool badScreenLogged = false;
-        if (!badScreenLogged) {
-            badScreenLogged = true;
-            MapDiagLog("[arrow] invalid renderer dimensions screen=%dx%d", sw, sh);
-        }
+    const int screenWidth = *(int*)((char*)renderer + MAP_RENDERER_WIDTH_OFFSET);
+    const int screenHeight = *(int*)((char*)renderer + MAP_RENDERER_HEIGHT_OFFSET);
+    if (screenWidth < 320 || screenWidth > 16384 ||
+        screenHeight < 200 || screenHeight > 16384)
         return;
-    }
-    // Reconstruct the native arrow's first position using the correction
-    // measured from its own UpdatePosition calls. This is independent of the
-    // display mode and automatically follows 800p, 1080p, 2K and 4K layouts.
+
     const int anchorOffsetX = g_nativeAnchorCorrectionReady
         ? g_nativeAnchorCorrectionX : currentW / 2;
     const int anchorOffsetY = g_nativeAnchorCorrectionReady
         ? g_nativeAnchorCorrectionY : currentH / 2;
+
     const float halfW = (float)currentW * 0.5f;
     const float halfH = (float)currentH * 0.5f;
     const float cx = (float)x + (float)anchorOffsetX + halfW;
     const float cy = (float)y + (float)anchorOffsetY + halfH;
-    // The marker receives half the map's current transparency, not half the configured target.
-    // Using the applied map alpha keeps both fades synchronized throughout the transition.
+
+    // The marker is always half as transparent as the map itself.
     const int markerAlpha = (255 + g_mapCurrentAlpha + 1) / 2;
+
     const float lx[4] = { -halfW, halfW, halfW, -halfW };
     const float ly[4] = { -halfH, -halfH, halfH, halfH };
     const float tu[4] = { 0.f, 1.f, 1.f, 0.f };
     const float tv[4] = { 0.f, 0.f, 1.f, 1.f };
+
     zTRndSimpleVertex vertices[4];
     for (int i = 0; i < 4; ++i) {
         vertices[i].pos.n[0] = cx + c * lx[i] - sn * ly[i];
@@ -397,179 +208,74 @@ static void MapDiagDrawSmoothArrow() {
         vertices[i].color = zCOLOR(255, 255, 255, markerAlpha);
     }
 
-    // CheckObjectRoutines is the immediate-render stage used by the Coop
-    // marker implementation. View::Line() queues line primitives too late here;
-    // DrawPolySimple submits the textured quad directly before EndFrame.
-    // G2A renderer dimensions are read from +0x98C/+0x990 above.
-
     const int oldZWrite = renderer->GetZBufferWriteEnabled();
     const zTRnd_ZBufferCmp oldZCmp = renderer->GetZBufferCompare();
     const zTRnd_AlphaBlendFunc oldAlpha = renderer->GetAlphaBlendFunc();
     const int oldBilerp = renderer->GetBilerpFilterEnabled();
+
     renderer->SetZBufferWriteEnabled(FALSE);
     renderer->SetZBufferCompare(zRND_ZBUFFER_CMP_ALWAYS);
     renderer->SetAlphaBlendFunc(zRND_ALPHA_FUNC_BLEND);
     renderer->SetBilerpFilterEnabled(TRUE);
-    renderer->SetViewport(0, 0, sw, sh);
-    renderer->DrawPolySimple(texture, vertices, 4);
+    renderer->SetViewport(0, 0, screenWidth, screenHeight);
+    renderer->DrawPolySimple(g_smoothArrowTexture, vertices, 4);
     renderer->SetBilerpFilterEnabled(oldBilerp);
     renderer->SetAlphaBlendFunc(oldAlpha);
     renderer->SetZBufferCompare(oldZCmp);
     renderer->SetZBufferWriteEnabled(oldZWrite);
-
-    ++g_smoothArrowDraws;
-    DWORD drawNow = GetTickCount();
-    if (g_lastArrowDrawLog == 0 || drawNow - g_lastArrowDrawLog >= 1000) {
-        g_lastArrowDrawLog = drawNow;
-        MapDiagLog("[arrow] renderer draw #%lu rect=%d,%d %dx%d tex=%p screen=%dx%d rotation=%.3f cachedNorth=%d",
-            g_smoothArrowDraws, x, y, w, h, texture, sw, sh, rotation,
-            (int)g_smoothArrowTextureReady);
-    }
 }
 
-// zCViewPrint::Blit() — G2A 0x006934A0.
-// Keep the native eight-way arrow fully transparent. The replacement is drawn
-// separately at CheckObjectRoutines, as in the last confirmed working build.
+// zCViewPrint::Blit() — hide the stock eight-way arrow before it is rendered.
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
     0x006934A0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
-    bool isArrow = g_pluginEnabled && g_docOpen && g_mapView &&
-        self == (void*)&g_mapView->ViewArrow;
-    static unsigned long loggedBlits = 0;
-    int beforeX = 0, beforeY = 0;
-    if (isArrow) {
-        oCViewDocument* arrow = (oCViewDocument*)self;
-        beforeX = arrow->PixelPosition.X;
-        beforeY = arrow->PixelPosition.Y;
-        arrow->SetTextureAlpha(0);
+    if (g_pluginEnabled && g_docOpen && g_mapView &&
+        self == (void*)&g_mapView->ViewArrow) {
+        ((oCViewDocument*)self)->SetTextureAlpha(0);
     }
     Ivk_ViewArrow_Blit(self, edx);
-    if (isArrow && loggedBlits < 12) {
-        ++loggedBlits;
-        oCViewDocument* arrow = (oCViewDocument*)self;
-        MapDiagLog("[arrow-blit] call=%lu pos=%d,%d->%d,%d size=%d,%d virtualPos=%d,%d virtualSize=%d,%d",
-            loggedBlits, beforeX, beforeY,
-            arrow->PixelPosition.X, arrow->PixelPosition.Y,
-            arrow->PixelSize.X, arrow->PixelSize.Y,
-            arrow->VirtualPosition.X, arrow->VirtualPosition.Y,
-            arrow->VirtualSize.X, arrow->VirtualSize.Y);
-    }
 }
 
-// oCGame::CheckObjectRoutines() — G2A 0x006CABB0.
-// Restore the render stage used by the confirmed 29b411d implementation.
-// The plugin no longer hooks DrawPolySimple; its quad now passes through the
-// renderer hook installed by MirrorWorld instead of competing with it.
+// oCGame::CheckObjectRoutines() — submit the replacement marker in the map render stage.
 void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx);
 CInvoke<void(__fastcall*)(void*, void*)> Ivk_Game_CheckObjectRoutines(
     0x006CABB0, &Hook_Game_CheckObjectRoutines, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_Game_CheckObjectRoutines(void* self, void* edx) {
-    if (self == Gothic_II_Addon::ogame)
-        MapDiagDrawSmoothArrow();
+    if (self == GOTHIC_ENGINE::ogame)
+        DrawSmoothArrow();
     Ivk_Game_CheckObjectRoutines(self, edx);
 }
 
-// ---------------------------------------------------------------- input hooks
-#if MAPDIAG_FORCE_MOVE
-// Physically held key -> logical movement id (only used while a document is open).
-static float MapDiagForcedValue(unsigned short logical) {
-    int vk = 0;
-    switch (logical) {
-    case 3:  vk = 'W'; break;   // GAME_UP
-    case 4:  vk = 'S'; break;   // GAME_DOWN
-    case 1:  vk = 'A'; break;   // GAME_LEFT  (turn)
-    case 2:  vk = 'D'; break;   // GAME_RIGHT (turn)
-    case 18: vk = 'Q'; break;   // GAME_STRAFELEFT
-    case 19: vk = 'E'; break;   // GAME_STRAFERIGHT
-    default: return 0.0f;
-    }
-    return (GetAsyncKeyState(vk) & 0x8000) ? 1.0f : 0.0f;
-}
-#endif
-
-// zCInput_Win32::GetState(unsigned short) — G2A 0x004D4D30.
-float __fastcall Hook_Input_GetState(void* self, void* edx, unsigned short key);
-CInvoke<float(__fastcall*)(void*, void*, unsigned short)> Ivk_Input_GetState(
-    0x004D4D30, &Hook_Input_GetState, IvkEnabled(Engine_G2A));
-
-float __fastcall Hook_Input_GetState(void* self, void* edx, unsigned short key) {
-    float raw = Ivk_Input_GetState(self, edx, key);
-    float value = raw;
-
-#if MAPDIAG_FORCE_MOVE
-    if (g_docOpen && raw == 0.0f) {
-        float forced = MapDiagForcedValue(key);
-        if (forced != 0.0f) value = forced;
-    }
-#endif
-    return value;
-}
-
-// zCInput_Win32::GetToggled(unsigned short) — G2A 0x004D5020.
-int __fastcall Hook_Input_GetToggled(void* self, void* edx, unsigned short key);
-CInvoke<int(__fastcall*)(void*, void*, unsigned short)> Ivk_Input_GetToggled(
-    0x004D5020, &Hook_Input_GetToggled, IvkEnabled(Engine_G2A));
-
-int __fastcall Hook_Input_GetToggled(void* self, void* edx, unsigned short key) {
-    return Ivk_Input_GetToggled(self, edx, key);
-}
-
-// zCInput_Win32::GetMousePos(float&, float&, float&) — G2A 0x004D5730.
+// Collect the horizontal mouse delta while the map is open.
 void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y, float& z);
 CInvoke<void(__fastcall*)(void*, void*, float&, float&, float&)> Ivk_Input_GetMousePos(
     0x004D5730, &Hook_Input_GetMousePos, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_Input_GetMousePos(void* self, void* edx, float& x, float& y, float& z) {
     Ivk_Input_GetMousePos(self, edx, x, y, z);
-    if (g_docOpen && fabsf(x) > fabsf(g_frameDx)) g_frameDx = x;
+    if (g_docOpen && fabsf(x) > fabsf(g_frameDx))
+        g_frameDx = x;
 }
 
-// ---------------------------------------------------------------- map view lookup
-// Primary vtable pointers of oCViewDocumentMap (from the SDK vftable tables). A plain
-// oCViewDocument has different ones, so this tells a map from a book/note.
-static bool MapDiagIsMapVptr(unsigned int vptr) {
-    // The ListDocuments pointer addresses the zCObject subobject's primary vtable.
-    // G2A tables: oCViewDocumentMap_for_zCObject=0x0083BACC,
-    //             oCViewDocumentMap (zCInputCallback)=0x0083BA9C,
-    //             oCViewDocumentMap_for_zCViewBase=0x0083BAA4.
-    return vptr == 0x0083BACC || vptr == 0x0083BA9C || vptr == 0x0083BAA4;
-}
-
-static oCViewDocumentMap* MapDiagFindMapView(bool logIt) {
-    oCDocumentManager& mgr = oCDocumentManager::GetDocumentManager();
-    zCListSort<oCViewDocument>* node = mgr.ListDocuments;
-    oCViewDocumentMap* found = NULL;
-    for (int guard = 0; node && guard < 32; node = node->next, ++guard) {
-        oCViewDocument* view = node->data;
-        if (!view) continue;
-        unsigned int vptr = *(unsigned int*)view;
-        bool isMap = MapDiagIsMapVptr(vptr);
-        if (isMap) found = (oCViewDocumentMap*)view;
-    }
-    if (logIt) MapDiagLog("[docs] mapView=%p vptr=%08X", found, found ? *(unsigned int*)found : 0);
-    return found;
-}
-
-// Refresh from the actual document list, not from the first key event. This
-// also lets mouse turning and movement unlock activate immediately on map open.
-static void MapDiagRefreshMapState() {
+static void RefreshMapState() {
     static DWORD lastCheck = 0;
-    DWORD now = GetTickCount();
-    if (now - lastCheck < 50) return;
+    const DWORD now = GetTickCount();
+    if (now - lastCheck < 50)
+        return;
     lastCheck = now;
 
-    oCViewDocumentMap* current = MapDiagFindMapView(false);
-    if (current == g_mapView) return;
+    oCViewDocumentMap* current = FindMapView();
+    if (current == g_mapView)
+        return;
 
-    bool wasOpen = g_docOpen;
     g_mapView = current;
-    g_earlyMapView = current;
     g_docOpen = (current != NULL);
     g_mapOpenedAt = g_docOpen ? now : 0;
     g_frameDx = 0.0f;
+
     if (!current) {
         g_arrowPreparedMap = NULL;
         g_nativeAnchorMap = NULL;
@@ -584,145 +290,67 @@ static void MapDiagRefreshMapState() {
         g_nativeAnchorCorrectionX = 0;
         g_nativeAnchorCorrectionY = 0;
     }
-    g_smoothArrowTexture = NULL;
-    g_smoothArrowWidth = 0;
-    g_smoothArrowHeight = 0;
-    g_smoothArrowBaseAngle = 1.57079632679f;
+
     g_smoothArrowAngle = 1.57079632679f;
     g_lastSmoothArrowAngleUpdate = 0;
-    g_smoothArrowTextureReady = false;
-
-    if (g_docOpen) {
-        MapDiagLog("[doc] OPEN mapView=%p", current);
-        MapDiagFindMapView(true);
-        MapDiagHeroProbe("map-open");
-    } else if (wasOpen) {
-        MapDiagLog("[doc] CLOSE");
-        MapDiagHeroProbe("map-close");
-    }
 }
 
-// ---------------------------------------------------------------- DocumentManager::HandleEvent
-// oCDocumentManager::HandleEvent(int) — G2A 0x0065F450.
-// Kept from iteration 2 (movement keys are not swallowed). Also drives g_docOpen.
-static bool MapDiagIsMovementKey(int event) {
-    switch ((unsigned int)event & 0xFF) {
-    case 0x11: case 0x1F: case 0x1E: case 0x20: case 0x10: case 0x12:   // W S A D Q E
-    case 0xC8: case 0xD0: case 0xCB: case 0xCD:                          // arrows
-        return true;
-    default:
-        return false;
-    }
-}
+static void UnlockMovement() {
+    if (!g_pluginEnabled || !g_docOpen)
+        return;
 
-int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event);
-CInvoke<int(__fastcall*)(void*, void*, int)> Ivk_DocMan_HandleEvent(
-    0x0065F450, &Hook_DocMan_HandleEvent, IvkEnabled(Engine_G2A));
-
-int __fastcall Hook_DocMan_HandleEvent(void* self, void* edx, int event) {
-    int originalResult = Ivk_DocMan_HandleEvent(self, edx, event);
-
-    if (((unsigned int)event & 0xFF) == 0x01)
-        MapDiagLog("[doc] ESC close event original=%d", originalResult);
-
-    bool passMovement = MAPDIAG_PASS_KEYS && MapDiagIsMovementKey(event);
-    return passMovement ? 0 : originalResult;
-}
-
-
-// Clear the hero's movement lock while a document is open.
-static void MapDiagUnlock() {
-#if MAPDIAG_UNLOCK
-    if (!g_pluginEnabled || !g_docOpen) return;
-    oCNpc* hero = Gothic_II_Addon::player;
-    if (!hero) return;
-    if (hero->IsMovLock()) {
+    oCNpc* hero = GOTHIC_ENGINE::player;
+    if (hero && hero->IsMovLock())
         hero->SetMovLock(0);
-        static bool logged = false;
-        if (!logged) {
-            logged = true;
-            MapDiagLog("[unlock] movement lock cleared");
-        }
-    }
-#endif
 }
 
-// 10 Hz: ask the engine to recompute the GPS marker (position + heading) of the open map.
-static void MapDiagMarker() {
-#if MAPDIAG_MARKER
-    if (!g_pluginEnabled || !g_docOpen) return;
+// Refresh the map position at a steady cadence, after the opening transition.
+static void UpdateMapMarker() {
+    if (!g_pluginEnabled || !g_docOpen)
+        return;
+
     static DWORD last = 0;
-    static bool warned = false;
-    DWORD now = GetTickCount();
-    // The engine already performs the initial UpdatePosition while opening the map.
-    // Do not issue our own refresh during that same opening transition: the log showed
-    // that an immediate second call moves the arrow anchor by exactly 8x8 pixels.
-    if (g_mapOpenedAt != 0 && now - g_mapOpenedAt < 250) return;
-    if (now - last < MAPDIAG_MARKER_MS) return;
+    const DWORD now = GetTickCount();
+    if (g_mapOpenedAt != 0 && now - g_mapOpenedAt < 250)
+        return;
+    if (now - last < MAP_MARKER_UPDATE_MS)
+        return;
     last = now;
-    oCViewDocumentMap* map = g_mapView;
-    if (!map) {
-        if (!warned) { warned = true; MapDiagLog("[marker] no map view in ListDocuments (open document is not a map, or type check failed)"); }
+
+    if (!g_mapView)
+        return;
+
+    g_mapView->UpdatePosition();
+    PrepareSmoothArrow();
+}
+
+// The game's own mouse turn is gated while the map is open; apply the captured
+// horizontal delta directly to the hero instead.
+static void ApplyMouseTurn() {
+    if (!g_pluginEnabled || !g_docOpen) {
+        g_frameDx = 0.0f;
         return;
     }
-    warned = false;
-    map->UpdatePosition();
-    MapDiagPrepareSmoothArrow();
-    if (!g_markerLogged) {
-        g_markerLogged = true;
-        oCNpc* hero = Gothic_II_Addon::player;
-        if (hero) {
-            float px = 0, py = 0, pz = 0;
-            hero->GetPositionWorld(px, py, pz);
-            zVEC3 at = hero->GetAtVectorWorld();
-            MapDiagLog("[marker] first update map=%p hero=(%.0f,%.0f,%.0f) heading=(%.2f,%.2f)",
-                map, px, py, pz, at.n[0], at.n[2]);
-        }
-    }
-#endif
-}
 
-// Own horizontal mouse turn while the map is open (the game's own mouse turn is gated).
-static void MapDiagMouseTurn() {
-#if MAPDIAG_MOUSE_TURN
-    if (!g_pluginEnabled || !g_docOpen) { g_frameDx = 0.0f; return; }
-
-    // live tuning (edge-triggered)
-    static bool prevAdd = false, prevSub = false, prevMul = false;
-    bool add = (GetAsyncKeyState(VK_ADD) & 0x8000) != 0;
-    bool sub = (GetAsyncKeyState(VK_SUBTRACT) & 0x8000) != 0;
-    bool mul = (GetAsyncKeyState(VK_MULTIPLY) & 0x8000) != 0;
-    if (add && !prevAdd) g_degPerUnit *= 1.25f;
-    if (sub && !prevSub) g_degPerUnit *= 0.8f;
-    if (mul && !prevMul) g_mouseSign = -g_mouseSign;
-    if ((add && !prevAdd) || (sub && !prevSub) || (mul && !prevMul))
-        MapDiagLog("[mouse] tuning: degPerUnit=%.3f sign=%+.0f", g_degPerUnit, g_mouseSign);
-    prevAdd = add; prevSub = sub; prevMul = mul;
-
-    float dx = g_frameDx;
+    const float dx = g_frameDx;
     g_frameDx = 0.0f;
-    if (dx == 0.0f) return;
-    oCNpc* hero = Gothic_II_Addon::player;
-    if (!hero) return;
-    hero->RotateWorldY(dx * g_degPerUnit * g_mouseSign);
-    // No per-frame mouse logging: input deltas are high-frequency and not relevant
-    // to the current marker-anchor investigation.
-#endif
+    if (dx == 0.0f)
+        return;
+
+    oCNpc* hero = GOTHIC_ENGINE::player;
+    if (hero)
+        hero->RotateWorldY(dx * MAP_MOUSE_DEGREES_PER_UNIT);
 }
 
-
-// Fade the map document while a movement key is physically held. Mouse motion
-// is deliberately excluded: it continues to turn the hero without changing
-// map opacity. The map page and document texture are faded, while the GPS
-// overlay remains at full opacity.
-static void MapDiagFadeMap() {
+// Fade the map while a movement key is physically held. The marker's alpha
+// follows the map's actual in-transition alpha at a fixed 1:2 transparency ratio.
+static void FadeMap() {
     static oCViewDocumentMap* lastMap = NULL;
     static oCViewDocument* lastPage = NULL;
     static zTRnd_AlphaBlendFunc originalMapBlend = zRND_ALPHA_FUNC_MAT_DEFAULT;
     static zTRnd_AlphaBlendFunc originalPageBlend = zRND_ALPHA_FUNC_MAT_DEFAULT;
     static int alpha = 255;
     static DWORD lastTick = 0;
-    static bool fadeLogged = false;
 
     const DWORD now = GetTickCount();
     if (g_mapView != lastMap) {
@@ -731,10 +359,11 @@ static void MapDiagFadeMap() {
         alpha = 255;
         g_mapCurrentAlpha = 255;
         lastTick = now;
-        fadeLogged = false;
-        if (g_mapView) originalMapBlend = g_mapView->TextureFuncAlpha;
+        if (g_mapView)
+            originalMapBlend = g_mapView->TextureFuncAlpha;
     }
-    if (!g_mapView) return;
+    if (!g_mapView)
+        return;
 
     oCViewDocument* page = g_mapView->ViewPageMap;
     if (page && page != lastPage) {
@@ -755,109 +384,49 @@ static void MapDiagFadeMap() {
         (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
 
     const int movingAlpha = (255 * (100 - g_mapTransparency) + 50) / 100;
-
-    // The map itself fades in when opened. Ignore movement during this grace
-    // period, then fade only if the master switch and transparency mode allow it.
     const bool graceFinished = g_mapOpenedAt != 0 &&
-        (DWORD)(now - g_mapOpenedAt) >= MAPDIAG_MAP_OPEN_GRACE_MS;
+        (DWORD)(now - g_mapOpenedAt) >= MAP_OPEN_GRACE_MS;
     const int target = (g_pluginEnabled && g_mapAlphaEnabled &&
         moving && graceFinished) ? movingAlpha : 255;
 
     DWORD elapsed = now - lastTick;
     lastTick = now;
-    if (elapsed > 50) elapsed = 50;
+    if (elapsed > 50)
+        elapsed = 50;
+
     if (alpha != target && elapsed != 0) {
         int range = 255 - movingAlpha;
-        if (range < 1) range = 255;
-        int step = (range * (int)elapsed + MAPDIAG_MAP_FADE_MS - 1) /
-            MAPDIAG_MAP_FADE_MS;
-        if (step < 1) step = 1;
+        if (range < 1)
+            range = 255;
+        int step = (range * (int)elapsed + MAP_FADE_DURATION_MS - 1) /
+            MAP_FADE_DURATION_MS;
+        if (step < 1)
+            step = 1;
+
         if (alpha < target) {
             alpha += step;
-            if (alpha > target) alpha = target;
+            if (alpha > target)
+                alpha = target;
         } else {
             alpha -= step;
-            if (alpha < target) alpha = target;
+            if (alpha < target)
+                alpha = target;
         }
     }
 
     g_mapCurrentAlpha = alpha;
 
-    // Preserve the map's original blend modes when fully opaque. The GPS
-    // overlay is a separate draw and therefore remains fully opaque.
-    const zTRnd_AlphaBlendFunc blend = (alpha < 255)
+    const zTRnd_AlphaBlendFunc mapBlend = (alpha < 255)
         ? zRND_ALPHA_FUNC_BLEND : originalMapBlend;
-    g_mapView->SetTextureAlphaBlendFunc(blend);
+    g_mapView->SetTextureAlphaBlendFunc(mapBlend);
     g_mapView->SetTextureAlpha(alpha);
+
     if (page) {
         const zTRnd_AlphaBlendFunc pageBlend = (alpha < 255)
             ? zRND_ALPHA_FUNC_BLEND : originalPageBlend;
         page->SetTextureAlphaBlendFunc(pageBlend);
         page->SetTextureAlpha(alpha);
     }
-
-    if (moving && graceFinished && g_pluginEnabled && g_mapAlphaEnabled && !fadeLogged) {
-        fadeLogged = true;
-        MapDiagLog("[map-fade] movement detected; transparency=%d%%", g_mapTransparency);
-    }
-    if ((!moving || !graceFinished || !g_pluginEnabled || !g_mapAlphaEnabled) && alpha == 255)
-        fadeLogged = false;
-}
-
-// ---------------------------------------------------------------- hook state / runtime probes
-void MapDiagHookState(const char* name, THookInfo& info) {
-    MapDiagLog("[hook] %s hooked=%d exists=%d original=%p trampoline=%p detour=%p",
-        name, (int)CCallBack::IsHooked(info), (int)CCallBack::IsExist(info),
-        info.lpOriginal, info.lpPointer, info.lpDetour);
-}
-
-void MapDiagRuntimeProbe(const char* stage) {
-    Gothic_II_Addon::zCInput* inputObject = Gothic_II_Addon::zinput;
-    if (!inputObject) {
-        MapDiagLog("[runtime] %s zinput=NULL", stage);
-        return;
-    }
-    MapDiagLog("[runtime] %s zinput=%p", stage, inputObject);
-}
-
-// ---------------------------------------------------------------- Union application callbacks
-void Game_Entry();
-void Game_Init();
-void Game_Exit();
-void Game_PreLoop();
-void Game_Loop();
-void Game_PostLoop();
-void Game_MenuLoop();
-void Game_SaveBegin();
-void Game_SaveEnd();
-void Game_LoadBegin_NewGame();
-void Game_LoadEnd_NewGame();
-void Game_LoadBegin_SaveGame();
-void Game_LoadEnd_SaveGame();
-void Game_LoadBegin_ChangeLevel();
-void Game_LoadEnd_ChangeLevel();
-void Game_LoadBegin_Trigger();
-void Game_LoadEnd_Trigger();
-void Game_Pause();
-void Game_Unpause();
-void Game_DefineExternals();
-void Game_ApplyOptions();
-
-TSaveLoadGameInfo& SaveLoadGameInfo = UnionCore::SaveLoadGameInfo;
-
-extern CApplication* lpApplication;
-
-void Game_Entry() {
-    MapDiagReset();
-    MapDiagLog("[plugin] Game_Entry UNLOCK=%d MARKER=%d MOUSE=%d", (int)MAPDIAG_UNLOCK, (int)MAPDIAG_MARKER, (int)MAPDIAG_MOUSE_TURN);
-    MapDiagHookState("Input::GetState", const_cast<THookInfo&>(Ivk_Input_GetState.GetHookInfo()));
-    MapDiagHookState("Input::GetToggled", const_cast<THookInfo&>(Ivk_Input_GetToggled.GetHookInfo()));
-    MapDiagHookState("Input::GetMousePos", const_cast<THookInfo&>(Ivk_Input_GetMousePos.GetHookInfo()));
-    MapDiagHookState("DocumentManager::HandleEvent", const_cast<THookInfo&>(Ivk_DocMan_HandleEvent.GetHookInfo()));
-    MapDiagHookState("ViewArrow::Blit", const_cast<THookInfo&>(Ivk_ViewArrow_Blit.GetHookInfo()));
-    MapDiagHookState("Game::CheckObjectRoutines", const_cast<THookInfo&>(Ivk_Game_CheckObjectRoutines.GetHookInfo()));
-    MapDiagHookState("MapView::UpdatePosition", const_cast<THookInfo&>(Ivk_MapView_UpdatePosition.GetHookInfo()));
-    MapDiagRuntimeProbe("Game_Entry");
 }
 
 int Change_DynaMap(zCOptionEntry& entry) {
@@ -889,43 +458,79 @@ int Change_DynaMapTransparency(zCOptionEntry& entry) {
     return 0;
 }
 
+void Game_Entry() {}
+
 void Game_Init() {
-    if (!zoptions) return;
+    if (!zoptions)
+        return;
+
     zoptions->InsertChangeHandler("zDynaMap", "DynaMap", Change_DynaMap);
     zoptions->InsertChangeHandler("zDynaMap", "DynaMapAlpha", Change_DynaMapAlpha);
     zoptions->InsertChangeHandler("zDynaMap", "DynaMapTransparency", Change_DynaMapTransparency);
+
     g_pluginEnabled = zoptions->ReadInt("zDynaMap", "DynaMap", 1) != 0;
     g_mapAlphaEnabled = zoptions->ReadInt("zDynaMap", "DynaMapAlpha", 1) != 0;
+
     float sliderValue = zoptions->ReadReal("zDynaMap", "DynaMapTransparency", 0.5f);
-    // Migrate the previous 0-100 representation to Gothic's native 0.0-1.0 slider range.
-    if (sliderValue > 1.0f) sliderValue /= 100.0f;
-    if (sliderValue < 0.0f) sliderValue = 0.0f;
-    if (sliderValue > 1.0f) sliderValue = 1.0f;
-    // Keep the INI value in the same normalized format used by native Gothic sliders.
+    // Migrate the previous 0-100 representation to Gothic's native 0.0-1.0 range.
+    if (sliderValue > 1.0f)
+        sliderValue /= 100.0f;
+    if (sliderValue < 0.0f)
+        sliderValue = 0.0f;
+    if (sliderValue > 1.0f)
+        sliderValue = 1.0f;
+
     zoptions->WriteReal("zDynaMap", "DynaMapTransparency", sliderValue, False);
     const int step = (int)(sliderValue * 12.0f + 0.5f);
     g_mapTransparency = 20 + step * 5;
 }
-void Game_Exit() { MapDiagLog("[plugin] Game_Exit"); }
-void Game_PreLoop() { MapDiagRefreshMapState(); MapDiagUnlock(); MapDiagMouseTurn(); MapDiagMarker(); MapDiagFadeMap(); }
-void Game_Loop() { MapDiagUnlock(); }
-void Game_PostLoop() { }
-void Game_MenuLoop() { }
 
-void Game_SaveBegin() { }
-void Game_SaveEnd() { }
-void Game_LoadBegin_NewGame() { g_docOpen = false; }
-void Game_LoadEnd_NewGame() { }
-void Game_LoadBegin_SaveGame() { g_docOpen = false; }
-void Game_LoadEnd_SaveGame() { }
-void Game_LoadBegin_ChangeLevel() { g_docOpen = false; }
-void Game_LoadEnd_ChangeLevel() { }
-void Game_LoadBegin_Trigger() { }
-void Game_LoadEnd_Trigger() { }
-void Game_Pause() { }
-void Game_Unpause() { }
-void Game_DefineExternals() { }
-void Game_ApplyOptions() { }
+void Game_Exit() {
+    if (g_smoothArrowTexture) {
+        g_smoothArrowTexture->Release();
+        g_smoothArrowTexture = NULL;
+    }
+}
+
+void Game_PreLoop() {
+    RefreshMapState();
+    UnlockMovement();
+    ApplyMouseTurn();
+    UpdateMapMarker();
+    FadeMap();
+}
+
+void Game_Loop() {
+    UnlockMovement();
+}
+
+void Game_PostLoop() {}
+void Game_MenuLoop() {}
+
+TSaveLoadGameInfo& SaveLoadGameInfo = UnionCore::SaveLoadGameInfo;
+
+void Game_SaveBegin() {}
+void Game_SaveEnd() {}
+
+void LoadBegin() {}
+void LoadEnd() {}
+
+void Game_LoadBegin_NewGame() { LoadBegin(); g_docOpen = false; }
+void Game_LoadEnd_NewGame() { LoadEnd(); }
+
+void Game_LoadBegin_SaveGame() { LoadBegin(); g_docOpen = false; }
+void Game_LoadEnd_SaveGame() { LoadEnd(); }
+
+void Game_LoadBegin_ChangeLevel() { LoadBegin(); g_docOpen = false; }
+void Game_LoadEnd_ChangeLevel() { LoadEnd(); }
+
+void Game_LoadBegin_Trigger() {}
+void Game_LoadEnd_Trigger() {}
+
+void Game_Pause() {}
+void Game_Unpause() {}
+void Game_DefineExternals() {}
+void Game_ApplyOptions() {}
 
 #define AppDefault True
 CApplication* lpApplication = !CHECK_THIS_ENGINE ? Null : CApplication::CreateRefApplication(
