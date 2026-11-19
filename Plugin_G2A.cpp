@@ -189,7 +189,7 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
 static void MapDiagDrawSmoothArrow() {
     // Draw inside ViewArrow::Blit, including the first opening frame before
     // the document-list poll has synchronized g_mapView/g_docOpen.
-    oCViewDocumentMap* map = g_mapView ? g_mapView : g_earlyMapView;
+    oCViewDocumentMap* map = g_earlyMapView ? g_earlyMapView : g_mapView;
     if (!map) return;
     oCNpc* hero = Gothic_II_Addon::player;
     zCRenderer* renderer = Gothic_II_Addon::zrenderer;
