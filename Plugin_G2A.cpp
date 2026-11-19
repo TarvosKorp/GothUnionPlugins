@@ -19,7 +19,6 @@ static volatile bool g_docOpen = false;
 static DWORD g_mapOpenedAt = 0;
 static oCViewDocumentMap* g_mapView = NULL;
 // Persistent identity for suppressing the stock arrow even before docOpen is refreshed.
-static oCViewDocumentMap* g_nativeMapView = NULL;
 static float g_frameDx = 0.0f;
 
 static bool g_pluginEnabled = true;
@@ -90,32 +89,16 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_MapView_UpdatePosition(
 
 void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     oCViewDocumentMap* map = (oCViewDocumentMap*)self;
-    if (map) g_nativeMapView = map;
-    if (map && g_pluginEnabled) {
-        // Register the map before the engine's first opening-frame render.
-        // This lets the arrow blit hook suppress the native marker immediately.
-        if (g_mapView != map) {
-            g_mapView = map;
-            g_docOpen = true;
-            g_mapOpenedAt = GetTickCount();
-            g_frameDx = 0.0f;
-            g_arrowPreparedMap = NULL;
-        } else if (!g_docOpen) {
-            g_docOpen = true;
-            g_mapOpenedAt = GetTickCount();
-            g_frameDx = 0.0f;
-        }
+    // Keep the baseline ordering: hide the stock arrow before the engine
+    // updates its geometry, but do not publish g_mapView here. The document
+    // manager owns open/close state and must reset marker state on every reopen.
+    if (map && g_pluginEnabled)
         map->ViewArrow.SetTextureAlpha(0);
-    }
 
     Ivk_MapView_UpdatePosition(self, edx);
 
     if (!map || !g_pluginEnabled)
         return;
-
-    // UpdatePosition restores the native texture alpha; suppress it again
-    // before the first subsequent view blit.
-    map->ViewArrow.SetTextureAlpha(0);
 
     if (g_nativeAnchorMap != map) {
         g_nativeAnchorMap = map;
@@ -254,10 +237,10 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
     0x006934A0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
-    // Do not gate this on g_docOpen: the document-list refresh can lag behind
-    // the first blit when an existing map view is reopened.
-    if (g_pluginEnabled && g_nativeMapView &&
-        self == (void*)&g_nativeMapView->ViewArrow) {
+    // Match the 71f698b render path: the map is identified by the document
+    // manager, while UpdatePosition suppresses the stock arrow before blit.
+    if (g_pluginEnabled && g_docOpen && g_mapView &&
+        self == (void*)&g_mapView->ViewArrow) {
         ((oCViewDocument*)self)->SetTextureAlpha(0);
     }
     Ivk_ViewArrow_Blit(self, edx);
