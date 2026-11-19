@@ -186,10 +186,9 @@ void __fastcall Hook_MapView_UpdatePosition(void* self, void* edx) {
     Ivk_MapView_UpdatePosition(self, edx);
 }
 
-static void MapDiagDrawSmoothArrow() {
-    // Draw inside ViewArrow::Blit, including the first opening frame before
-    // the document-list poll has synchronized g_mapView/g_docOpen.
-    oCViewDocumentMap* map = g_earlyMapView ? g_earlyMapView : g_mapView;
+static void MapDiagDrawSmoothArrow(oCViewDocumentMap* map) {
+    // Use the exact map instance whose ViewArrow::Blit is currently executing.
+    // g_earlyMapView may still point to a previous map document after close/reopen.
     if (!map) return;
     oCNpc* hero = Gothic_II_Addon::player;
     zCRenderer* renderer = Gothic_II_Addon::zrenderer;
@@ -350,8 +349,12 @@ CInvoke<void(__fastcall*)(void*, void*)> Ivk_ViewArrow_Blit(
     0x006934A0, &Hook_ViewArrow_Blit, IvkEnabled(Engine_G2A));
 
 void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
-    const bool isArrow = (g_mapView && self == (void*)&g_mapView->ViewArrow) ||
-        (g_earlyMapView && self == (void*)&g_earlyMapView->ViewArrow);
+    oCViewDocumentMap* arrowMap = NULL;
+    if (g_mapView && self == (void*)&g_mapView->ViewArrow)
+        arrowMap = g_mapView;
+    else if (g_earlyMapView && self == (void*)&g_earlyMapView->ViewArrow)
+        arrowMap = g_earlyMapView;
+    const bool isArrow = arrowMap != NULL;
 
     if (isArrow) {
         ((oCViewDocument*)self)->SetTextureAlpha(0);
@@ -372,7 +375,7 @@ void __fastcall Hook_ViewArrow_Blit(void* self, void* edx) {
         // Submit the replacement at the exact point where the stock arrow is
         // rendered. MirrorWorld processes map quads in this UI draw phase;
         // CheckObjectRoutines is too late for its per-map-quad transform.
-        MapDiagDrawSmoothArrow();
+        MapDiagDrawSmoothArrow(arrowMap);
     }
 }
 
