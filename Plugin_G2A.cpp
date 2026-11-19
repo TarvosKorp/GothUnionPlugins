@@ -151,16 +151,14 @@ static void MapDiagPrepareSmoothArrow() {
     g_markerLogged = false;
     g_arrowGeometryLogged = false;
 
-    zSTRING northName("U.TGA");
-    g_smoothArrowTexture = zCTexture::Load(northName, 0);
-    g_smoothArrowTextureReady = (g_smoothArrowTexture != NULL);
+    // Use the engine-selected directional page itself. Its artwork and pivot
+    // are the authoritative map-marker reference; only the sub-45-degree
+    // residual rotation is applied during rendering.
+    g_smoothArrowTexture = NULL;
+    g_smoothArrowTextureReady = false;
+    g_smoothArrowWidth = 0;
+    g_smoothArrowHeight = 0;
     g_smoothArrowBaseAngle = 1.57079632679f;
-    if (g_smoothArrowTextureReady) {
-        g_smoothArrowTexture->GetPixelSize(g_smoothArrowWidth, g_smoothArrowHeight);
-    } else {
-        g_smoothArrowWidth = 0;
-        g_smoothArrowHeight = 0;
-    }
 
     int w = g_mapView->ViewArrow.VirtualSize.X;
     int h = g_mapView->ViewArrow.VirtualSize.Y;
@@ -225,12 +223,14 @@ static void MapDiagDrawSmoothArrow() {
             pageHeading.n[0], pageHeading.n[2], pageAngle);
     }
 
-    if (!currentTexture || currentW < 4 || currentH < 4) {
+    int nativeW = 0, nativeH = 0;
+    if (currentTexture) currentTexture->GetPixelSize(nativeW, nativeH);
+    if (!currentTexture || currentW < 4 || currentH < 4 || nativeW < 4 || nativeH < 4) {
         static bool missingLogged = false;
         if (!missingLogged) {
             missingLogged = true;
-            MapDiagLog("[arrow] direct draw unavailable texture=%p pixel=%d,%d %dx%d virtual=%dx%d",
-                currentTexture, x, y, currentW, currentH, arrow.VirtualSize.X, arrow.VirtualSize.Y);
+            MapDiagLog("[arrow] native draw unavailable texture=%p textureSize=%dx%d pixel=%d,%d %dx%d",
+                currentTexture, nativeW, nativeH, x, y, currentW, currentH);
         }
         return;
     }
@@ -252,15 +252,17 @@ static void MapDiagDrawSmoothArrow() {
         }
     }
 
-    // U.TGA is the north/up cardinal artwork: +90 degrees in this
-    // heading convention. Never fall back to the engine's changing 8-way page.
-    if (!g_smoothArrowTextureReady || !g_smoothArrowTexture ||
-        g_smoothArrowWidth < 4 || g_smoothArrowHeight < 4)
-        return;
-    zCTexture* texture = g_smoothArrowTexture;
-    const int w = g_smoothArrowWidth;
-    const int h = g_smoothArrowHeight;
-    const float rotation = g_smoothArrowAngle - 1.57079632679f;
+    // The engine-selected page already points to the nearest 45-degree
+    // heading. Rotate that native artwork only by the residual angle, keeping
+    // its original texture, dimensions and center/pivot.
+    const float sector = 0.7853981633974483f;
+    const float nativePageAngle = floorf(g_smoothArrowAngle / sector + 0.5f) * sector;
+    float rotation = g_smoothArrowAngle - nativePageAngle;
+    if (rotation > 3.14159265359f) rotation -= 6.28318530718f;
+    if (rotation < -3.14159265359f) rotation += 6.28318530718f;
+    zCTexture* texture = currentTexture;
+    const int w = nativeW;
+    const int h = nativeH;
     const float c = cosf(rotation);
     const float sn = sinf(rotation);
 
