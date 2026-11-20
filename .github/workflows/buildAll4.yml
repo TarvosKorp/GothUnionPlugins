@@ -25,10 +25,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path Bin, PDB | Out-Null
           $variants = @(
-            @{ cfg = 'G1 MT Release';  dll = 'zDynaMapG1' },
-            @{ cfg = 'G1A MT Release'; dll = 'zDynaMapG1A' },
-            @{ cfg = 'G2 MT Release';  dll = 'zDynaMapG2' },
-            @{ cfg = 'G2A MT Release'; dll = 'zDynaMapG2A' }
+            @{ cfg = 'G1 MT Release';  dll = 'zMirrorWorldG1' },
+            @{ cfg = 'G1A MT Release'; dll = 'zMirrorWorldG1A' },
+            @{ cfg = 'G2 MT Release';  dll = 'zMirrorWorldG2' },
+            @{ cfg = 'G2A MT Release'; dll = 'zMirrorWorldG2A' }
           )
           foreach ($v in $variants) {
             msbuild GothPlugin.vcxproj /m `
@@ -39,16 +39,16 @@ jobs:
               "/p:SolutionDir=$($PWD.Path)\"
           }
 
-      - name: Include zDynaMap Union menu configuration
+      - name: Include zMirrorWorld Union menu configuration
         shell: pwsh
         run: |
-          Copy-Item -Force 'Plugin.d' 'Bin/zDynaMap.d'
+          Copy-Item -Force 'Plugin.d' 'Bin/zMirrorWorld.d'
 
       - name: Upload DLLs (one archive)
         uses: actions/upload-artifact@v4
         with:
-          name: zDynaMap-all-dlls
+          name: zMirrorWorld-all-dlls
           path: |
             Bin/*.dll
-            Bin/zDynaMap.d
+            Bin/zMirrorWorld.d
           if-no-files-found: error

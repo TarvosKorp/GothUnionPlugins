@@ -28,19 +28,19 @@ jobs:
             "/p:Configuration=G2 MT Release" `
             /p:Platform=Win32 `
             /p:PlatformToolset=v143 `
-            "/p:TargetName=zDynaMapG2" `
+            "/p:TargetName=zMirrorWorldG2" `
             "/p:SolutionDir=$($PWD.Path)\"
 
-      - name: Include zDynaMap Union menu configuration
+      - name: Include zMirrorWorld Union menu configuration
         shell: pwsh
         run: |
-          Copy-Item -Force 'Plugin.d' 'Bin/zDynaMap.d'
+          Copy-Item -Force 'Plugin.d' 'Bin/zMirrorWorld.d'
 
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
-          name: zDynaMap-G2-dll
+          name: zMirrorWorld-G2-dll
           path: |
             Bin/*.dll
-            Bin/zDynaMap.d
+            Bin/zMirrorWorld.d
           if-no-files-found: error

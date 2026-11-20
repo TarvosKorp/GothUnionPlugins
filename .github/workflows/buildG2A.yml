@@ -1,4 +1,4 @@
-name: Build zDynaMap G2A plugin
+name: Build zMirrorWorld G2A plugin
 
 on:
   workflow_dispatch:      # ручной запуск кнопкой «Run workflow»
@@ -28,19 +28,19 @@ jobs:
             "/p:Configuration=G2A MT Release" `
             /p:Platform=Win32 `
             /p:PlatformToolset=v143 `
-            "/p:TargetName=zDynaMapG2A" `
+            "/p:TargetName=zMirrorWorldG2A" `
             "/p:SolutionDir=$($PWD.Path)\"
 
-      - name: Include zDynaMap Union menu configuration
+      - name: Include zMirrorWorld Union menu configuration
         shell: pwsh
         run: |
-          Copy-Item -Force 'Plugin.d' 'Bin/zDynaMap.d'
+          Copy-Item -Force 'Plugin.d' 'Bin/zMirrorWorld.d'
 
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
-          name: zDynaMap-G2A-dll
+          name: zMirrorWorld-G2A-dll
           path: |
             Bin/*.dll
-            Bin/zDynaMap.d
+            Bin/zMirrorWorld.d
           if-no-files-found: error
